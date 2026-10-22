@@ -1,0 +1,132 @@
+schema = 1
+
+[mission]
+id = "i07-firewall"
+title = "Only What Is Needed"
+chapter = "I"
+kind = "lesson"
+order = 7
+difficulty = 4
+requires = ["i04-ports", "i05-ssh"]
+skills = ["i.firewalls", "l.firewall-hardening"]
+review_for = ["i.ports-sockets"]
+xp = 170
+estimated_minutes = 25
+
+[briefing]
+context = """
+This Ubuntu web server has no firewall: everything that listens is reachable by everyone.
+The policy: SSH and the website are public, the metrics exporter on port 9100 may only be
+read by the monitoring server 'intranet' (10.0.2.20), everything else stays closed. Set it up
+with ufw — without locking yourself out. (sudo password: letslinux)
+"""
+concept = """
+A host firewall decides which incoming connections reach the programs that listen (ss -tlnp
+shows them). ufw (Uncomplicated Firewall) is Ubuntu's front-end: ufw default deny incoming
+closes everything not explicitly allowed; ufw allow OpenSSH / ufw allow 80/tcp open services;
+ufw allow from ADDRESS to any port N proto tcp opens a port for one host only. Rules first,
+then ufw enable — otherwise the first enable can cut your own SSH session. ufw status
+verbose shows the result; the rules are saved and loaded at every boot.
+"""
+objectives = ["List what is listening", "Set a default-deny policy", "Allow services publicly and per source", "Enable the firewall safely"]
+
+[environment]
+profile = "ubuntu"
+packages = ["nginx"]
+
+[[environment.setup]]
+action = "process"
+comm = "node_exporter"
+argv = ["/usr/local/bin/node_exporter", "--web.listen-address=:9100"]
+user = "nobody"
+listen = [9100]
+age_minutes = 9000
+
+[[task]]
+id = "listening"
+title = "What is listening?"
+kind = "guided"
+instructions = "List the TCP ports this machine listens on, with the programs behind them."
+skills = { "i.firewalls" = 1.0 }
+question = { prompt = "Which program listens on port 9100?", type = "exact", accept = ["node_exporter"] }
+hints = ["ss lists sockets: -t TCP, -l listening, -n numbers, -p programs (needs root for other users').", "sudo ss -tlnp", "node_exporter (a Prometheus metrics exporter)."]
+explanation = "Three services: sshd (22), nginx (80) and node_exporter (9100) — all on 0.0.0.0, so reachable from every network."
+
+[[task]]
+id = "policy"
+title = "Default deny"
+kind = "independent"
+instructions = "Configure ufw: deny incoming connections by default, allow SSH and HTTP (port 80) from anywhere, allow port 9100 only from 10.0.2.20. Then enable the firewall."
+skills = { "i.firewalls" = 1.0, "l.firewall-hardening" = 1.0 }
+checks = [
+    { type = "port_open_from", from = "files", port = 22 },
+    { type = "port_open_from", from = "files", port = 80 },
+    { type = "port_open_from", from = "files", port = 9100, open = false },
+    { type = "port_open_from", from = "intranet", port = 9100 },
+    { type = "after_reboot", checks = [{ type = "command_result", user = "root", command = "ufw status", stdout_contains = ["Status: active", "9100", "10.0.2.20"] }, { type = "port_open_from", from = "files", port = 22 }, { type = "port_open_from", from = "files", port = 80 }] },
+]
+persistent = true
+hints = [
+    "Order matters: rules first (OpenSSH!), then ufw enable.",
+    "sudo ufw default deny incoming; sudo ufw allow OpenSSH; sudo ufw allow 80/tcp; sudo ufw allow from 10.0.2.20 to any port 9100 proto tcp",
+    "… then sudo ufw enable and sudo ufw status verbose",
+]
+explanation = "The game tried real connections from files (a LAN host) and from intranet, now and after a reboot: SSH and HTTP are open, 9100 only for the monitoring server."
+
+[[task]]
+id = "why"
+title = "Defence in depth"
+kind = "explanation"
+instructions = "node_exporter is now protected by the firewall."
+skills = { "l.firewall-hardening" = 1.0 }
+question = { prompt = "What else would reduce node_exporter's exposure, even if the firewall were turned off by mistake?", type = "choice", choices = ["Nothing — the firewall is enough", "Make it listen only on the address that monitoring uses (or on localhost behind a proxy)", "Run it as root"], answer = 1 }
+hints = ["What does 0.0.0.0 in ss's output mean?", "A program that only listens on one address cannot be reached on the others.", "(b)"]
+explanation = "Firewall plus restrictive listen addresses: two independent layers. Each one alone is one mistake away from exposure."
+
+[debrief]
+summary = """
+ss -tlnp → decide → ufw default deny incoming, allow what is needed (per source where
+possible), ufw enable, ufw status verbose — and test from another machine.
+"""
+alternatives = ["nftables directly (Debian): a ruleset in /etc/nftables.conf", "firewalld zones on Fedora/RHEL", "ufw limit OpenSSH rate-limits repeated connections"]
+pitfalls = ["Enabling the firewall before allowing SSH on a remote server.", "Testing only from the server itself: loopback is always allowed.", "Opening a port to 'anywhere' when one source would do."]
+next = "Next: an address that survives a reboot."
+
+[[solution]]
+name = "ufw step by step"
+steps = [
+    { input = ["letslinux"] },
+    "sudo ss -tlnp",
+    ":answer node_exporter",
+    "sudo ufw default deny incoming",
+    "sudo ufw allow OpenSSH",
+    "sudo ufw allow 80/tcp",
+    "sudo ufw allow from 10.0.2.20 to any port 9100 proto tcp",
+    { input = ["y"] },
+    "sudo ufw enable",
+    "sudo ufw status verbose",
+    ":answer b",
+]
+
+[[solution]]
+name = "numbers and services"
+steps = [
+    { input = ["letslinux"] },
+    "sudo ss -tlpn | grep 9100",
+    ":answer node_exporter",
+    "sudo ufw allow 22/tcp && sudo ufw allow http && sudo ufw allow from 10.0.2.20 to any port 9100",
+    { input = ["y"] },
+    "sudo ufw enable",
+    ":answer Make it listen only on the address that monitoring uses (or on localhost behind a proxy)",
+]
+
+[[counterexample]]
+name = "everything open to everyone"
+steps = [
+    { input = ["letslinux"] },
+    ":answer node_exporter",
+    "sudo ufw allow 22/tcp && sudo ufw allow 80/tcp && sudo ufw allow 9100/tcp",
+    { input = ["y"] },
+    "sudo ufw enable",
+    ":answer a",
+]

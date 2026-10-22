@@ -1,0 +1,144 @@
+schema = 1
+
+[mission]
+id = "l02-service-exposure"
+title = "Who Can Reach the Database?"
+chapter = "L"
+kind = "troubleshooting"
+order = 4
+difficulty = 5
+requires = ["i07-firewall", "l01c-what-is-exposed", "c08-the-method"]
+skills = ["l.service-exposure", "l.firewall-hardening", "i.firewalls"]
+review_for = ["i.ports-sockets"]
+xp = 190
+estimated_minutes = 30
+
+[briefing]
+context = """
+A security scan reports that the shop database on this Fedora server (port 5432) is reachable
+from the whole network — only the application server 'intranet' (10.0.2.20) should talk to
+it. While you are at it, close every firewall opening that nothing needs. Make the changes
+permanent: a reload or reboot must not undo them. (sudo password: letslinux)
+"""
+concept = """
+firewalld groups rules into zones; the default zone (public) applies to the network
+interface. firewall-cmd --list-all shows what it allows (services and ports). A zone with a
+source address (--zone=internal --add-source=10.0.2.20) applies to connections from that
+address only — the place for 'only this host may …'. Every change is either runtime (active
+now, gone after --reload or reboot) or --permanent (saved, active after the next reload).
+Do both, or change the runtime and finish with --runtime-to-permanent.
+"""
+objectives = ["Audit what the firewall allows", "Compare it with what listens", "Restrict a service to one source", "Make firewall changes permanent"]
+
+[environment]
+profile = "fedora"
+packages = ["netcat"]
+
+[[environment.setup]]
+action = "service"
+name = "shopdb.service"
+enable = true
+start = true
+content = """[Unit]
+Description=Shop database (simulated: a listener on port 5432)
+
+[Service]
+User=nobody
+ExecStart=/usr/bin/nc -lk 5432
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "run"
+command = "firewall-cmd --permanent --add-port=5432/tcp && firewall-cmd --permanent --add-service=http && firewall-cmd --reload"
+
+[[task]]
+id = "audit"
+title = "What is open?"
+kind = "troubleshooting"
+instructions = "Look at what the default zone allows."
+skills = { "l.service-exposure" = 1.0 }
+question = { prompt = "Which entry of the public zone exposes the database?", type = "exact", accept = ["5432/tcp", "5432"] }
+hints = ["sudo firewall-cmd --list-all", "Database ports are listed under 'ports'.", "5432/tcp"]
+explanation = "Someone opened 5432/tcp in the public zone — for everybody. sudo ss -tlnp confirms that something listens there."
+
+[[task]]
+id = "restrict"
+title = "Only the application server"
+kind = "troubleshooting"
+instructions = "Make port 5432 reachable only from 10.0.2.20; remove the services http and cockpit from the public zone (nothing listens behind them). SSH must stay open. Runtime and permanent configuration must agree."
+skills = { "l.service-exposure" = 1.0, "l.firewall-hardening" = 1.0, "i.firewalls" = 0.5 }
+checks = [
+    { type = "port_open_from", from = "files", port = 5432, open = false },
+    { type = "port_open_from", from = "intranet", port = 5432 },
+    { type = "port_open_from", from = "files", port = 22 },
+    { type = "command_result", user = "root", command = "firewall-cmd --list-services; firewall-cmd --list-ports; firewall-cmd --permanent --list-services; firewall-cmd --permanent --list-ports", stdout_not_contains = ["http", "cockpit", "5432"] },
+    { type = "after_reboot", checks = [{ type = "port_open_from", from = "files", port = 5432, open = false }, { type = "port_open_from", from = "intranet", port = 5432 }, { type = "port_open_from", from = "files", port = 22 }] },
+]
+persistent = true
+hints = [
+    "Three parts: remove 5432/tcp, http and cockpit from public; put 10.0.2.20 into another zone (internal) and open 5432/tcp there.",
+    "sudo firewall-cmd --remove-port=5432/tcp --remove-service=http --remove-service=cockpit; sudo firewall-cmd --zone=internal --add-source=10.0.2.20 --add-port=5432/tcp",
+    "… then sudo firewall-cmd --runtime-to-permanent (or repeat everything with --permanent and --reload)",
+]
+explanation = "Connections from 10.0.2.20 now land in the internal zone, which allows 5432; everyone else is judged by public, which no longer does. The game tested from both hosts, before and after a reboot."
+
+[[task]]
+id = "runtime"
+title = "Runtime versus permanent"
+kind = "explanation"
+instructions = "Think about the two configurations firewalld keeps."
+skills = { "i.firewalls" = 1.0 }
+question = { prompt = "You run sudo firewall-cmd --add-port=8080/tcp (without --permanent). What happens at the next firewall-cmd --reload?", type = "choice", choices = ["Nothing, the port stays open", "The port is closed again: the runtime configuration is replaced by the permanent one", "firewalld refuses to reload"], answer = 1 }
+hints = ["What does --reload load?", "--reload replaces the runtime state with the saved (permanent) one.", "(b)"]
+explanation = "Testing in runtime first and saving with --runtime-to-permanent is a safe pattern: a mistake disappears with a reload."
+
+[debrief]
+summary = """
+Audit (firewall-cmd --list-all + ss -tlnp), close what nothing needs, restrict what must stay
+to its sources (a zone per source), and make every change permanent.
+"""
+alternatives = ["A rich rule: firewall-cmd --add-rich-rule='rule family=ipv4 source address=10.0.2.20 port port=5432 protocol=tcp accept' (not simulated)", "Make the database listen only on the address the application uses", "nftables directly: ip saddr 10.0.2.20 tcp dport 5432 accept"]
+pitfalls = ["Changing only the runtime: the next reload or reboot reopens the port.", "Adding 10.0.2.20 to the trusted zone: that opens every port to it.", "Removing ssh from the zone you are connected through."]
+next = "Chapter L continues with incident response."
+
+[[solution]]
+name = "runtime first, then save"
+steps = [
+    { input = ["letslinux"] },
+    "sudo firewall-cmd --list-all",
+    ":answer 5432/tcp",
+    "sudo ss -tlnp",
+    "sudo firewall-cmd --remove-port=5432/tcp --remove-service=http --remove-service=cockpit",
+    "sudo firewall-cmd --zone=internal --add-source=10.0.2.20 --add-port=5432/tcp",
+    "sudo firewall-cmd --runtime-to-permanent",
+    "sudo firewall-cmd --get-active-zones",
+    ":answer b",
+]
+
+[[solution]]
+name = "permanent, then reload"
+steps = [
+    { input = ["letslinux"] },
+    "sudo firewall-cmd --list-ports",
+    ":answer 5432",
+    "sudo firewall-cmd --permanent --remove-port=5432/tcp",
+    "sudo firewall-cmd --permanent --remove-service=http",
+    "sudo firewall-cmd --permanent --remove-service=cockpit",
+    "sudo firewall-cmd --permanent --zone=internal --add-source=10.0.2.20",
+    "sudo firewall-cmd --permanent --zone=internal --add-port=5432/tcp",
+    "sudo firewall-cmd --reload",
+    ":answer The port is closed again: the runtime configuration is replaced by the permanent one",
+]
+
+[[counterexample]]
+name = "runtime only"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 5432/tcp",
+    "sudo firewall-cmd --remove-port=5432/tcp --remove-service=http --remove-service=cockpit",
+    "sudo firewall-cmd --zone=internal --add-source=10.0.2.20 --add-port=5432/tcp",
+    ":answer b",
+]

@@ -1,0 +1,307 @@
+/* Let's Linux — Textual styles.
+ * Keyboard-first: focused widgets always show a visible border.
+ * Status is never conveyed by colour alone (glyphs ✓ ▶ • × are used too; only single-width glyphs, so columns stay aligned). */
+
+Screen {
+    background: $background;
+}
+
+#screen-title, #terminal-title, #editor-title, #pager-title {
+    background: $primary;
+    color: $text;
+    text-style: bold;
+    width: 100%;
+    height: 1;
+}
+
+/* screen titles wrap instead of being cut off on narrow terminals */
+#screen-title {
+    height: auto;
+}
+
+.section {
+    margin-top: 1;
+    text-style: bold;
+}
+
+/* ---------------------------------------------------------------- profiles & menu */
+
+ProfileScreen, MenuScreen {
+    align: center middle;
+}
+
+#profile-box, #menu-box {
+    width: 100%;
+    max-width: 100;
+    height: auto;
+    padding: 0 2;
+}
+
+#logo {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#tagline {
+    height: auto;
+    color: $text-muted;
+    margin-bottom: 1;
+}
+
+#profiles {
+    height: auto;
+    max-height: 12;
+}
+
+#new-profile {
+    height: auto;
+}
+
+#new-name {
+    width: 1fr;
+}
+
+#new-distro {
+    width: 36;
+}
+
+#profile-error {
+    color: $error;
+    height: auto;
+}
+
+#tagline, #menu-header, #menu-footer {
+    width: 100%;
+    text-align: center;
+}
+
+#menu-header {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#menu {
+    width: 50;
+    max-width: 100%;
+    height: auto;
+    max-height: 16;
+    border: double $primary;
+    border-title-align: center;
+    border-title-color: $accent;
+    padding: 0 1;
+}
+
+#menu:focus {
+    border: double $accent;
+}
+
+#menu-footer {
+    margin-top: 1;
+    height: auto;
+}
+
+/* ---------------------------------------------------------------- terminal */
+
+#terminal-body {
+    height: 1fr;
+}
+
+#terminal-main {
+    width: 1fr;
+}
+
+#log {
+    height: 1fr;
+    border: none;
+    padding: 0 1;
+    background: $surface;
+    scrollbar-size-vertical: 1;
+}
+
+#input-row {
+    height: 2;
+    border-top: solid $primary;
+}
+
+#prompt {
+    width: auto;
+    height: 1;
+    padding: 0 0 0 1;
+}
+
+#command {
+    width: 1fr;
+    border: none;
+    height: 1;
+    padding: 0;
+}
+
+#command:focus {
+    border: none;
+    background: $boost;
+}
+
+#sidebar {
+    width: 42;
+    border-left: solid $primary;
+    padding: 0 1;
+    background: $panel;
+}
+
+#objectives {
+    height: auto;
+}
+
+/* ---------------------------------------------------------------- lists & tables */
+
+#missions-body, #reference-body {
+    height: 1fr;
+}
+
+#mission-list, #reference-list {
+    width: 1fr;
+    min-width: 30;
+}
+
+#mission-detail-box, #reference-detail-box {
+    width: 1fr;
+    padding: 0 1;
+    border-left: solid $primary;
+}
+
+#progress-overview {
+    height: auto;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+#progress-body {
+    height: 1fr;
+}
+
+#chapters-table {
+    width: 1fr;
+    height: 1fr;
+}
+
+#next-box {
+    height: auto;
+    max-height: 9;
+    padding: 0 1;
+    border-top: solid $primary;
+}
+
+#next-list {
+    height: auto;
+    max-height: 7;
+}
+
+#skills-table, #achievements-table {
+    height: 1fr;
+}
+
+#skills-note, #review-note {
+    height: auto;
+    padding: 0 1;
+}
+
+#review-list {
+    height: 1fr;
+}
+
+#settings-box {
+    padding: 1 2;
+    height: auto;
+    max-width: 80;
+}
+
+.setting-row {
+    height: auto;
+    margin-top: 1;
+}
+
+.setting-label {
+    padding: 1 1;
+}
+
+OptionList:focus, DataTable:focus, Input:focus, Select:focus, Button:focus {
+    border: tall $accent;
+}
+
+/* ---------------------------------------------------------------- modals */
+
+EditorScreen, PagerScreen {
+    align: center middle;
+}
+
+#editor-box, #pager-box {
+    width: 100%;
+    height: 100%;
+}
+
+#editor-text {
+    height: 1fr;
+}
+
+#pager-scroll {
+    height: 1fr;
+    padding: 0 1;
+}
+
+PromptScreen, MessageScreen, ConfirmScreen {
+    align: center middle;
+    background: $background 60%;
+}
+
+#prompt-box, #confirm-box {
+    width: 70;
+    max-width: 95%;
+    height: auto;
+    padding: 1 2;
+    border: thick $primary;
+    background: $surface;
+}
+
+#message-box {
+    width: 80;
+    max-width: 95%;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    border: thick $success;
+    background: $surface;
+}
+
+#message-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#message-scroll {
+    height: auto;
+    max-height: 30;
+}
+
+#prompt-hint {
+    color: $text-muted;
+}
+
+#confirm-buttons {
+    height: auto;
+    margin-top: 1;
+}
+
+/* ---------------------------------------------------------------- high contrast */
+
+App.high-contrast Screen {
+    background: black;
+}
+
+App.high-contrast #log, App.high-contrast #sidebar {
+    background: black;
+    color: white;
+}
+
+App.high-contrast OptionList:focus, App.high-contrast Input:focus {
+    border: heavy yellow;
+}

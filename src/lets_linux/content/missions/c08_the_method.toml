@@ -1,0 +1,170 @@
+schema = 1
+
+[mission]
+id = "c08-the-method"
+title = "How to Troubleshoot"
+chapter = "C"
+kind = "lesson"
+order = 8
+difficulty = 2
+requires = ["c03-grep", "a04-exit-status"]
+skills = ["m.hypothesis-method", "m.verification"]
+review_for = ["m.hypothesis-method"]
+xp = 80
+estimated_minutes = 15
+
+[briefing]
+context = """
+From the next chapter on, many missions are troubleshooting missions: something is broken and
+nobody tells you why. Guessing and changing things at random wastes time and causes new
+problems. This lesson teaches the method you will use in all of them, on three small support
+tickets.
+"""
+concept = """
+1. Reproduce: run the failing action yourself, exactly as reported.
+2. Read the evidence: the exact error message, the exit status ($?), the logs.
+3. Form ONE hypothesis that explains the evidence ("the file name is wrong").
+4. Test it with a harmless check (ls, cat, grep) before changing anything.
+5. Change one thing, then verify: repeat the original failing action, as the person who
+   reported it. "It works for me" is not verification.
+Exit statuses are evidence too: 0 means success; for grep, 1 means "ran fine, no match" and 2
+means "an error occurred" (for example, the file does not exist).
+"""
+objectives = ["Reproduce a problem before fixing it", "Use error messages and exit statuses as evidence", "Test one hypothesis at a time", "Verify a fix by repeating the original action"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+code = { word = true }
+errors = { range = [6, 11] }
+
+[[environment.setup]]
+action = "file"
+path = "~/reports/Q3-summary.txt"
+content = "Q3 summary — approval code {{code}}\nRevenue up 4%.\n"
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "run"
+command = '''
+cd /home/learner && mkdir -p app && for i in $(seq 1 40); do echo "2026-03-12 09:$((i + 10)):00 Info: request $i served"; done > app/app.log
+for i in $(seq 1 {{errors}}); do echo "2026-03-12 10:0$((i % 10)):30 Error: payment gateway timeout (attempt $i)"; done >> app/app.log
+printf 'timeout=30\nretries=3\n' > app/app.cfg
+chown -R learner:learner app
+'''
+
+[[environment.setup]]
+action = "file"
+path = "~/tickets.txt"
+content = """
+TICKET 1  From: Dana (finance)
+  "cat ~/reports/q3-summary.txt says No such file or directory. Did someone delete my report?"
+
+TICKET 2  From: Sam (support)
+  "Customers say payments fail, but  grep ERROR ~/app/app.log  shows nothing. Is the log broken?"
+"""
+owner = "learner"
+group = "learner"
+
+[[task]]
+id = "reproduce"
+title = "1. Reproduce"
+kind = "guided"
+instructions = "Read ~/tickets.txt. Then reproduce ticket 1 exactly as Dana reported it:  cat ~/reports/q3-summary.txt"
+skills = { "m.hypothesis-method" = 1.0 }
+checks = [{ type = "command_used", command = ["cat"], args_contain = ["q3-summary.txt"], failed = true }]
+hints = ["Run the same command Dana ran, before trying any fix.", "The command is in the ticket.", "Type: cat ~/reports/q3-summary.txt"]
+explanation = "Reproducing first proves the problem is real, shows you the exact error, and gives you a test to repeat after the fix."
+
+[[task]]
+id = "read"
+title = "2. Read the evidence"
+kind = "prediction"
+instructions = "Read the error message carefully — every word is evidence."
+skills = { "m.hypothesis-method" = 1.0 }
+question = { prompt = "Which hypothesis does 'No such file or directory' support?", type = "choice", choices = ["Dana lacks permission to read the file", "The path or the name is not what Dana typed — or the file really is gone", "The disk is full", "cat is broken"], answer = 1 }
+hints = ["A permission problem has its own message: Permission denied.", "'No such file' is about the name: nothing exists under exactly that path.", "The answer is (b)."]
+explanation = "Error messages are specific. 'No such file or directory' (ENOENT) and 'Permission denied' (EACCES) point in completely different directions; read before you act."
+
+[[task]]
+id = "test"
+title = "3. Test the hypothesis"
+kind = "guided"
+instructions = "Test it without changing anything: list what is in the directory —  ls ~/reports"
+skills = { "m.hypothesis-method" = 1.0 }
+question = { prompt = "What is the report's real file name?", type = "exact", accept = ["Q3-summary.txt"], case_sensitive = true }
+hints = ["ls shows the names that actually exist.", "Compare them letter by letter with what Dana typed. Linux file names are case-sensitive.", "Run ls ~/reports — the answer is Q3-summary.txt"]
+explanation = "A harmless check (ls) confirmed the hypothesis: the file exists, but its name starts with a capital Q. Nothing was deleted."
+
+[[task]]
+id = "verify"
+title = "4. Verify"
+kind = "independent"
+instructions = "Verify by repeating Dana's action with the correct name: show the report's contents. (Dana needs the approval code in it.)"
+skills = { "m.verification" = 1.0 }
+checks = [{ type = "output_contains", text = "{{code}}", command = ["cat", "less", "head", "more"] }]
+hints = ["Repeat the original action — cat — with the real name.", "Mind the capital Q.", "Type: cat ~/reports/Q3-summary.txt"]
+explanation = "Verification repeats the original failing action. Now you can answer Dana with evidence: the report was never deleted; the name has a capital Q."
+
+[[task]]
+id = "status"
+title = "Exit status is evidence"
+kind = "guided"
+instructions = "Ticket 2. Reproduce it, then look at the exit status:  grep ERROR ~/app/app.log; echo $?"
+skills = { "m.hypothesis-method" = 1.0, "a.exit-status" = 0.5 }
+question = { prompt = "Which exit status did grep return?", type = "number", accept = ["1"] }
+hints = ["$? holds the exit status of the previous command.", "grep returns 0 for a match, 1 for no match, 2 for an error.", "Run: grep ERROR ~/app/app.log; echo $? — the answer is 1."]
+explanation = "Status 1 means grep worked and found no line containing exactly ERROR. So the log is not broken (that would be status 2): the question is what the error lines really look like."
+
+[[task]]
+id = "errors"
+title = "Find the real errors"
+kind = "independent"
+instructions = "Form a hypothesis about why grep found nothing, test it, and count the error lines in ~/app/app.log."
+skills = { "m.hypothesis-method" = 1.0, "c.grep-basics" = 0.5 }
+question = { prompt = "How many error lines are in the log?", type = "state", state = { command = "grep -ci error /home/learner/app/app.log" } }
+hints = ["Look at a few lines of the log: how is the word written?", "The log writes Error, not ERROR. grep -i ignores case; grep -c counts.", "Run: grep -ci error ~/app/app.log"]
+explanation = "The evidence (status 1, then a look at the log) pointed at the search pattern, not at the log. Different programs write ERROR, Error, error, err or E — check before you conclude."
+
+[[task]]
+id = "one-thing"
+title = "One change at a time"
+kind = "prediction"
+instructions = "A colleague fixed a broken service by changing three settings at once. It works now."
+skills = { "m.hypothesis-method" = 1.0, "m.verification" = 0.5 }
+question = { prompt = "What do they actually know?", type = "choice", choices = ["All three changes were needed", "One or more of the changes fixed it — they do not know which, and the others may cause new problems later", "The service was never broken", "Nothing: services fix themselves"], answer = 1 }
+hints = ["Could the service work with just one of the three changes?", "Unneeded changes stay behind and may break something else later.", "The answer is (b)."]
+explanation = "Change one thing, test, and keep or revert it. Then you know the cause, your notes are accurate, and you leave no unexplained changes behind."
+
+[[task]]
+id = "whose-test"
+title = "Verify as the reporter"
+kind = "prediction"
+instructions = "Think about who should be able to do what after a fix."
+skills = { "m.verification" = 1.0 }
+question = { prompt = "You fixed a colleague's 'Permission denied'. Which check proves the fix?", type = "choice", choices = ["You can now open the file", "The file's permissions look right in ls -l", "The colleague's original action succeeds when run as the colleague", "No new errors appear in the next five minutes"], answer = 2 }
+hints = ["You and your colleague are different users with different rights.", "Only the original action, by the original user, proves the problem is gone.", "The answer is (c)."]
+explanation = "Verification means repeating the original failing action under the original conditions. Chapter D shows how to run a command as another user."
+
+[debrief]
+summary = """
+Reproduce, read the evidence (message, exit status, logs), form one hypothesis, test it with
+a harmless check, change one thing, and verify by repeating the original action as the person
+who reported it.
+"""
+alternatives = ["ls ~/reports | grep -i q3 tests the 'wrong name' hypothesis directly", "grep -i error app.log | head shows what the error lines look like before counting", "Writing down each hypothesis and its result makes long investigations manageable"]
+pitfalls = ["Fixing before reproducing: you cannot tell whether the fix worked.", "Changing several things at once.", "Verifying as yourself (or as root) when the problem was another user's."]
+next = "Next: permissions — and your first real troubleshooting mission."
+
+[[solution]]
+name = "as instructed"
+steps = ["cat ~/tickets.txt", "cat ~/reports/q3-summary.txt", ":answer b", "ls ~/reports", ":answer Q3-summary.txt", "cat ~/reports/Q3-summary.txt", "grep ERROR ~/app/app.log; echo $?", ":answer 1", "grep -ci error ~/app/app.log", { answer_with = "grep -ci error /home/learner/app/app.log" }, ":answer b", ":answer c"]
+
+[[solution]]
+name = "other tools"
+steps = ["cd ~/reports", "cat q3-summary.txt", ":answer 2", "ls -l", ":answer Q3-summary.txt", "head Q3-summary.txt", "grep ERROR ~/app/app.log", "echo $?", ":answer 1", "grep -i 'error' ~/app/app.log | wc -l", { answer_with = "grep -i error /home/learner/app/app.log | wc -l" }, ":answer One or more of the changes fixed it — they do not know which, and the others may cause new problems later", ":answer 3"]
+
+[[counterexample]]
+name = "fixing without reproducing"
+steps = ["ls ~/reports", ":answer b", ":answer Q3-summary.txt", "cat ~/reports/Q3-summary.txt", ":answer 1", ":answer 8", ":answer a", ":answer a"]

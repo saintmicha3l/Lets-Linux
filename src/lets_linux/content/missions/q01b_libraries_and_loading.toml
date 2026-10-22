@@ -1,0 +1,162 @@
+schema = 1
+
+[mission]
+id = "q01b-libraries-and-loading"
+title = "Libraries and Loading"
+chapter = "Q"
+kind = "lesson"
+order = 2
+difficulty = 4
+requires = ["q01-toolchain"]
+skills = ["q.shared-libraries", "q.abi-environment"]
+review_for = ["q.shared-libraries", "q.abi-environment"]
+xp = 110
+estimated_minutes = 25
+
+[briefing]
+context = """
+Most programs are not complete on their own: they need shared libraries, found and loaded by
+the dynamic loader every time they start. When a library is missing or too old the program
+does not even start. Build a tiny library yourself and watch every step.
+(sudo password: letslinux)
+"""
+concept = """
+gcc -shared -fPIC -Wl,-soname,libNAME.so.1 -o libNAME.so.1.0 FILE.c builds a shared library.
+Its SONAME (libNAME.so.1) is the name programs record and ask for at run time; the
+convention is three names: libNAME.so.1.0 (the file), libNAME.so.1 (link: what programs
+load), libNAME.so (link: what -lNAME finds at build time).
+At start-up the loader (ld.so) looks in LD_LIBRARY_PATH, then in its cache, built by ldconfig
+from /etc/ld.so.conf and /etc/ld.so.conf.d/*.conf (standard dirs: /lib/x86_64-linux-gnu,
+/usr/local/lib ...). ldd PROGRAM shows what it would load ('not found' if missing);
+readelf -d shows NEEDED entries; ldconfig -p lists the cache.
+ABI: programs also record the glibc symbol VERSIONS they need (objdump -T PROG | grep GLIBC_).
+A program built against a newer glibc fails on an older one ("version `GLIBC_2.38' not
+found"); the opposite direction works. ldd --version shows the installed glibc.
+"""
+objectives = ["Read ldd output", "Build a shared library with a SONAME", "Make the loader find a library system-wide", "Check glibc version requirements"]
+
+[environment]
+profile = "debian"
+packages = ["build-essential"]
+[environment.vars]
+name = { choices = ["greet", "banner", "salute"] }
+
+[[environment.setup]]
+action = "file"
+path = "~/lib{{name}}/{{name}}.c"
+owner = "learner"
+group = "learner"
+content = """#include <stdio.h>
+
+void {{name}}(const char *who)
+{
+    printf("hello, %s\\n", who);
+}
+"""
+
+[[environment.setup]]
+action = "file"
+path = "~/lib{{name}}/hello.c"
+owner = "learner"
+group = "learner"
+content = """void {{name}}(const char *who);
+
+int main(void)
+{
+    {{name}}("world");
+    return 0;
+}
+"""
+
+[[task]]
+id = "ldd"
+title = "What a program loads"
+kind = "guided"
+instructions = "Show which libraries ls needs:  ldd /bin/ls"
+skills = { "q.shared-libraries" = 1.0 }
+question = { prompt = "Which file is loaded for libc.so.6? (full path)", type = "exact", accept = ["/lib/x86_64-linux-gnu/libc.so.6", "/usr/lib/x86_64-linux-gnu/libc.so.6"] }
+hints = ["Each line is NAME => PATH (ADDRESS).", "Look at the libc.so.6 line.", "The answer is /lib/x86_64-linux-gnu/libc.so.6."]
+explanation = "Almost every program needs libc.so.6, the C library. ld-linux-x86-64.so.2 at the end is the loader itself."
+
+[[task]]
+id = "build"
+title = "Build a library and a program"
+kind = "guided"
+instructions = """
+In ~/lib{{name}}, build the library with its SONAME, the two links, and a program that uses it:
+    cd ~/lib{{name}}
+    gcc -shared -fPIC -Wl,-soname,lib{{name}}.so.1 -o lib{{name}}.so.1.0 {{name}}.c
+    ln -s lib{{name}}.so.1.0 lib{{name}}.so.1
+    ln -s lib{{name}}.so.1 lib{{name}}.so
+    gcc -o hello hello.c -L. -l{{name}}
+"""
+skills = { "q.shared-libraries" = 1.0, "q.toolchain" = 0.5 }
+checks = [
+    { type = "path_exists", path = "~/lib{{name}}/hello", kind = "file" },
+    { type = "path_exists", path = "~/lib{{name}}/lib{{name}}.so.1", kind = "symlink" },
+]
+hints = ["-L. tells the LINKER to look in the current directory; -l{{name}} means lib{{name}}.so.", "Create the links before building hello.", "Type the five commands shown, in order."]
+explanation = "The linker resolved {{name}}() in lib{{name}}.so at build time and recorded the library's SONAME, lib{{name}}.so.1, in hello. It did NOT record where the file was."
+
+[[task]]
+id = "run"
+title = "It does not start"
+kind = "guided"
+instructions = "Run it:  ./hello   then ask why:  ldd ./hello"
+skills = { "q.shared-libraries" = 1.0 }
+question = { prompt = "Which library does the loader fail to find?", type = "exact", accept = ["lib{{name}}.so.1"] }
+hints = ["ldd shows 'not found' next to it.", "It is the name recorded at build time.", "The answer is lib{{name}}.so.1."]
+explanation = "-L. only helped the linker. At run time the loader searches its own places — and the current directory is not one of them."
+
+[[task]]
+id = "soname"
+title = "Why .so.1?"
+kind = "guided"
+instructions = "Compare what the library calls itself and what hello asks for:  objdump -p lib{{name}}.so.1.0 | grep SONAME   and   readelf -d hello | grep NEEDED"
+skills = { "q.shared-libraries" = 1.0 }
+question = { prompt = "Why does hello ask for lib{{name}}.so.1 rather than lib{{name}}.so.1.0?", type = "choice", choices = ["A typing mistake in gcc", "It records the SONAME: any compatible 1.x version can be installed behind the lib{{name}}.so.1 link without rebuilding hello", "Because .0 files cannot be loaded", "The loader adds .1 automatically"], answer = 1 }
+hints = ["The SONAME carries only the major version.", "Bug-fix releases replace the file; the link moves; programs keep working.", "The answer is (b)."]
+explanation = "The major number in the SONAME changes only when the library breaks compatibility; then old programs keep using .so.1 while new ones use .so.2."
+
+[[task]]
+id = "install"
+title = "Make it work for everyone"
+kind = "independent"
+instructions = "Make ~/lib{{name}}/hello work for every user, in every new session, without LD_LIBRARY_PATH: install the library into /usr/local/lib and refresh the loader's cache."
+skills = { "q.shared-libraries" = 1.0 }
+checks = [{ type = "command_result", command = "/home/learner/lib{{name}}/hello", login = true, stdout_equals = "hello, world" }]
+persistent = true
+hints = ["/usr/local/lib is already in the loader's configuration — but the cache does not know the new file yet.", "Copy the library file and create the lib{{name}}.so.1 link there (or let ldconfig create it), then run ldconfig (it is in /sbin).", "sudo cp lib{{name}}.so.1.0 /usr/local/lib/ && sudo /sbin/ldconfig"]
+explanation = "ldconfig scans the configured directories, creates SONAME links if needed and rebuilds /etc/ld.so.cache. For a vendor directory such as /opt/vendor/lib, add a file to /etc/ld.so.conf.d/ instead of copying."
+
+[[task]]
+id = "abi"
+title = "Which glibc does it need?"
+kind = "guided"
+instructions = "Check the installed glibc and the versions hello needs:  ldd --version | head -1   and   objdump -T hello | grep GLIBC_"
+skills = { "q.abi-environment" = 1.0 }
+question = { prompt = "A program needs GLIBC_2.38 and this server has glibc 2.36. What happens when you run it?", type = "choice", choices = ["It runs normally", "The loader refuses: version `GLIBC_2.38' not found", "It runs but prints a warning", "glibc is upgraded automatically"], answer = 1 }
+hints = ["Newer symbol versions do not exist in older libraries.", "The loader checks every required version at start-up.", "The answer is (b)."]
+explanation = "Build on the oldest system you must support (or in a container with that system's userspace): programs built against an old glibc run on newer ones, not the other way round."
+
+[debrief]
+summary = """
+Programs record library SONAMEs; the loader finds them through LD_LIBRARY_PATH and the ldconfig
+cache. ldd, readelf -d and objdump -p show the chain; installing into a configured directory and
+running ldconfig fixes 'not found'. glibc symbol versions decide where a binary can run.
+"""
+alternatives = ["LD_LIBRARY_PATH=$PWD ./hello works for one command — fine for testing, wrong for production", "gcc -Wl,-rpath,'$ORIGIN' records a search path inside the program itself", "/etc/ld.so.conf.d/vendor.conf with one directory per line adds a library directory"]
+pitfalls = ["Exporting LD_LIBRARY_PATH globally: it affects every program and is ignored for setuid ones.", "Copying a library without running ldconfig.", "Building on a newer distribution than you deploy to."]
+next = "Next: a vendor program whose library cannot be found, and one built for a newer glibc."
+
+[[solution]]
+name = "as instructed"
+steps = ["ldd /bin/ls", ":answer /lib/x86_64-linux-gnu/libc.so.6", "cd ~/lib{{name}}", "gcc -shared -fPIC -Wl,-soname,lib{{name}}.so.1 -o lib{{name}}.so.1.0 {{name}}.c", "ln -s lib{{name}}.so.1.0 lib{{name}}.so.1", "ln -s lib{{name}}.so.1 lib{{name}}.so", "gcc -o hello hello.c -L. -l{{name}}", "./hello", "ldd ./hello", ":answer lib{{name}}.so.1", "objdump -p lib{{name}}.so.1.0 | grep SONAME", "readelf -d hello | grep NEEDED", ":answer b", { input = ["letslinux"] }, "sudo cp lib{{name}}.so.1.0 /usr/local/lib/", "sudo /sbin/ldconfig", "./hello", "ldd --version | head -1", "objdump -T hello | grep GLIBC_", ":answer b"]
+
+[[solution]]
+name = "links in /usr/local/lib"
+steps = ["ldd /bin/ls | grep libc", ":answer /lib/x86_64-linux-gnu/libc.so.6", "cd ~/lib{{name}} && gcc -shared -fPIC -Wl,-soname,lib{{name}}.so.1 -o lib{{name}}.so.1.0 {{name}}.c && ln -s lib{{name}}.so.1.0 lib{{name}}.so.1 && ln -s lib{{name}}.so.1 lib{{name}}.so && gcc -o hello hello.c -L. -l{{name}}", "~/lib{{name}}/hello", ":answer lib{{name}}.so.1", ":answer 2", { input = ["letslinux"] }, "sudo install -m 755 ~/lib{{name}}/lib{{name}}.so.1.0 /usr/local/lib/", "sudo ln -s lib{{name}}.so.1.0 /usr/local/lib/lib{{name}}.so.1", "sudo /sbin/ldconfig", ":answer 2"]
+
+[[counterexample]]
+name = "LD_LIBRARY_PATH only"
+steps = ["ldd /bin/ls", ":answer /lib/x86_64-linux-gnu/libc.so.6", "cd ~/lib{{name}} && gcc -shared -fPIC -Wl,-soname,lib{{name}}.so.1 -o lib{{name}}.so.1.0 {{name}}.c && ln -s lib{{name}}.so.1.0 lib{{name}}.so.1 && ln -s lib{{name}}.so.1 lib{{name}}.so && gcc -o hello hello.c -L. -l{{name}}", ":answer lib{{name}}.so.1", ":answer b", "export LD_LIBRARY_PATH=~/lib{{name}}", "./hello", ":answer b"]

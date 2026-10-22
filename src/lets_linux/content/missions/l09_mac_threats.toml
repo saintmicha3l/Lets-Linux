@@ -1,0 +1,201 @@
+schema = 1
+
+[mission]
+id = "l09-mac-and-threats"
+title = "Who Turned Off SELinux?"
+chapter = "L"
+kind = "lesson"
+order = 11
+difficulty = 5
+requires = ["l02-service-exposure", "l03-permission-audit", "h02-reading-the-journal"]
+skills = ["l.mac-concepts", "l.threat-modeling"]
+review_for = ["h.journalctl", "l.service-exposure"]
+xp = 180
+estimated_minutes = 25
+
+[briefing]
+context = """
+Two days ago the website on this Fedora server returned "403 Forbidden" after a colleague moved
+new pages into /srv/www. They "fixed" it by switching SELinux to permissive mode — at runtime
+and in the configuration. Read what SELinux logged, explain the proper fix, and switch
+enforcement back on. Then help write the server's threat model. (sudo password: letslinux)
+"""
+concept = """
+Mandatory access control adds a second, system-wide policy on top of ordinary permissions:
+even root's processes may only do what the policy allows. SELinux (Fedora, RHEL) labels
+every process and file with a context (user:role:type:level); the targeted policy says, for
+example, that httpd_t (web servers) may read httpd_sys_content_t files. getenforce shows the
+mode: Enforcing (denies and logs), Permissive (only logs), Disabled. Denials are logged as
+'avc: denied { PERMISSION } … comm="PROGRAM" name="FILE" scontext=… tcontext=…'. mv keeps a
+file's label, cp gives it the label of the new place: files moved from a home directory keep
+user_home_t. restorecon -Rv DIR resets labels to the policy's defaults. AppArmor (Ubuntu,
+Debian) does the same with per-program path profiles; aa-status lists them.
+Simulation note: Let's Linux reports modes and shows denial messages as a real system logs
+them, but it does not evaluate SELinux or AppArmor policy — nothing is ever blocked by them.
+"""
+objectives = ["Read the SELinux mode", "Interpret an AVC denial", "Choose the right fix instead of disabling SELinux", "Re-enable enforcement persistently", "Name assets, threats and mitigations"]
+
+[environment]
+profile = "fedora"
+packages = ["netcat"]
+
+[[environment.setup]]
+action = "service"
+name = "devpanel.service"
+enable = true
+start = true
+content = """[Unit]
+Description=Developer admin panel (left over from testing)
+
+[Service]
+ExecStart=/usr/bin/nc -lk 9000
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "journal"
+identifier = "kernel"
+facility = "kern"
+priority = "notice"
+message = "audit: type=1400 audit(1772366112.481:412): avc:  denied  { read } for  pid=1874 comm=\"nginx\" name=\"index.html\" dev=\"vda3\" ino=268449 scontext=system_u:system_r:httpd_t:s0 tcontext=unconfined_u:object_r:user_home_t:s0 tclass=file permissive=0"
+ago = 172800
+
+[[environment.setup]]
+action = "journal"
+identifier = "kernel"
+facility = "kern"
+priority = "notice"
+message = "audit: type=1400 audit(1772366112.502:413): avc:  denied  { getattr } for  pid=1874 comm=\"nginx\" path=\"/srv/www/index.html\" dev=\"vda3\" ino=268449 scontext=system_u:system_r:httpd_t:s0 tcontext=unconfined_u:object_r:user_home_t:s0 tclass=file permissive=0"
+ago = 172790
+
+[[environment.setup]]
+action = "run"
+command = "sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config && setenforce 0"
+
+[[task]]
+id = "mode"
+title = "What mode is it in?"
+kind = "guided"
+instructions = "Check SELinux's current mode."
+skills = { "l.mac-concepts" = 1.0 }
+question = { prompt = "Current mode?", type = "exact", accept = ["Permissive", "permissive"] }
+hints = ["One command prints just the mode.", "getenforce (sestatus shows more detail, including the mode in the configuration file).", "Permissive: SELinux logs what it would deny but allows it."]
+explanation = "Permissive mode protects nothing — it only produces log messages."
+
+[[task]]
+id = "denial"
+title = "Read the denial"
+kind = "troubleshooting"
+instructions = "Find SELinux's denial messages from two days ago in the journal."
+skills = { "l.mac-concepts" = 1.0, "h.journalctl" = 0.5 }
+question = { prompt = "Which SELinux type did the denied file have (the type part of tcontext)?", type = "exact", accept = ["user_home_t"] }
+hints = ["The kernel logs them: journalctl -k | grep avc (or sudo ausearch -m avc on a real system).", "tcontext=unconfined_u:object_r:TYPE:s0 is the file's label; scontext is the process's (httpd_t: the web server).", "user_home_t — the label of files in home directories."]
+explanation = "nginx (httpd_t) was denied reading a file labelled user_home_t: the pages had been created in a home directory and moved — mv keeps the label."
+
+[[task]]
+id = "fix"
+title = "The right fix"
+kind = "explanation"
+instructions = "Choose what your colleague should have done."
+skills = { "l.mac-concepts" = 1.0 }
+question = { prompt = "What is the proper fix for this denial?", type = "choice", choices = ["setenforce 0 and SELINUX=permissive", "Relabel the files to the policy's default for their location: sudo restorecon -Rv /srv/www (with a matching semanage fcontext rule for a non-standard directory)", "chmod -R 777 /srv/www"], answer = 1 }
+hints = ["The policy is fine; the files carry the wrong label.", "restorecon sets labels according to the policy's file-context rules.", "(b)"]
+explanation = "Fix the label, not the policy — and never switch off the protection of the whole system to fix one directory. chmod changes nothing: SELinux decides independently of permissions."
+
+[[task]]
+id = "enforce"
+title = "Protection back on"
+kind = "independent"
+instructions = "Switch SELinux back to enforcing mode — now and for every future boot."
+skills = { "l.mac-concepts" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "getenforce", stdout_equals = "Enforcing\n" },
+    { type = "file_contains", path = "/etc/selinux/config", regex = "(?m)^SELINUX=enforcing$" },
+    { type = "after_reboot", checks = [{ type = "command_result", user = "root", command = "getenforce", stdout_equals = "Enforcing\n" }] },
+]
+hints = ["Runtime and configuration are separate, like firewalld's runtime and permanent settings.", "Runtime: sudo setenforce 1. At boot: SELINUX=enforcing in /etc/selinux/config.", "sudo setenforce 1 && sudo sed -i 's/^SELINUX=permissive/SELINUX=enforcing/' /etc/selinux/config"]
+explanation = "Enforcing now and after reboots (the game rebooted a copy of the machine). Going from disabled to enforcing would need a full relabel at boot; from permissive it does not."
+
+[[task]]
+id = "assets"
+title = "A threat model"
+kind = "explanation"
+instructions = "A threat model lists what is worth protecting (assets), who or what endangers it (threats) and what reduces the risk (mitigations). Look at what this server runs (sudo ss -tlnp)."
+skills = { "l.threat-modeling" = 1.0 }
+question = { prompt = "Which line pairs a threat with a mitigation that addresses it?", type = "choice", choices = ["Threat: SSH password guessing — mitigation: SELinux in enforcing mode", "Threat: a vulnerability in nginx lets an attacker run code as the web server — mitigation: SELinux confines httpd_t, so the attacker cannot read home directories or start a shell listener on a random port", "Threat: a full disk — mitigation: a firewall"], answer = 1 }
+hints = ["Which defence actually acts on the threat named?", "SELinux limits what a compromised program can do; it does nothing against guessed passwords (keys, fail2ban do).", "(b)"]
+explanation = "Mandatory access control is a mitigation for compromised services: it contains the damage. Each threat needs its own control — keys against guessing, monitoring and quotas against full disks."
+
+[[task]]
+id = "surface"
+title = "Shrink the attack surface"
+kind = "independent"
+instructions = "The threat model says: this server's job is the website, plus SSH for the admins — every other network service is an unnecessary risk. Find what else listens on the network and remove it from the attack surface for good (it must not come back at boot). Do not touch the web server or SSH."
+skills = { "l.threat-modeling" = 1.0, "l.service-exposure" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "ss -tln | grep -c ':9000 '", stdout_equals = "0\n" },
+    { type = "any_of", checks = [
+        { type = "unit_enabled", unit = "devpanel.service", state = "disabled" },
+        { type = "unit_enabled", unit = "devpanel.service", state = "masked" },
+    ] },
+    { type = "port_listening", port = 22 },
+    { type = "after_reboot", checks = [{ type = "command_result", user = "root", command = "ss -tln | grep -c ':9000 '", stdout_equals = "0\n" }] },
+]
+hints = ["sudo ss -tlnp lists listening sockets with their programs; systemctl status PID shows the unit behind a process.", "Port 9000 belongs to devpanel.service — stop it and disable it (or mask it).", "sudo systemctl disable --now devpanel.service"]
+explanation = "Each listening service is something an attacker can probe. Removing what is not needed is the cheapest mitigation in any threat model — no policy, no patch can be faster than a service that is not there."
+
+[debrief]
+summary = """
+getenforce / sestatus → journalctl -k | grep avc (or ausearch -m avc) → read scontext,
+tcontext, permission → fix labels (restorecon, semanage fcontext) or booleans (setsebool),
+never setenforce 0 as a fix → keep SELINUX=enforcing.
+"""
+alternatives = ["audit2why explains a denial; audit2allow writes a policy module (only after understanding why)", "setsebool -P httpd_can_network_connect on for a proxying web server", "AppArmor: aa-status, aa-complain/aa-enforce PROFILE"]
+pitfalls = ["Disabling SELinux to make an error go away.", "mv instead of cp into a web root (labels travel with mv).", "Setting only the runtime mode: the config decides at boot."]
+next = "Chapter M: systematic troubleshooting."
+
+[[solution]]
+name = "getenforce and sed"
+steps = [
+    "getenforce",
+    ":answer Permissive",
+    "journalctl -k | grep avc",
+    ":answer user_home_t",
+    ":answer b",
+    { input = ["letslinux"] },
+    "sudo setenforce 1",
+    "sudo sed -i 's/^SELINUX=permissive/SELINUX=enforcing/' /etc/selinux/config",
+    "sestatus",
+    ":answer b",
+    "sudo ss -tlnp",
+    "sudo systemctl disable --now devpanel.service",
+]
+
+[[solution]]
+name = "sestatus and an editor-free rewrite"
+steps = [
+    "sestatus",
+    ":answer permissive",
+    "journalctl | grep 'avc:  denied'",
+    ":answer user_home_t",
+    ":answer Relabel the files to the policy's default for their location: sudo restorecon -Rv /srv/www (with a matching semanage fcontext rule for a non-standard directory)",
+    { input = ["letslinux"] },
+    "sudo sh -c 'grep -v ^SELINUX= /etc/selinux/config > /tmp/c; echo SELINUX=enforcing >> /tmp/c; cat /tmp/c > /etc/selinux/config'",
+    "sudo setenforce Enforcing",
+    ":answer b",
+    "sudo systemctl stop devpanel",
+    "sudo systemctl disable devpanel",
+]
+
+[[counterexample]]
+name = "runtime only"
+steps = [
+    ":answer Permissive",
+    ":answer user_home_t",
+    ":answer b",
+    { input = ["letslinux"] },
+    "sudo setenforce 1",
+    ":answer b",
+]

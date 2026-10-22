@@ -1,0 +1,170 @@
+schema = 1
+
+[mission]
+id = "b10-files-checkpoint"
+title = "Files Check-up"
+chapter = "B"
+kind = "assessment"
+order = 10
+difficulty = 2
+requires = ["b06-links", "b09-awkward-names"]
+skills = ["b.pwd-cd", "b.absolute-relative-paths", "b.create-files-dirs", "b.hidden-files", "b.file-types", "b.links-hard-inodes", "a.echo-printf"]
+review_for = ["b.pwd-cd", "b.absolute-relative-paths", "b.create-files-dirs", "b.hidden-files", "b.file-types", "b.links-hard-inodes", "a.echo-printf"]
+xp = 120
+estimated_minutes = 15
+sequential = false
+
+[briefing]
+context = """
+Moving-in day for the "{{project}}" project on this server. A few jobs, in any order, no
+commands given: set up its directories, find what a previous team left behind, and check
+the files that arrived in /srv/drop.
+"""
+concept = "Use what you know: cd and paths, mkdir and redirection, ls -a, file, ln and inodes."
+objectives = ["Navigate with relative paths", "Create files and directories", "Find hidden files", "Identify file types by content", "Work with hard links"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+project = { choices = ["moon", "comet", "aurora", "nebula"] }
+key = { choices = ["k7-41-zz", "q2-90-ab", "m5-13-xy", "t8-62-cd"] }
+
+[[environment.setup]]
+action = "dir"
+path = "/srv/drop"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/drop/report.pdf"
+content = "Plain text pretending to be a PDF.\n"
+
+[[environment.setup]]
+action = "run"
+command = "printf 'archive me\\n' > /tmp/x && gzip -c /tmp/x > /srv/drop/photo.jpg && rm /tmp/x && printf '#!/bin/sh\\necho hi\\n' > /srv/drop/notes.txt"
+
+[[environment.setup]]
+action = "dir"
+path = "/home/learner/old-team"
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/old-team/.credentials"
+owner = "learner"
+group = "learner"
+mode = "0600"
+content = "API_KEY={{key}}\n"
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/old-team/handover.txt"
+owner = "learner"
+group = "learner"
+content = "Everything you need is in this directory.\n"
+
+[[task]]
+id = "layout"
+title = "Directories and a README"
+kind = "independent"
+instructions = "Create ~/{{project}} with the subdirectories docs, src and tests, and a file ~/{{project}}/README containing exactly two lines: Project {{project}}  and  Status: setup"
+skills = { "b.create-files-dirs" = 1.0, "a.echo-printf" = 1.0 }
+checks = [
+    { type = "path_exists", path = "/home/learner/{{project}}/docs", kind = "dir" },
+    { type = "path_exists", path = "/home/learner/{{project}}/src", kind = "dir" },
+    { type = "path_exists", path = "/home/learner/{{project}}/tests", kind = "dir" },
+    { type = "file_equals", path = "/home/learner/{{project}}/README", content = "Project {{project}}\nStatus: setup\n" },
+]
+hints = ["mkdir -p and a brace expansion make all three at once.", "printf 'line one\\nline two\\n' > FILE writes two lines; echo writes one line per call (>> appends).", "mkdir -p ~/{{project}}/{docs,src,tests}; printf 'Project {{project}}\\nStatus: setup\\n' > ~/{{project}}/README"]
+explanation = "mkdir -p creates parents and does not complain about existing directories; printf gives exact control over newlines."
+
+[[task]]
+id = "relative"
+title = "Getting around"
+kind = "independent"
+instructions = "From ~/{{project}}/docs, change into ~/{{project}}/tests using a relative path (not starting with / or ~), and stay there."
+skills = { "b.pwd-cd" = 1.0, "b.absolute-relative-paths" = 1.0 }
+checks = [
+    { type = "cwd_is", path = "/home/learner/{{project}}/tests" },
+    { type = "command_used", command = ["cd"], args_regex = "^\\.\\./tests/?$", scope = "history" },
+]
+hints = ["cd ~/{{project}}/docs first.", ".. is the parent directory.", "cd ../tests"]
+explanation = "A relative path starts from the current directory; .. climbs one level."
+
+[[task]]
+id = "hidden"
+title = "What the old team left"
+kind = "independent"
+instructions = "The old team's directory ~/old-team claims to contain everything. Find the API key they left there."
+skills = { "b.hidden-files" = 1.0 }
+question = { prompt = "What is the API key?", type = "exact", accept = ["{{key}}"] }
+hints = ["ls shows only part of the story.", "Names starting with a dot are hidden: ls -a.", "cat ~/old-team/.credentials"]
+explanation = "ls -a (or ls -A) shows dot files; configuration and credentials are often kept in them."
+
+[[task]]
+id = "types"
+title = "Misleading names"
+kind = "independent"
+instructions = "Three files arrived in /srv/drop. Their names do not tell the truth."
+skills = { "b.file-types" = 1.0 }
+question = { prompt = "Which file in /srv/drop is really a gzip archive?", type = "exact", accept = ["photo.jpg", "/srv/drop/photo.jpg"] }
+hints = ["Extensions are just part of the name on Linux.", "file looks at the content.", "file /srv/drop/*"]
+explanation = "file reads the first bytes (magic numbers): photo.jpg is gzip data, notes.txt a shell script, report.pdf plain text."
+
+[[task]]
+id = "hardlink"
+title = "Two names, one file"
+kind = "independent"
+instructions = "Make ~/{{project}}/docs/README.txt a second name for ~/{{project}}/README — the same file, not a copy and not a symbolic link."
+skills = { "b.links-hard-inodes" = 1.0 }
+checks = [
+    { type = "same_inode", a = "/home/learner/{{project}}/README", b = "/home/learner/{{project}}/docs/README.txt" },
+]
+hints = ["A hard link is another directory entry for the same inode.", "ln without -s.", "ln ~/{{project}}/README ~/{{project}}/docs/README.txt; ls -li to compare inode numbers"]
+explanation = "Both names now point to one inode (ls -i shows the same number, the link count is 2); changing either changes both."
+
+[debrief]
+summary = "Paths (absolute vs relative, . and ..), mkdir -p, printf/echo with redirection, ls -a, file, ln (hard) vs ln -s."
+alternatives = ["cd - returns to the previous directory", "stat shows the inode number and link count"]
+pitfalls = ["cp instead of ln.", "Trusting file extensions."]
+next = "Chapter B is complete."
+
+[[solution]]
+name = "brace expansion and printf"
+steps = [
+    "mkdir -p ~/{{project}}/{docs,src,tests}",
+    "printf 'Project {{project}}\\nStatus: setup\\n' > ~/{{project}}/README",
+    "cd ~/{{project}}/docs",
+    "cd ../tests",
+    "ls -a ~/old-team",
+    { answer_with = "cat /home/learner/old-team/.credentials | cut -d= -f2" },
+    "file /srv/drop/*",
+    ":answer photo.jpg",
+    "ln ~/{{project}}/README ~/{{project}}/docs/README.txt",
+]
+
+[[solution]]
+name = "one step at a time"
+steps = [
+    "mkdir ~/{{project}}",
+    "mkdir ~/{{project}}/docs ~/{{project}}/src ~/{{project}}/tests",
+    "echo 'Project {{project}}' > ~/{{project}}/README",
+    "echo 'Status: setup' >> ~/{{project}}/README",
+    "ln ~/{{project}}/README ~/{{project}}/docs/README.txt",
+    "file /srv/drop/photo.jpg",
+    ":answer /srv/drop/photo.jpg",
+    "grep -r API_KEY ~/old-team",
+    { answer_with = "grep -rh API_KEY /home/learner/old-team | cut -d= -f2" },
+    "cd ~/{{project}}/docs && cd ../tests",
+]
+
+[[counterexample]]
+name = "absolute path and a copy"
+steps = [
+    "mkdir -p ~/{{project}}/{docs,src,tests}",
+    "printf 'Project {{project}}\\nStatus: setup\\n' > ~/{{project}}/README",
+    "cd /home/learner/{{project}}/tests",
+    { answer_with = "cut -d= -f2 /home/learner/old-team/.credentials" },
+    ":answer photo.jpg",
+    "cp ~/{{project}}/README ~/{{project}}/docs/README.txt",
+]

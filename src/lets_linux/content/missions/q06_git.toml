@@ -1,0 +1,165 @@
+schema = 1
+
+[mission]
+id = "q06-git"
+title = "Who Changed the Config?"
+chapter = "Q"
+kind = "troubleshooting"
+order = 10
+difficulty = 5
+requires = ["q01-toolchain", "h04-wont-start", "m00b-building-a-timeline", "q01e-git-basics"]
+skills = ["q.version-control"]
+review_for = ["m.evidence-correlation", "h.unit-files"]
+xp = 220
+estimated_minutes = 35
+
+[briefing]
+context = """
+The web server's configuration in /etc/nginx is kept in a git repository (owned by root),
+so that every change is recorded. Since this morning the shop is unreachable on port 80.
+Find the change and who made it in the history, undo it without erasing the record, and
+then make the change the shop team asked for — the proper way, committed with your name.
+(sudo password: letslinux)
+"""
+concept = """
+git records snapshots of a directory tree as commits: who, when, why (the message) and
+what (the diff to the previous one). git status shows what changed since the last commit,
+git diff the exact lines; git add stages changes, git commit -m "why" records them. History:
+git log (--oneline, -p for the diffs, -- FILE for one file), git show COMMIT, git blame FILE
+(which commit last touched each line). Undoing: git revert COMMIT adds a new commit that
+reverses an old one — history stays complete and honest; git reset --hard COMMIT moves the
+branch back and discards later commits — rewriting history others may rely on. A commit
+needs an identity: git config --global user.name / user.email (root's own ~/.gitconfig when
+you use sudo). Configuration repositories like this one are what etckeeper sets up for /etc.
+"""
+objectives = ["Read history with log, show and blame", "Find who changed a line and why", "Undo a commit with git revert", "Commit a change with a proper identity and message"]
+
+[environment]
+profile = "debian"
+packages = ["nginx", "git"]
+
+[[environment.setup]]
+action = "run"
+command = "cd /etc/nginx && git init -q -b main && GIT_AUTHOR_NAME='Maria Lopez' GIT_AUTHOR_EMAIL=maria@example.lan GIT_AUTHOR_DATE=$(( $(date +%s) - 2592000 )) sh -c 'git add -A && git commit -qm \"Initial import of the nginx configuration\"'"
+
+[[environment.setup]]
+action = "run"
+command = "cd /etc/nginx && printf '# This directory is a git repository: record every change (git commit).\\n' >> nginx.conf && GIT_AUTHOR_NAME='Maria Lopez' GIT_AUTHOR_EMAIL=maria@example.lan GIT_AUTHOR_DATE=$(( $(date +%s) - 1036800 )) sh -c 'git commit -qam \"Note that the configuration is versioned\"'"
+
+[[environment.setup]]
+action = "run"
+command = "cd /etc/nginx && sed -i 's/listen 80 default_server;/listen 8080 default_server;/; s/listen \\[::\\]:80 default_server;/listen [::]:8080 default_server;/' sites-available/default && GIT_AUTHOR_NAME='Tom Becker' GIT_AUTHOR_EMAIL=tom@example.lan GIT_AUTHOR_DATE=$(( $(date +%s) - 14400 )) sh -c 'git commit -qam \"Tidy up default site\"' && systemctl reload nginx"
+
+[[task]]
+id = "who"
+title = "Find the change"
+kind = "troubleshooting"
+instructions = "Use the repository's history to find the commit that moved the shop off port 80."
+skills = { "q.version-control" = 1.0, "m.evidence-correlation" = 0.5 }
+question = { prompt = "Who made that change (the author's name)?", type = "exact", accept = ["Tom Becker", "Tom", "tom@example.lan", "Becker"] }
+hints = ["The repository belongs to root: sudo git -C /etc/nginx log … (or sudo -i, then cd /etc/nginx).", "git log -p shows each commit's diff; git blame sites-available/default shows who last touched each line.", "sudo git -C /etc/nginx log -p -- sites-available/default"]
+explanation = "The commit \"Tidy up default site\" changed both listen lines from 80 to 8080 — the message says nothing about it, the diff does. Diffs never lie; messages sometimes do."
+
+[[task]]
+id = "revert"
+title = "Undo it, on the record"
+kind = "independent"
+instructions = "Undo that commit so the shop is served on port 80 again — keeping every existing commit in the history — and reload nginx."
+skills = { "q.version-control" = 1.0 }
+checks = [
+    { type = "port_listening", port = 80, comm = "nginx" },
+    { type = "command_result", user = "root", command = "cd /etc/nginx && git log --oneline | wc -l", stdout_equals = "4\n" },
+    { type = "command_result", user = "root", command = "cd /etc/nginx && git log -1 --oneline", stdout_contains = ["Revert"] },
+    { type = "command_result", user = "root", command = "cd /etc/nginx && git status --porcelain", stdout_equals = "" },
+]
+hints = ["git revert COMMIT makes a new commit that reverses an old one (it needs root's git identity first: sudo git config --global user.name …).", "sudo git -C /etc/nginx revert --no-edit HEAD — then sudo nginx -t && sudo systemctl reload nginx", "sudo git config --global user.name 'Your Name'; sudo git config --global user.email you@example.lan; sudo git -C /etc/nginx revert --no-edit HEAD; sudo systemctl reload nginx"]
+explanation = "The history now tells the whole story: the mistake, and that and when it was reverted. Nothing anyone else saw has been rewritten."
+
+[[task]]
+id = "change"
+title = "A change done properly"
+kind = "independent"
+instructions = "The shop team wants the default site to answer to the name shop.example.lan: add server_name shop.example.lan; to it (replacing the existing server_name), check the syntax, reload nginx and commit the change with a message that says what and why."
+skills = { "q.version-control" = 1.0, "h.unit-files" = 0.3 }
+checks = [
+    { type = "file_contains", path = "/etc/nginx/sites-available/default", regex = "server_name\\s+shop\\.example\\.lan\\s*;" },
+    { type = "port_listening", port = 80, comm = "nginx" },
+    { type = "command_result", user = "root", command = "nginx -t", status = 0 },
+    { type = "command_result", user = "root", command = "cd /etc/nginx && git status --porcelain", stdout_equals = "" },
+    { type = "command_result", user = "root", command = "cd /etc/nginx && git log -1 --stat", stdout_contains = ["sites-available/default"], stdout_not_contains = ["Tom Becker", "Maria Lopez"] },
+    { type = "command_result", user = "root", command = "cd /etc/nginx && git log --oneline | wc -l", stdout_equals = "5\n" },
+]
+hints = ["Edit the file (sudo nano, or sed), sudo nginx -t, sudo systemctl reload nginx.", "sudo git -C /etc/nginx diff shows your change; sudo git -C /etc/nginx commit -am 'message'.", "sudo sed -i 's/server_name _;/server_name shop.example.lan;/' /etc/nginx/sites-available/default; sudo nginx -t && sudo systemctl reload nginx; sudo git -C /etc/nginx commit -am 'Default site answers to shop.example.lan (shop team request)'"]
+explanation = "Edit, test, apply, record: the commit ties the change to a person, a time and a reason — what you needed to find Tom's change this morning."
+
+[[task]]
+id = "why-revert"
+title = "Revert or reset?"
+kind = "explanation"
+instructions = "A colleague would have used git reset --hard HEAD~1."
+skills = { "q.version-control" = 1.0 }
+question = { prompt = "Why is git revert the better choice here?", type = "choice", choices = ["reset --hard cannot undo commits", "revert keeps the history complete: the bad commit and its undoing are both recorded, nothing is rewritten — reset --hard would erase Tom's commit as if it never happened", "revert is faster"], answer = 1 }
+hints = ["What would git log show after each?", "History that others rely on (clones, audits) should not be rewritten.", "(b)"]
+explanation = "reset is for local work nobody else has seen; revert for anything shared or audited. Both are recoverable for a while (git reflog), but only revert is honest by default."
+
+[debrief]
+summary = """
+git log -p / git show / git blame find what changed, when, by whom and why. git revert
+COMMIT undoes a commit with a new one; git reset --hard rewrites history. Change workflow:
+edit → test (nginx -t) → apply (reload) → git diff → git commit -am "what and why", with
+user.name and user.email configured (root has its own under sudo).
+"""
+alternatives = ["etckeeper puts all of /etc under git and commits automatically after package installs", "git diff HEAD~1 -- FILE compares one file with the previous commit", "git log --author=Tom, git log -S 8080 (search for the commit that added a string)"]
+pitfalls = ["git reset --hard on shared history.", "Committing without testing the configuration.", "Messages like \"fix\" or \"tidy up\" that hide what changed."]
+next = "Chapter Q is complete."
+
+[[solution]]
+name = "log -p, revert, sed"
+steps = [
+    { input = ["letslinux"] },
+    "sudo git -C /etc/nginx log --oneline",
+    "sudo git -C /etc/nginx log -p -- sites-available/default",
+    ":answer Tom Becker",
+    "sudo git -C /etc/nginx revert --no-edit HEAD",
+    "sudo git config --global user.name 'Ada Learner'",
+    "sudo git config --global user.email ada@example.lan",
+    "sudo git -C /etc/nginx revert --no-edit HEAD",
+    "sudo nginx -t",
+    "sudo systemctl reload nginx",
+    "sudo sed -i 's/server_name _;/server_name shop.example.lan;/' /etc/nginx/sites-available/default",
+    "sudo nginx -t",
+    "sudo systemctl reload nginx",
+    "sudo git -C /etc/nginx diff",
+    "sudo git -C /etc/nginx commit -am 'Default site answers to shop.example.lan (request from the shop team)'",
+    ":answer b",
+]
+
+[[solution]]
+name = "a root shell and blame"
+steps = [
+    { input = ["letslinux"] },
+    "sudo -i",
+    "cd /etc/nginx",
+    "git blame sites-available/default",
+    ":answer Tom",
+    "git config --global user.name 'Ada Learner'",
+    "git config --global user.email ada@example.lan",
+    "git revert --no-edit $(git log --format=%H -1)",
+    "systemctl reload nginx",
+    "sed -i 's/server_name .*;/server_name shop.example.lan;/' sites-available/default",
+    "nginx -t && systemctl reload nginx",
+    "git add sites-available/default",
+    "git commit -m 'Serve the default site as shop.example.lan'",
+    "exit",
+    ":answer revert keeps the history complete: the bad commit and its undoing are both recorded, nothing is rewritten — reset --hard would erase Tom's commit as if it never happened",
+]
+
+[[counterexample]]
+name = "reset --hard"
+steps = [
+    { input = ["letslinux"] },
+    ":answer Tom Becker",
+    "sudo git -C /etc/nginx reset --hard HEAD~1",
+    "sudo systemctl reload nginx",
+    ":answer b",
+]

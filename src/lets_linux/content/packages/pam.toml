@@ -1,0 +1,527 @@
+# Package catalogue: PAM — the authentication stacks programs consult (systems/pam.py).
+
+schema = 1
+
+[[package]]
+name = "libpam-runtime"
+summary = "Runtime support for the PAM library"
+section = "admin"
+essential = true
+names = { fedora = "pam", arch = "pam" }
+versions = { debian = "1.5.2-6+deb12u1", ubuntu = "1.5.3-5ubuntu5.1", fedora = "1.6.1-7.fc41", arch = "1.6.1-3", generic = "1.5.2" }
+sbin = ["faillock"]
+
+# ---------------------------------------------------------------- Debian and Ubuntu
+
+[[package.file]]
+path = "/etc/pam.d/common-auth"
+families = ["debian", "generic"]
+content = """#
+# /etc/pam.d/common-auth - authentication settings common to all services
+#
+# This file is included from other service-specific PAM config files,
+# and should contain a list of the authentication modules that define
+# the central authentication scheme for use on the system.
+#
+# here are the per-package modules (the "Primary" block)
+auth	[success=1 default=ignore]	pam_unix.so nullok
+# here's the fallback if no module succeeds
+auth	requisite			pam_deny.so
+# prime the stack with a positive return value if there isn't one already;
+auth	required			pam_permit.so
+"""
+
+[[package.file]]
+path = "/etc/pam.d/common-account"
+families = ["debian", "generic"]
+content = """#
+# /etc/pam.d/common-account - authorization settings common to all services
+#
+account	[success=1 new_authtok_reqd=done default=ignore]	pam_unix.so
+account	requisite			pam_deny.so
+account	required			pam_permit.so
+"""
+
+[[package.file]]
+path = "/etc/pam.d/common-password"
+families = ["debian", "generic"]
+content = """#
+# /etc/pam.d/common-password - password-related modules common to all services
+#
+# The "obscure" option replaces the old `OBSCURE_CHECKS_ENAB' option in login.defs.
+password	[success=1 default=ignore]	pam_unix.so obscure yescrypt
+password	requisite			pam_deny.so
+password	required			pam_permit.so
+"""
+
+[[package.file]]
+path = "/etc/pam.d/common-session"
+families = ["debian", "generic"]
+content = """#
+# /etc/pam.d/common-session - session-related modules common to all services
+#
+session	[default=1]			pam_permit.so
+session	requisite			pam_deny.so
+session	required			pam_permit.so
+session	required	pam_unix.so
+session	optional	pam_systemd.so
+"""
+
+[[package.file]]
+path = "/etc/pam.d/su"
+families = ["debian", "generic"]
+content = """#
+# The PAM configuration file for the Shadow `su' service
+#
+# This allows root to su without passwords (normal operation)
+auth       sufficient pam_rootok.so
+
+# Uncomment this to force users to be a member of group wheel
+# before they can use `su'. You can also add "group=foo"
+# to the end of this line if you want to use a group other
+# than the default "wheel" (but this may have side effect of
+# denying "root" user, unless she's a member of "foo" or explicitly
+# permitted earlier by e.g. "sufficient pam_rootok.so").
+# (Replaces the `SU_WHEEL_ONLY' option from login.defs)
+# auth       required   pam_wheel.so
+
+@include common-auth
+@include common-account
+@include common-session
+"""
+
+[[package.file]]
+path = "/etc/pam.d/sudo"
+families = ["debian", "generic"]
+content = """#%PAM-1.0
+
+# Set up user limits from /etc/security/limits.conf.
+session    required   pam_limits.so
+
+@include common-auth
+@include common-account
+@include common-session-noninteractive
+"""
+
+[[package.file]]
+path = "/etc/pam.d/common-session-noninteractive"
+families = ["debian", "generic"]
+content = """session	required	pam_unix.so
+"""
+
+[[package.file]]
+path = "/etc/pam.d/sshd"
+families = ["debian", "generic"]
+content = """# PAM configuration for the Secure Shell service
+
+# Standard Un*x authentication.
+@include common-auth
+
+# Disallow non-root logins when /etc/nologin exists.
+account    required     pam_nologin.so
+
+# Uncomment and edit /etc/security/access.conf if you need to set complex
+# access limits that are hard to express in sshd_config.
+# account  required     pam_access.so
+
+# Standard Un*x authorization.
+@include common-account
+
+# Standard Un*x session setup and teardown.
+session    required     pam_loginuid.so
+@include common-session
+session    optional     pam_motd.so  motd=/run/motd.dynamic
+
+# Standard Un*x password updating.
+@include common-password
+"""
+
+[[package.file]]
+path = "/etc/pam.d/login"
+families = ["debian", "generic"]
+content = """#
+# The PAM configuration file for the Shadow `login' service
+#
+auth       optional   pam_faildelay.so  delay=3000000
+auth       requisite  pam_nologin.so
+@include common-auth
+@include common-account
+@include common-session
+@include common-password
+"""
+
+[[package.file]]
+path = "/etc/pam.d/passwd"
+families = ["debian", "generic"]
+content = """#
+# The PAM configuration file for the Shadow `passwd' service
+#
+
+@include common-password
+"""
+
+[[package.file]]
+path = "/etc/pam.d/other"
+families = ["debian", "generic"]
+content = """#
+# /etc/pam.d/other - specify the PAM fallback behaviour
+#
+@include common-auth
+@include common-account
+@include common-password
+@include common-session
+"""
+
+# ---------------------------------------------------------------- Fedora (authselect "local" profile)
+
+[[package.file]]
+path = "/etc/pam.d/system-auth"
+families = ["fedora"]
+content = """# Generated by authselect
+# Do not modify this file manually, use authselect instead. Any user changes will be overwritten.
+# You can stop authselect from managing your configuration by calling 'authselect opt-out'.
+# See authselect(8) for more details.
+
+auth        required                                     pam_env.so
+auth        sufficient                                   pam_unix.so nullok
+auth        required                                     pam_deny.so
+
+account     required                                     pam_unix.so
+
+password    requisite                                    pam_pwquality.so local_users_only
+password    sufficient                                   pam_unix.so yescrypt shadow nullok use_authtok
+password    required                                     pam_deny.so
+
+session     optional                                     pam_keyinit.so revoke
+session     required                                     pam_limits.so
+session     required                                     pam_unix.so
+"""
+
+[[package.file]]
+path = "/etc/pam.d/password-auth"
+families = ["fedora"]
+content = """# Generated by authselect
+# Do not modify this file manually, use authselect instead. Any user changes will be overwritten.
+
+auth        required                                     pam_env.so
+auth        sufficient                                   pam_unix.so nullok
+auth        required                                     pam_deny.so
+
+account     required                                     pam_unix.so
+
+password    requisite                                    pam_pwquality.so local_users_only
+password    sufficient                                   pam_unix.so yescrypt shadow nullok use_authtok
+password    required                                     pam_deny.so
+
+session     required                                     pam_limits.so
+session     required                                     pam_unix.so
+"""
+
+[[package.file]]
+path = "/etc/pam.d/su"
+families = ["fedora"]
+content = """#%PAM-1.0
+auth		required	pam_env.so
+auth		sufficient	pam_rootok.so
+# Uncomment the following line to implicitly trust users in the "wheel" group.
+#auth		sufficient	pam_wheel.so trust use_uid
+# Uncomment the following line to require a user to be in the "wheel" group.
+#auth		required	pam_wheel.so use_uid
+auth		substack	system-auth
+auth		include		postlogin
+account		sufficient	pam_succeed_if.so uid = 0 use_uid quiet
+account		include		system-auth
+password	include		system-auth
+session		include		system-auth
+"""
+
+[[package.file]]
+path = "/etc/pam.d/sudo"
+families = ["fedora"]
+content = """#%PAM-1.0
+auth       include      system-auth
+account    include      system-auth
+password   include      system-auth
+session    optional     pam_keyinit.so revoke
+session    required     pam_limits.so
+session    include      system-auth
+"""
+
+[[package.file]]
+path = "/etc/pam.d/sshd"
+families = ["fedora"]
+content = """#%PAM-1.0
+auth       substack     password-auth
+auth       include      postlogin
+account    required     pam_sepermit.so
+account    required     pam_nologin.so
+account    include      password-auth
+password   include      password-auth
+session    required     pam_loginuid.so
+session    include      password-auth
+"""
+
+[[package.file]]
+path = "/etc/pam.d/postlogin"
+families = ["fedora"]
+content = """# Generated by authselect
+session     optional                   pam_umask.so silent
+session     [success=1 default=ignore] pam_succeed_if.so service !~ gdm* service !~ su* quiet
+session     [default=1]                pam_lastlog.so nowtmp showfailed
+session     optional                   pam_lastlog.so silent noupdate showfailed
+"""
+
+[[package.file]]
+path = "/etc/pam.d/passwd"
+families = ["fedora"]
+content = """#%PAM-1.0
+auth       include	system-auth
+account    include	system-auth
+password   substack	system-auth
+"""
+
+[[package.file]]
+path = "/etc/pam.d/login"
+families = ["fedora"]
+content = """#%PAM-1.0
+auth       substack     system-auth
+account    required     pam_nologin.so
+account    include      system-auth
+password   include      system-auth
+session    include      system-auth
+"""
+
+[[package.file]]
+path = "/etc/pam.d/other"
+families = ["fedora", "arch"]
+content = """#%PAM-1.0
+auth     required       pam_deny.so
+account  required       pam_deny.so
+password required       pam_deny.so
+session  required       pam_deny.so
+"""
+
+# ---------------------------------------------------------------- Arch (faillock on by default)
+
+[[package.file]]
+path = "/etc/pam.d/system-auth"
+families = ["arch"]
+content = """#%PAM-1.0
+
+auth       required                    pam_faillock.so      preauth
+-auth      [success=2 default=ignore]  pam_systemd_home.so
+auth       [success=1 default=bad]     pam_unix.so          try_first_pass nullok
+auth       [default=die]               pam_faillock.so      authfail
+auth       optional                    pam_permit.so
+auth       required                    pam_env.so
+auth       required                    pam_faillock.so      authsucc
+
+account    required                    pam_unix.so
+account    optional                    pam_permit.so
+account    required                    pam_time.so
+
+password   required                    pam_unix.so          try_first_pass nullok shadow
+password   optional                    pam_permit.so
+
+session    required                    pam_limits.so
+session    required                    pam_unix.so
+session    optional                    pam_permit.so
+"""
+
+[[package.file]]
+path = "/etc/pam.d/su"
+families = ["arch"]
+content = """#%PAM-1.0
+auth            sufficient      pam_rootok.so
+# Uncomment the following line to implicitly trust users in the "wheel" group.
+#auth           sufficient      pam_wheel.so trust use_uid
+# Uncomment the following line to require a user to be in the "wheel" group.
+#auth           required        pam_wheel.so use_uid
+auth            required        pam_unix.so
+account         required        pam_unix.so
+session         required        pam_unix.so
+password        include         system-auth
+"""
+
+[[package.file]]
+path = "/etc/pam.d/sudo"
+families = ["arch"]
+content = """#%PAM-1.0
+auth		include		system-auth
+account		include		system-auth
+session		include		system-auth
+"""
+
+[[package.file]]
+path = "/etc/pam.d/sshd"
+families = ["arch"]
+content = """#%PAM-1.0
+auth      include   system-remote-login
+account   include   system-remote-login
+password  include   system-remote-login
+session   include   system-remote-login
+"""
+
+[[package.file]]
+path = "/etc/pam.d/system-remote-login"
+families = ["arch"]
+content = """#%PAM-1.0
+auth      include   system-login
+account   include   system-login
+password  include   system-login
+session   include   system-login
+"""
+
+[[package.file]]
+path = "/etc/pam.d/system-login"
+families = ["arch"]
+content = """#%PAM-1.0
+auth       required   pam_shells.so
+auth       requisite  pam_nologin.so
+auth       include    system-auth
+account    required   pam_access.so
+account    required   pam_nologin.so
+account    include    system-auth
+password   include    system-auth
+session    include    system-auth
+"""
+
+[[package.file]]
+path = "/etc/pam.d/passwd"
+families = ["arch"]
+content = """#%PAM-1.0
+password	required	pam_unix.so	yescrypt shadow nullok
+"""
+
+# ---------------------------------------------------------------- shared configuration
+
+[[package.file]]
+path = "/etc/security/faillock.conf"
+content = """# Configuration for locking the user after multiple failed
+# authentication attempts.
+#
+# The directory where the user files with the failure records are kept.
+# dir = /var/run/faillock
+#
+# Deny access if the number of consecutive authentication failures
+# for this user during the recent interval exceeds n tries.
+# The default is 3.
+# deny = 3
+#
+# The length of the interval during which the consecutive
+# authentication failures must happen for the user account
+# lock out is n seconds.
+# The default is 900 (15 minutes).
+# fail_interval = 900
+#
+# The access will be re-enabled after n seconds after the lock out.
+# The value 0 has the same meaning as value `never` - the access
+# will not be re-enabled without resetting the faillock
+# entries by the `faillock` command.
+# The default is 600 (10 minutes).
+# unlock_time = 600
+#
+# Root account can become locked as well as regular accounts.
+# even_deny_root
+"""
+
+[[package.file]]
+path = "/etc/security/access.conf"
+content = """# Login access control table.
+#
+# Comment line must start with "#", no space at front.
+# Order of lines is important.
+#
+# When someone logs in, the table is scanned for the first entry that
+# matches the (user, host) combination, or, in case of non-networked
+# logins, the first entry that matches the (user, tty) combination.
+#
+# Format of the login access control table is three fields separated
+# by a ":" character:
+#
+# [Note, if you supply a 'fieldsep=|' argument to the pam_access.so
+# module, you can change the field separation character to be '|'.]
+#
+# permission : users : origins
+#
+# The first field should be a "+" (access granted) or "-" (access denied).
+# The second field should be a list of one or more login names, group
+# names in parentheses, or ALL (always matches).
+# The third field should be a list of one or more tty names, host
+# names, domain names (begin with "."), host addresses, networks
+# (address/prefix), ALL (always matches) or LOCAL.
+#
+# Example: allow the group admins from the LAN only, everyone else locally
+#+:(admins):192.168.1.0/24
+#-:ALL EXCEPT root:ALL
+"""
+
+[[package]]
+name = "libpam-pwquality"
+summary = "PAM module to check password strength"
+section = "admin"
+names = { fedora = "libpwquality", arch = "libpwquality" }
+versions = { debian = "1.4.5-1+b1", ubuntu = "1.4.5-3build1", fedora = "1.4.5-11.fc41", arch = "1.4.5-6", generic = "1.4.5" }
+
+[[package.file]]
+path = "/etc/security/pwquality.conf"
+content = """# Configuration for systemwide password quality limits
+# Defaults:
+#
+# Number of characters in the new password that must not be present in the
+# old password.
+# difok = 1
+#
+# Minimum acceptable size for the new password (plus one if
+# credits are not disabled which is the default). (See pam_cracklib manual.)
+# Cannot be set to lower value than 6.
+# minlen = 8
+#
+# The maximum credit for having digits in the new password. If less than 0
+# it is the minimum number of digits in the new password.
+# dcredit = 0
+#
+# The maximum credit for having uppercase characters in the new password.
+# If less than 0 it is the minimum number of uppercase characters in the new
+# password.
+# ucredit = 0
+#
+# The maximum credit for having lowercase characters in the new password.
+# If less than 0 it is the minimum number of lowercase characters in the new
+# password.
+# lcredit = 0
+#
+# The maximum credit for having other characters in the new password.
+# If less than 0 it is the minimum number of other characters in the new
+# password.
+# ocredit = 0
+#
+# The minimum number of required classes of characters for the new
+# password (digits, uppercase, lowercase, others).
+# minclass = 0
+#
+# Whether to check for the words from the passwd entry GECOS string of the user.
+# usercheck = 1
+#
+# Whether to check for the words from the cracklib dictionary.
+# dictcheck = 1
+#
+# Prompt user at most N times before returning with error. The default is 1.
+# retry = 3
+#
+# Enforces pwquality checks on the root user password.
+# Enabled if the option is present.
+# enforce_for_root
+"""
+
+[[package.file]]
+path = "/usr/share/pam-configs/pwquality"
+families = ["debian", "generic"]
+content = """Name: Pwquality password strength checking
+Default: yes
+Priority: 1024
+Conflicts: cracklib
+Password-Type: Primary
+Password:
+	requisite			pam_pwquality.so retry=3
+"""

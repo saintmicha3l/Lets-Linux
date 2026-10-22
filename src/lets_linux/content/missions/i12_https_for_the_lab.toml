@@ -1,0 +1,251 @@
+schema = 1
+
+[mission]
+id = "i12-https-for-the-lab"
+title = "HTTPS for the Lab"
+chapter = "I"
+kind = "lesson"
+order = 12
+difficulty = 5
+requires = ["i11-trust-issues", "h03-your-own-service"]
+skills = ["i.tls-concepts", "i.http-curl", "l.secrets-management"]
+review_for = ["i.tls-concepts", "d.chmod-octal"]
+xp = 210
+estimated_minutes = 35
+
+[briefing]
+context = """
+The lab dashboard on this server (nginx, http://lab.example.lan) must move to HTTPS. The lab
+runs its own small certificate authority, "Example Lab CA": its certificate and key are in
+/root/lab-ca, and the lab's machines — the build server among them — already trust it.
+Issue a certificate for the dashboard, serve it with nginx, and send plain HTTP visitors to
+HTTPS. (sudo password: letslinux; you can test from build: ssh ci@build, password
+letslinux.)
+"""
+concept = """
+Getting a certificate takes three steps: generate a private key (it never leaves the
+server, and only root may read it); write a certificate signing request (CSR) containing
+the public key and the names; have the CA sign it. With openssl: openssl req -new … -out
+x.csr, then openssl x509 -req -in x.csr -CA ca.crt -CAkey ca.key -days N -out x.crt. The
+names clients check are the subjectAltName entries — and openssl x509 -req does not copy
+them from the request unless told to (-extfile with subjectAltName = …, or
+-copy_extensions copy). nginx needs listen 443 ssl, ssl_certificate (the certificate,
+followed by any intermediate certificates) and ssl_certificate_key.
+"""
+objectives = ["Create a key and a signing request with the right names", "Sign a certificate with a CA", "Configure nginx for HTTPS", "Protect the private key", "Redirect HTTP to HTTPS"]
+
+[environment]
+profile = "debian"
+packages = ["nginx", "curl"]
+
+[[environment.setup]]
+action = "certificate"
+authority = "lab-ca"
+path = "/root/lab-ca/lab-ca.crt"
+key_path = "/root/lab-ca/lab-ca.key"
+
+[[environment.setup]]
+action = "dns"
+name = "lab.example.lan"
+value = "10.0.2.15"
+
+[[environment.setup]]
+action = "file"
+path = "/var/www/lab/index.html"
+content = "<html><body><h1>Lab dashboard</h1><p>3 sensors online</p></body></html>\n"
+
+[[environment.setup]]
+action = "file"
+path = "/etc/nginx/sites-available/lab"
+content = """server {
+    listen 80;
+    server_name lab.example.lan;
+    root /var/www/lab;
+    index index.html;
+}
+"""
+
+[[environment.setup]]
+action = "run"
+command = "ln -s /etc/nginx/sites-available/lab /etc/nginx/sites-enabled/lab && systemctl reload nginx"
+
+[[environment.setup]]
+action = "remote"
+host = "build"
+user = "ci"
+password = "letslinux"
+packages = ["curl"]
+steps = [
+    { action = "certificate", authority = "lab-ca", path = "/usr/local/share/ca-certificates/example-lab-ca.crt" },
+    { action = "run", command = "update-ca-certificates" },
+]
+
+[[task]]
+id = "request"
+title = "Key and request"
+kind = "guided"
+instructions = """
+Create a 2048-bit RSA private key /etc/nginx/ssl/lab.key (readable by root only) and a
+signing request /etc/nginx/ssl/lab.csr for lab.example.lan — with lab.example.lan as a
+subjectAltName, not only as the common name.
+"""
+skills = { "i.tls-concepts" = 1.0, "l.secrets-management" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "openssl req -in /etc/nginx/ssl/lab.csr -noout -text", stdout_contains = "DNS:lab.example.lan" },
+    { type = "command_result", user = "root", command = "stat -c '%U %a' /etc/nginx/ssl/lab.key", stdout_regex = "^root [46]00\\n" },
+    { type = "command_result", user = "root", command = "openssl pkey -in /etc/nginx/ssl/lab.key -noout -check", stdout_contains = "valid" },
+]
+persistent = true
+hints = [
+    "openssl req -new can create the key at the same time (-newkey rsa:2048 -nodes -keyout …) — or make the key first with openssl genrsa.",
+    "-subj '/CN=lab.example.lan' sets the common name, -addext 'subjectAltName=DNS:lab.example.lan' the name clients check.",
+    "sudo mkdir -p /etc/nginx/ssl; sudo openssl req -new -newkey rsa:2048 -nodes -keyout /etc/nginx/ssl/lab.key -out /etc/nginx/ssl/lab.csr -subj '/CN=lab.example.lan' -addext 'subjectAltName=DNS:lab.example.lan'",
+]
+explanation = "openssl writes new private keys readable by their owner only. -nodes leaves the key unencrypted: nginx starts unattended, so file permissions protect it instead of a passphrase."
+
+[[task]]
+id = "sign"
+title = "Sign it"
+kind = "independent"
+instructions = """
+Use the lab CA (/root/lab-ca/lab-ca.crt and lab-ca.key) to sign the request: the certificate
+/etc/nginx/ssl/lab.crt must be valid for a year, verify against the lab CA and still name
+lab.example.lan in its subjectAltName.
+"""
+skills = { "i.tls-concepts" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "openssl verify -CAfile /root/lab-ca/lab-ca.crt /etc/nginx/ssl/lab.crt", stdout_contains = "OK" },
+    { type = "command_result", user = "root", command = "openssl x509 -in /etc/nginx/ssl/lab.crt -noout -ext subjectAltName", stdout_contains = "DNS:lab.example.lan" },
+    { type = "command_result", user = "root", command = "openssl x509 -in /etc/nginx/ssl/lab.crt -noout -checkend 31104000", status = 0 },
+]
+persistent = true
+hints = [
+    "openssl x509 -req -in REQUEST -CA CA-CERT -CAkey CA-KEY -days 365 -out CERT signs a request.",
+    "Without -copy_extensions copy (or an -extfile with a subjectAltName line), the subjectAltName from the request is dropped — check with openssl x509 -noout -ext subjectAltName.",
+    "sudo openssl x509 -req -in /etc/nginx/ssl/lab.csr -CA /root/lab-ca/lab-ca.crt -CAkey /root/lab-ca/lab-ca.key -CAcreateserial -days 365 -copy_extensions copy -out /etc/nginx/ssl/lab.crt",
+]
+explanation = "The CA vouches for the request's public key and the names you let through. Copying extensions blindly would also copy whatever a requester asks for (even CA:TRUE) — real CAs decide the extensions themselves; -extfile does exactly that."
+
+[[task]]
+id = "serve"
+title = "Serve it"
+kind = "independent"
+instructions = """
+Make nginx serve the dashboard at https://lab.example.lan with this certificate — the build
+server must reach it without any certificate warning, now and after a reboot.
+"""
+skills = { "i.tls-concepts" = 1.0, "i.http-curl" = 1.0 }
+checks = [
+    { type = "command_result", on = "build", command = "curl -sS https://lab.example.lan/", stdout_contains = "Lab dashboard" },
+    { type = "after_reboot", checks = [{ type = "command_result", on = "build", command = "curl -sS https://lab.example.lan/", stdout_contains = "Lab dashboard" }] },
+]
+persistent = true
+hints = [
+    "In the lab server block: listen 443 ssl; ssl_certificate /etc/nginx/ssl/lab.crt; ssl_certificate_key /etc/nginx/ssl/lab.key; — then nginx -t and reload.",
+    "nginx -t reports a missing file or a key that does not belong to the certificate before anything breaks.",
+    "Add the three lines to /etc/nginx/sites-available/lab (in the server block), then: sudo nginx -t && sudo systemctl reload nginx",
+]
+explanation = "nginx reads the certificate and key once, as root, when it (re)loads its configuration — the workers never need to read the key file."
+
+[[task]]
+id = "redirect"
+title = "No more plain HTTP"
+kind = "independent"
+instructions = "Visitors who still use http://lab.example.lan must be sent to the same page over HTTPS (a permanent redirect)."
+skills = { "i.http-curl" = 1.0 }
+checks = [
+    { type = "command_result", on = "build", command = "curl -sSI http://lab.example.lan/", stdout_regex = "^HTTP/1.1 301", stdout_contains = "Location: https://lab.example.lan/" },
+    { type = "command_result", on = "build", command = "curl -sSL http://lab.example.lan/", stdout_contains = "Lab dashboard" },
+]
+persistent = true
+hints = [
+    "A separate server block for port 80 can do nothing but redirect.",
+    "server { listen 80; server_name lab.example.lan; return 301 https://lab.example.lan$request_uri; } — and keep port 443 in the other block.",
+    "Make the existing block listen on 443 only, add the redirect block, then sudo nginx -t && sudo systemctl reload nginx.",
+]
+explanation = "301 tells browsers and search engines that the move is permanent. Adding a Strict-Transport-Security header later makes browsers skip the HTTP step altogether."
+
+[[task]]
+id = "secret"
+title = "What must stay here"
+kind = "explanation"
+instructions = "A colleague wants to put the dashboard's TLS files into the team's Git repository."
+skills = { "i.tls-concepts" = 1.0 }
+question = { prompt = "Which file must never leave this server (or the CA's)?", type = "choice", choices = ["lab.crt — the certificate", "lab.csr — the request", "lab.key — the private key", "lab-ca.crt — the CA certificate"], answer = 2 }
+hints = ["Which of them is public by design?", "Certificates and requests are sent to everyone who connects. Only the key proves who you are.", "lab.key (and the CA's key, lab-ca.key)."]
+explanation = "Anyone with the private key can impersonate the server. Certificates are public: the server sends its own to every client. A leaked key means: revoke the certificate and issue a new one with a new key."
+
+[debrief]
+summary = """
+Key (private, 600) → CSR (public key + names) → certificate signed by a CA (check the
+subjectAltName: openssl x509 -req does not copy it by default) → nginx: listen 443 ssl,
+ssl_certificate, ssl_certificate_key, nginx -t, reload → a port-80 server that redirects
+with 301.
+"""
+alternatives = [
+    "A public CA via ACME (certbot, or acme.sh) for names on the Internet — renewal every 60–90 days is automated",
+    "-extfile with 'subjectAltName = DNS:lab.example.lan' instead of -copy_extensions copy",
+    "Fedora/Arch keep keys in /etc/pki/tls/private by convention",
+]
+pitfalls = [
+    "A certificate without subjectAltName: browsers and curl reject it even if the CN is right",
+    "A world-readable private key",
+    "Forgetting intermediate certificates in ssl_certificate (with a public CA)",
+    "Reloading nginx without nginx -t",
+]
+next = "Chapter I is complete."
+
+[[solution]]
+name = "copy_extensions, edit the site"
+steps = [
+    { input = ["letslinux"] },
+    "sudo mkdir -p /etc/nginx/ssl",
+    "sudo openssl req -new -newkey rsa:2048 -nodes -keyout /etc/nginx/ssl/lab.key -out /etc/nginx/ssl/lab.csr -subj '/CN=lab.example.lan' -addext 'subjectAltName=DNS:lab.example.lan'",
+    "sudo openssl x509 -req -in /etc/nginx/ssl/lab.csr -CA /root/lab-ca/lab-ca.crt -CAkey /root/lab-ca/lab-ca.key -CAcreateserial -days 365 -copy_extensions copy -out /etc/nginx/ssl/lab.crt",
+    "sudo openssl x509 -in /etc/nginx/ssl/lab.crt -noout -ext subjectAltName",
+    { edit = "server {\n    listen 443 ssl;\n    server_name lab.example.lan;\n    ssl_certificate /etc/nginx/ssl/lab.crt;\n    ssl_certificate_key /etc/nginx/ssl/lab.key;\n    root /var/www/lab;\n    index index.html;\n}\n\nserver {\n    listen 80;\n    server_name lab.example.lan;\n    return 301 https://lab.example.lan$request_uri;\n}\n" },
+    "sudo nano /etc/nginx/sites-available/lab",
+    "sudo nginx -t",
+    "sudo systemctl reload nginx",
+    "curl -sS --cacert /root/lab-ca/lab-ca.crt https://lab.example.lan/ 2>&1 | head -1",
+    ":answer 3",
+]
+
+[[solution]]
+name = "genrsa, extfile, printf"
+steps = [
+    { input = ["letslinux"] },
+    "sudo install -d -m 755 /etc/nginx/ssl",
+    "sudo openssl genrsa -out /etc/nginx/ssl/lab.key 2048",
+    "sudo chmod 400 /etc/nginx/ssl/lab.key",
+    "sudo openssl req -new -key /etc/nginx/ssl/lab.key -out /etc/nginx/ssl/lab.csr -subj /CN=lab.example.lan -addext subjectAltName=DNS:lab.example.lan",
+    "echo 'subjectAltName = DNS:lab.example.lan' > /tmp/san.ext",
+    "sudo openssl x509 -req -in /etc/nginx/ssl/lab.csr -CA /root/lab-ca/lab-ca.crt -CAkey /root/lab-ca/lab-ca.key -days 366 -extfile /tmp/san.ext -out /etc/nginx/ssl/lab.crt",
+    "printf 'server {\\n    listen 80;\\n    server_name lab.example.lan;\\n    return 301 https://$host$request_uri;\\n}\\nserver {\\n    listen 443 ssl;\\n    server_name lab.example.lan;\\n    ssl_certificate /etc/nginx/ssl/lab.crt;\\n    ssl_certificate_key /etc/nginx/ssl/lab.key;\\n    root /var/www/lab;\\n}\\n' | sudo tee /etc/nginx/sites-available/lab >/dev/null",
+    "sudo nginx -t && sudo systemctl reload nginx",
+    ":answer 3",
+]
+
+[[counterexample]]
+name = "SAN lost when signing"
+steps = [
+    { input = ["letslinux"] },
+    "sudo mkdir -p /etc/nginx/ssl",
+    "sudo openssl req -new -newkey rsa:2048 -nodes -keyout /etc/nginx/ssl/lab.key -out /etc/nginx/ssl/lab.csr -subj '/CN=lab.example.lan' -addext 'subjectAltName=DNS:lab.example.lan'",
+    "sudo openssl x509 -req -in /etc/nginx/ssl/lab.csr -CA /root/lab-ca/lab-ca.crt -CAkey /root/lab-ca/lab-ca.key -days 365 -out /etc/nginx/ssl/lab.crt",
+    "printf 'server {\\n    listen 80;\\n    server_name lab.example.lan;\\n    return 301 https://$host$request_uri;\\n}\\nserver {\\n    listen 443 ssl;\\n    server_name lab.example.lan;\\n    ssl_certificate /etc/nginx/ssl/lab.crt;\\n    ssl_certificate_key /etc/nginx/ssl/lab.key;\\n    root /var/www/lab;\\n}\\n' | sudo tee /etc/nginx/sites-available/lab >/dev/null",
+    "sudo nginx -t && sudo systemctl reload nginx",
+    ":answer 3",
+]
+
+[[counterexample]]
+name = "self-signed instead of the lab CA"
+steps = [
+    { input = ["letslinux"] },
+    "sudo mkdir -p /etc/nginx/ssl",
+    "sudo openssl req -new -newkey rsa:2048 -nodes -keyout /etc/nginx/ssl/lab.key -out /etc/nginx/ssl/lab.csr -subj '/CN=lab.example.lan' -addext 'subjectAltName=DNS:lab.example.lan'",
+    "sudo openssl x509 -req -in /etc/nginx/ssl/lab.csr -signkey /etc/nginx/ssl/lab.key -days 365 -copy_extensions copy -out /etc/nginx/ssl/lab.crt",
+    "printf 'server {\\n    listen 80;\\n    server_name lab.example.lan;\\n    return 301 https://$host$request_uri;\\n}\\nserver {\\n    listen 443 ssl;\\n    server_name lab.example.lan;\\n    ssl_certificate /etc/nginx/ssl/lab.crt;\\n    ssl_certificate_key /etc/nginx/ssl/lab.key;\\n    root /var/www/lab;\\n}\\n' | sudo tee /etc/nginx/sites-available/lab >/dev/null",
+    "sudo nginx -t && sudo systemctl reload nginx",
+    ":answer 3",
+]

@@ -1,0 +1,154 @@
+schema = 1
+
+[mission]
+id = "e05-failing-safely"
+title = "Fail Loudly, Fail Early"
+chapter = "E"
+kind = "troubleshooting"
+order = 7
+difficulty = 4
+requires = ["e04-case-and-validation", "e04b-scripts-that-fail-safely", "c08-the-method"]
+skills = ["e.error-handling", "e.functions", "m.hypothesis-method"]
+review_for = ["e.script-structure", "a.exit-status"]
+xp = 170
+estimated_minutes = 25
+
+[briefing]
+context = """
+A colleague's script ~/bin/rotate-logs.sh archives the application's logs and deletes them.
+It has worked for months. Yesterday the log directory was renamed during a migration — and
+the next run deleted the wrong files. Understand why, then make the script fail safely.
+"""
+concept = """
+A script carries on after a failing command unless told otherwise. cd into a missing directory
+fails — and the following rm runs in whatever directory you are in. Defences: check
+critical steps (cd "$dir" || exit 1), or set -e (exit on any failing command; set -euo
+pipefail also catches unset variables and failures inside pipelines). A small function such
+as die() { echo "rotate-logs: $*" >&2; exit 1; } gives every error the same clear form.
+Functions are defined with name() { …; } and called like commands; "$@" inside are their own
+arguments.
+"""
+objectives = ["Predict what happens after a failing command", "Stop a script on errors", "Write a function", "Prefix error messages consistently"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "file"
+path = "~/app/logs/app.log"
+content = "2026-03-02 09:00 app started\n"
+
+[[environment.setup]]
+action = "file"
+path = "~/app/logs/worker.log"
+content = "2026-03-02 09:00 worker started\n"
+
+[[environment.setup]]
+action = "dir"
+path = "~/archive"
+
+[[environment.setup]]
+action = "file"
+path = "~/notes.log"
+content = "my notes, months of them\n"
+
+[[environment.setup]]
+action = "file"
+path = "~/bin/rotate-logs.sh"
+mode = "0755"
+content = """#!/bin/bash
+# rotate-logs.sh - archive the application logs, then remove them
+LOGDIR=/home/learner/app/logs
+ARCHIVE=/home/learner/archive
+
+cd $LOGDIR
+tar -czf $ARCHIVE/logs-$(date +%F).tar.gz *.log
+rm -f *.log
+echo "rotated"
+"""
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "chown -R learner:learner ~/app ~/archive ~/bin ~/notes.log"
+
+[[task]]
+id = "predict"
+title = "What went wrong?"
+kind = "prediction"
+instructions = "Read ~/bin/rotate-logs.sh. Imagine ~/app/logs does not exist and you run the script from your home directory."
+skills = { "e.error-handling" = 1.0 }
+question = { prompt = "What happens to ~/notes.log?", type = "choice", choices = ["Nothing: the script stops when cd fails", "It is archived and deleted", "The script refuses to start"], answer = 1 }
+hints = ["What does a script do after a command fails?", "cd fails, the script stays in your home directory, and *.log now matches ~/notes.log.", "(b)"]
+explanation = "The script ignored the failing cd: tar and rm ran in the home directory. (Safe to try on a copy: cp -r ~ /tmp/try is not needed — the game will test your fix on a copy anyway.)"
+
+[[task]]
+id = "stop"
+title = "Stop on errors"
+kind = "troubleshooting"
+instructions = "Fix rotate-logs.sh so that it stops with a non-zero exit status when it cannot enter the log directory or cannot create the archive — and never deletes anything in that case. A normal run must still archive and remove the logs."
+skills = { "e.error-handling" = 1.0 }
+checks = [
+    { type = "command_result", setup = ["mv ~/app/logs ~/app/logs.old"], command = "cd ~ && ~/bin/rotate-logs.sh", status_not = 0, checks = [{ type = "path_exists", path = "~/notes.log" }] },
+    { type = "command_result", setup = ["rmdir ~/archive"], command = "cd ~ && ~/bin/rotate-logs.sh", status_not = 0, checks = [{ type = "path_exists", path = "~/app/logs/app.log" }, { type = "path_exists", path = "~/notes.log" }] },
+    { type = "command_result", command = "cd ~ && ~/bin/rotate-logs.sh", status = 0, stdout_contains = "rotated", checks = [{ type = "tree_count", path = "~/archive", glob = "logs-*.tar.gz", count = 1 }, { type = "path_absent", path = "~/app/logs/app.log" }, { type = "path_exists", path = "~/notes.log" }] },
+]
+hints = [
+    "Two failures matter: cd and tar. Either check each (|| exit 1) or make bash stop on any error.",
+    "set -e right after the shebang, or: cd \"$LOGDIR\" || exit 1 and tar … || exit 1",
+    "sed -i '2a set -euo pipefail' ~/bin/rotate-logs.sh",
+]
+explanation = "Now a failing step ends the script before rm can do damage. Quoting $LOGDIR and $ARCHIVE is the next habit: paths with spaces would break the script in other ways."
+
+[[task]]
+id = "die"
+title = "Clear error messages"
+kind = "independent"
+instructions = "Make the script report its errors in one consistent form: when it stops because of an error, standard error contains a line starting with 'rotate-logs: ' that says what went wrong. A function is the natural tool."
+skills = { "e.functions" = 1.0, "e.error-handling" = 0.5 }
+checks = [
+    { type = "command_result", setup = ["mv ~/app/logs ~/app/logs.old"], command = "cd ~ && ~/bin/rotate-logs.sh", status_not = 0, stderr_regex = "^rotate-logs: \\S", checks = [{ type = "path_exists", path = "~/notes.log" }] },
+    { type = "command_result", setup = ["rmdir ~/archive"], command = "cd ~ && ~/bin/rotate-logs.sh", status_not = 0, stderr_regex = "^rotate-logs: \\S" },
+    { type = "command_result", command = "~/bin/rotate-logs.sh", status = 0, stdout_contains = "rotated" },
+]
+hints = [
+    "die() { echo \"rotate-logs: $*\" >&2; exit 1; } — then use it after each critical step.",
+    "cd \"$LOGDIR\" || die \"cannot enter $LOGDIR\"   and   tar … || die \"cannot write the archive\"",
+    "Write the whole script again: shebang, LOGDIR/ARCHIVE, die(), cd … || die …, tar … || die …, rm -f -- *.log, echo rotated",
+]
+explanation = "Whoever reads the cron mail or the journal now sees which script failed and why."
+
+[debrief]
+summary = """
+Scripts continue after errors unless you stop them: check critical commands (|| die …) or use
+set -euo pipefail. Functions keep error handling short and consistent.
+"""
+alternatives = ["set -e plus trap 'echo \"rotate-logs: failed at line $LINENO\" >&2' ERR", "Using absolute paths (rm -f -- \"$LOGDIR\"/*.log) instead of cd", "logger -t rotate-logs to also send errors to the journal"]
+pitfalls = ["set -e does not catch failures in conditions or before || — know its rules.", "rm -f *.log after a cd that may have failed.", "Errors on stdout instead of stderr."]
+next = "Next: debugging scripts."
+
+[[solution]]
+name = "die function and || checks"
+steps = [
+    "cat ~/bin/rotate-logs.sh",
+    ":answer b",
+    { edit = "#!/bin/bash\n# rotate-logs.sh - archive the application logs, then remove them\nLOGDIR=/home/learner/app/logs\nARCHIVE=/home/learner/archive\n\ndie() {\n    echo \"rotate-logs: $*\" >&2\n    exit 1\n}\n\ncd \"$LOGDIR\" || die \"cannot enter $LOGDIR\"\ntar -czf \"$ARCHIVE/logs-$(date +%F).tar.gz\" -- *.log || die \"cannot create the archive in $ARCHIVE\"\nrm -f -- *.log\necho \"rotated\"\n" },
+    "nano ~/bin/rotate-logs.sh",
+]
+
+[[solution]]
+name = "set -e first, then an ERR trap"
+steps = [
+    ":answer It is archived and deleted",
+    "sed -i '2a set -euo pipefail' ~/bin/rotate-logs.sh",
+    "head -4 ~/bin/rotate-logs.sh",
+    "sed -i \"3a trap 'echo \\\"rotate-logs: command failed at line \\$LINENO\\\" >\\&2' ERR\" ~/bin/rotate-logs.sh",
+    "head -5 ~/bin/rotate-logs.sh",
+]
+
+[[counterexample]]
+name = "only an error message"
+steps = [
+    ":answer b",
+    "sed -i 's|^cd $LOGDIR$|cd $LOGDIR \\|\\| echo \"rotate-logs: cannot enter $LOGDIR\" >\\&2|' ~/bin/rotate-logs.sh",
+]

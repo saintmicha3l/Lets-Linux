@@ -1,0 +1,130 @@
+schema = 1
+
+[mission]
+id = "p03b-container-risks"
+title = "Container Risks"
+chapter = "P"
+kind = "lesson"
+order = 5
+difficulty = 4
+requires = ["p03-containers"]
+skills = ["p.container-security"]
+review_for = ["p.container-security"]
+xp = 100
+estimated_minutes = 20
+
+[briefing]
+context = """
+Containers share the host's kernel, so a container is only as isolated as it was started.
+Deployment instructions full of sudo, --privileged and -v /:/host turn a container into root
+on the host. Learn to see who a container really runs as and what it can reach, before the
+next mission's audit.
+"""
+concept = """
+Root inside a container is a user ID like any other. Rootless containers (podman run as an
+ordinary user) map container root to YOUR account on the host — and the rest of the
+container's users to unused subordinate IDs (/etc/subuid). Rootful containers (sudo podman,
+or the classic Docker daemon) run container root as REAL root on the host.
+podman top CONTAINER user huser shows both views; podman inspect -f '{{json .Mounts}}' NAME
+lists host directories mounted into the container.
+Dangerous options: -v /:/host (the host's whole filesystem), -v /var/run/docker.sock (control
+of the engine = root), --privileged (every capability and device, no confinement),
+--pid=host / --network=host (the host's processes and network). Membership in the docker
+group is root-equivalent for the same reason.
+Safer defaults: rootless, no --privileged, mount only the directory needed, read-only (:ro).
+"""
+objectives = ["Tell rootless from rootful containers", "Inspect a container's mounts", "Recognise options that break isolation"]
+
+[environment]
+profile = "ubuntu"
+packages = ["podman"]
+[environment.vars]
+dir = { choices = ["notes", "uploads", "drafts"] }
+
+[[environment.setup]]
+action = "dir"
+path = "~/{{dir}}"
+owner = "learner"
+group = "learner"
+
+[[task]]
+id = "rootless"
+title = "Root — but whose?"
+kind = "guided"
+instructions = "Start a rootless container and compare the users:  podman run -d --name demo docker.io/library/alpine:3.20 sleep 600   then   podman top demo user huser"
+skills = { "p.container-security" = 1.0, "p.container-usage" = 0.5 }
+question = { prompt = "Root inside the container is which user on the host?", type = "exact", accept = ["learner"] }
+hints = ["USER is the name inside, HUSER the name on the host.", "Rootless podman maps container root to the account that started it.", "The answer is learner."]
+explanation = "If something breaks out of a rootless container, it gets your rights, not root's. That is why rootless is the safe default."
+
+[[task]]
+id = "rootful"
+title = "And with sudo?"
+kind = "prediction"
+instructions = "Think about the same container started with  sudo podman run ..."
+skills = { "p.container-security" = 1.0 }
+question = { prompt = "Which host user is container root in a rootful container?", type = "choice", choices = ["learner", "nobody", "root — the real root of the host", "A random subordinate ID"], answer = 2 }
+hints = ["A rootful engine runs as root and does not remap user IDs by default.", "UID 0 inside is UID 0 outside.", "The answer is (c)."]
+explanation = "Only the kernel's other isolation (namespaces, capabilities, AppArmor/SELinux) stands between rootful container root and the host — and options like --privileged remove most of it."
+
+[[task]]
+id = "mount"
+title = "What can it reach?"
+kind = "guided"
+instructions = "Mount one directory, read-only, and inspect the result:  podman run -d --name share -v /home/learner/{{dir}}:/data:ro docker.io/library/alpine:3.20 sleep 600   then   podman inspect -f '{{json .Mounts}}' share"
+skills = { "p.container-security" = 1.0 }
+question = { prompt = "Can the container change files in the mounted directory?", type = "choice", choices = ["Yes", "No: RW is false — the mount is read-only", "Only as root inside", "Only after a restart"], answer = 1 }
+hints = ["Look at the RW field.", ":ro made it read-only.", "The answer is (b)."]
+explanation = "Mount only what the container needs, read-only where possible. Every bind mount is a hole in the container's filesystem isolation."
+
+[[task]]
+id = "audit"
+title = "Audit a container"
+kind = "independent"
+instructions = "Without being told the command: show which host directory is mounted into the container 'share', and where."
+skills = { "p.container-security" = 1.0 }
+checks = [{ type = "output_contains", text = "/home/learner/{{dir}}", command = ["podman"] }]
+hints = ["podman inspect shows a container's full configuration.", "The Mounts section has Source (host) and Destination (container).", "Run: podman inspect share | grep -A6 Mounts"]
+explanation = "In an audit, list every container's mounts. Any Source of /, /etc, /root or an engine socket deserves immediate attention."
+
+[[task]]
+id = "privileged"
+title = "--privileged"
+kind = "prediction"
+instructions = "A deployment guide says: sudo podman run --privileged -v /:/host IMAGE"
+skills = { "p.container-security" = 1.0 }
+question = { prompt = "What can a process inside that container do?", type = "choice", choices = ["Only what the image allows", "Practically anything root can do on the host: read /host/etc/shadow, change any host file, load kernel modules", "Nothing, containers are isolated", "Only read files"], answer = 1 }
+hints = ["Rootful: container root is host root.", "-v /:/host puts the host's whole filesystem inside; --privileged removes the remaining restrictions.", "The answer is (b)."]
+explanation = "That combination is a root shell on the host with extra steps. Question every --privileged, host mount and docker.sock mount you see."
+
+[[task]]
+id = "group"
+title = "The docker group"
+kind = "prediction"
+instructions = "Think about who controls a rootful engine."
+skills = { "p.container-security" = 1.0 }
+question = { prompt = "Why is membership in the docker group considered equivalent to root?", type = "choice", choices = ["It is not; it only allows listing containers", "Members can tell the root-run engine to start a privileged container with the host's / mounted", "Members get the root password", "Docker adds members to sudoers"], answer = 1 }
+hints = ["The engine runs as root and obeys anyone who can talk to its socket.", "What could you mount into a container you start?", "The answer is (b)."]
+explanation = "Treat engine access like sudo access. Rootless podman avoids the problem: each user's containers run with that user's rights."
+
+[debrief]
+summary = """
+Rootless containers map container root to your account; rootful ones run it as host root.
+podman top ... user huser and podman inspect (Mounts) show who a container is and what it can
+reach. --privileged, host mounts and engine sockets break isolation.
+"""
+alternatives = ["podman inspect -f '{{.HostConfig.Privileged}}' NAME shows whether a container is privileged", "ps -eo user,pid,args on the host shows the host users of container processes", "cat /etc/subuid lists the ID ranges rootless containers map to"]
+pitfalls = ["Copying sudo/--privileged from tutorials without asking why.", "Mounting a whole home or / 'for convenience'.", "Adding users to the docker group to save typing sudo."]
+next = "Next: an API container that can read the host's password hashes — fix it."
+
+[[solution]]
+name = "as instructed"
+steps = ["podman run -d --name demo docker.io/library/alpine:3.20 sleep 600", "podman top demo user huser", ":answer learner", ":answer c", "podman run -d --name share -v /home/learner/{{dir}}:/data:ro docker.io/library/alpine:3.20 sleep 600", "podman inspect -f '{{json .Mounts}}' share", ":answer b", "podman inspect share | grep -A6 Mounts", ":answer b", ":answer b"]
+
+[[solution]]
+name = "host ps and inspect"
+steps = ["podman run -d --name demo docker.io/library/alpine:3.20 sleep 600", "ps -eo user,args | grep 'sleep 600'", ":answer learner", ":answer 3", "podman run -d --name share -v /home/learner/{{dir}}:/data:ro docker.io/library/alpine:3.20 sleep 600", "podman inspect -f '{{.HostConfig.Privileged}}' share", ":answer 2", "podman inspect share", ":answer 2", ":answer 2"]
+
+[[counterexample]]
+name = "never looking"
+steps = [":answer learner", ":answer c", ":answer b", ":answer b", ":answer b"]

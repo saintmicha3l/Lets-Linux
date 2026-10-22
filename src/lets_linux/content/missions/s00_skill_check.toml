@@ -1,0 +1,166 @@
+schema = 1
+
+[mission]
+id = "s00-skill-check"
+title = "Skill Check S: Specialist Paths"
+chapter = "S"
+placement = "S"
+kind = "assessment"
+order = 0
+difficulty = 5
+requires = []
+skills = ["s.web-server-ops", "s.database-ops", "s.disaster-recovery", "s.security-internals", "s.reliability", "s.advanced-networking", "s.infra-automation"]
+xp = 100
+estimated_minutes = 25
+sequential = false
+
+[briefing]
+context = """
+This skill check samples chapter S's specialist paths: web servers, databases and backups,
+security internals, reliability, advanced networking and infrastructure automation. Tasks in
+any order; you have sudo (password: letslinux). Solve them all (one slip allowed) to test out
+of chapter S. :submit ends the check.
+"""
+concept = "No hints: show what you can do on your own."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "debian"
+packages = ["nginx", "curl", "sqlite3", "libcap2-bin"]
+
+[environment.vars]
+orders = { choices = ["412", "437", "458"] }
+tool = { choices = ["netprobe", "pcapd", "portscan"] }
+
+[[environment.setup]]
+action = "run"
+command = "echo '<h1>Shop</h1>' > /var/www/html/index.html && chmod 600 /var/www/html/index.html"
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /var/lib/shop /var/backups && sqlite3 /var/lib/shop/orders.db \"CREATE TABLE orders (id INTEGER PRIMARY KEY, item TEXT); WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {{orders}}) INSERT INTO orders (item) SELECT 'item-' || i FROM n;\""
+
+[[environment.setup]]
+action = "run"
+command = "cp /usr/bin/true /usr/local/bin/{{tool}} && setcap cap_net_raw,cap_net_admin+ep /usr/local/bin/{{tool}}"
+
+[[task]]
+id = "forbidden"
+title = "403 Forbidden"
+kind = "assessment"
+instructions = "The website on this server (nginx, http://localhost/) answers 403 Forbidden. Find the cause and fix it so that the page is served — without making anything writable for others."
+skills = { "s.web-server-ops" = 1.0 }
+checks = [
+    { type = "command_result", command = "curl -s -o /dev/null -w '%{http_code}' http://localhost/", stdout_equals = "200" },
+    { type = "mode_lacks", path = "/var/www/html/index.html", bits = "022" },
+]
+explanation = "nginx's error log says (13: Permission denied): index.html is 600 root, so www-data cannot read it. chmod 644 fixes it."
+
+[[task]]
+id = "count"
+title = "How many orders?"
+kind = "assessment"
+instructions = "The shop keeps its orders in the SQLite database /var/lib/shop/orders.db (table orders)."
+skills = { "s.database-ops" = 1.0 }
+question = { prompt = "How many orders does it hold?", type = "number", accept = ["{{orders}}"] }
+explanation = "sudo sqlite3 /var/lib/shop/orders.db 'SELECT count(*) FROM orders;'"
+
+[[task]]
+id = "backup"
+title = "A consistent backup"
+kind = "assessment"
+instructions = "Make a consistent backup of the database as /var/backups/orders.db — one that is safe even while the shop writes to it (a plain file copy is not)."
+skills = { "s.disaster-recovery" = 1.0, "s.database-ops" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "sqlite3 /var/backups/orders.db 'SELECT count(*) FROM orders;'", stdout_equals = "{{orders}}" },
+    { type = "command_used", command = ["sqlite3"], args_regex = "\\.backup|\\.dump", scope = "history" },
+]
+explanation = "sqlite3 /var/lib/shop/orders.db \".backup /var/backups/orders.db\" (or .dump into a new database) takes a transaction-consistent copy; cp can copy a half-written transaction."
+
+[[task]]
+id = "caps"
+title = "Privileges without setuid"
+kind = "assessment"
+instructions = "One program on this server carries file capabilities. Remove them, so that no program on the system has file capabilities any more."
+skills = { "s.security-internals" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "getcap -r / 2>/dev/null", stdout_equals = "" },
+    { type = "path_exists", path = "/usr/local/bin/{{tool}}" },
+]
+explanation = "getcap -r / 2>/dev/null finds /usr/local/bin/{{tool}} with cap_net_admin,cap_net_raw; setcap -r removes them."
+
+[[task]]
+id = "slo"
+title = "An error budget"
+kind = "assessment"
+instructions = "Your service's objective is 99.9% availability over 30 days."
+skills = { "s.reliability" = 1.0 }
+question = { prompt = "About how many minutes of downtime does that allow in 30 days?", type = "number", accept = ["43.2"], tolerance = 1.0 }
+explanation = "30 days = 43,200 minutes; 0.1% of that is 43.2 minutes — the error budget."
+
+[[task]]
+id = "bond"
+title = "Two cables, one interface"
+kind = "assessment"
+instructions = "The office line should survive a broken cable: a second port is added, and both should act as one interface with one address."
+skills = { "s.advanced-networking" = 1.0 }
+question = { prompt = "Which mechanism is that?", type = "choice", choices = ["A bridge", "A bond (link aggregation), for example in active-backup mode", "A VLAN", "A second default route"], answer = 1 }
+explanation = "A bond combines interfaces into one (active-backup for failover, 802.3ad/LACP for both); a bridge connects separate networks."
+
+[[task]]
+id = "drift"
+title = "Fixing by hand"
+kind = "assessment"
+instructions = "A server is managed by a playbook in git. A colleague fixes a problem directly on the server, by hand."
+skills = { "s.infra-automation" = 1.0 }
+question = { prompt = "What is the problem with that?", type = "choice", choices = ["None — it is faster", "Drift: the next playbook run undoes the fix (or the next server lacks it); the change belongs in the repository and the playbook", "Playbooks cannot run on servers changed by hand", "git deletes the change"], answer = 1 }
+explanation = "Desired state lives in the repository; changes go there, are reviewed, and are applied by the tool."
+
+[debrief]
+summary = """
+The check sampled chapter S's paths. Each path has more depth in its missions; untested skills
+stay unseen.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "error log first"
+steps = [
+    { input = ["letslinux"] },
+    "curl -s -o /dev/null -w '%{http_code}\\n' http://localhost/",
+    "sudo tail -2 /var/log/nginx/error.log",
+    "sudo chmod 644 /var/www/html/index.html",
+    "sudo sqlite3 /var/lib/shop/orders.db 'SELECT count(*) FROM orders;'",
+    ":answer {{orders}}",
+    "sudo sqlite3 /var/lib/shop/orders.db \".backup /var/backups/orders.db\"",
+    "sudo getcap -r / 2>/dev/null",
+    "sudo setcap -r /usr/local/bin/{{tool}}",
+    ":answer 43.2",
+    ":answer b",
+    ":answer b",
+]
+
+[[solution]]
+name = "dump and reload"
+steps = [
+    { input = ["letslinux"] },
+    "sudo chmod a+r /var/www/html/index.html",
+    { answer_with = "sqlite3 /var/lib/shop/orders.db 'SELECT count(*) FROM orders;'" },
+    "sudo sqlite3 /var/lib/shop/orders.db .dump | sudo sqlite3 /var/backups/orders.db",
+    "sudo setcap -r /usr/local/bin/{{tool}}",
+    ":answer 43",
+    ":answer 2",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "cp and 777"
+steps = [
+    { input = ["letslinux"] },
+    "sudo chmod 666 /var/www/html/index.html",
+    ":answer {{orders}}",
+    "sudo cp /var/lib/shop/orders.db /var/backups/orders.db",
+    ":answer 43.2",
+    ":answer b",
+    ":answer b",
+]

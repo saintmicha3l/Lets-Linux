@@ -1,0 +1,138 @@
+schema = 1
+
+[mission]
+id = "q01c-make-basics"
+title = "Building with make"
+chapter = "Q"
+kind = "lesson"
+order = 3
+difficulty = 3
+requires = ["q01-toolchain"]
+skills = ["q.build-systems"]
+review_for = ["q.build-systems"]
+xp = 90
+estimated_minutes = 20
+
+[briefing]
+context = """
+Every C project, most Linux tools and many other projects build with make. Administrators
+meet Makefiles when building software from source, and when a build "does not pick up" a
+change. Write a small Makefile from scratch to see how make decides what to do.
+"""
+concept = """
+A Makefile is a list of rules:
+    TARGET: PREREQUISITES
+    <TAB>RECIPE (shell commands; each line MUST start with a tab character)
+make TARGET (or just make: the first target) runs a rule's recipe only if TARGET does not
+exist or is OLDER than one of its prerequisites — and it first brings the prerequisites up to
+date the same way. That is why a second make says "'hello' is up to date".
+Variables: CC = gcc, CFLAGS = -Wall, used as $(CFLAGS); make CFLAGS=-O2 overrides them on
+the command line. Automatic variables: $@ is the target, $< the first prerequisite, $^ all.
+.PHONY: clean install marks targets that are names of actions, not files.
+make -n shows what would run without running it.
+"""
+objectives = ["Write rules with targets, prerequisites and recipes", "Explain when make rebuilds", "Use variables and phony targets"]
+
+[environment]
+profile = "debian"
+packages = ["build-essential"]
+[environment.vars]
+prog = { choices = ["countdown", "wordfreq", "dice"] }
+
+[[environment.setup]]
+action = "file"
+path = "~/{{prog}}/{{prog}}.c"
+owner = "learner"
+group = "learner"
+content = """#include <stdio.h>
+
+int main(void)
+{
+    puts("{{prog}} 1.0");
+    return 0;
+}
+"""
+
+[[task]]
+id = "rule"
+title = "Your first rule"
+kind = "guided"
+instructions = """
+In ~/{{prog}}, create a Makefile with one rule (the second line starts with a TAB, written \\t here):
+    printf '{{prog}}: {{prog}}.c\\n\\tgcc -Wall -o {{prog}} {{prog}}.c\\n' > ~/{{prog}}/Makefile
+Then run  make  in that directory.
+"""
+skills = { "q.build-systems" = 1.0 }
+checks = [
+    { type = "path_exists", path = "~/{{prog}}/{{prog}}", kind = "file" },
+    { type = "command_used", command = ["make"], success = true },
+]
+hints = ["printf turns \\t into a tab and \\n into a new line.", "Run make inside ~/{{prog}} (or make -C ~/{{prog}}).", "Type the printf line shown, then: cd ~/{{prog}} && make"]
+explanation = "make read the rule, saw that {{prog}} did not exist, and ran the recipe."
+
+[[task]]
+id = "again"
+title = "Nothing to do"
+kind = "guided"
+instructions = "Run  make  again."
+skills = { "q.build-systems" = 1.0 }
+question = { prompt = "Why did make not compile anything?", type = "choice", choices = ["make only works once", "The target {{prog}} exists and is newer than its prerequisite {{prog}}.c", "The Makefile is broken", "gcc failed silently"], answer = 1 }
+hints = ["make compares modification times.", "Nothing changed since the last build.", "The answer is (b)."]
+explanation = "Comparing times is how make avoids redoing work: in a big project only what changed is rebuilt."
+
+[[task]]
+id = "touch"
+title = "Something changed"
+kind = "independent"
+instructions = "Make make rebuild {{prog}} without changing the source's contents — and run it."
+skills = { "q.build-systems" = 1.0 }
+checks = [{ type = "output_contains", text = "gcc", command = ["make"] }]
+hints = ["make looks at modification times, not contents.", "touch updates a file's modification time.", "Run: touch {{prog}}.c && make"]
+explanation = "A newer prerequisite triggers the recipe. The reverse also happens: copying files with old times can make make skip work it should do."
+
+[[task]]
+id = "tab"
+title = "Tabs, not spaces"
+kind = "prediction"
+instructions = "Think about the strictest rule in a Makefile."
+skills = { "q.build-systems" = 1.0 }
+question = { prompt = "A recipe line starts with four spaces instead of a tab. What does make say?", type = "choice", choices = ["Nothing; spaces work too", "*** missing separator.  Stop.", "command not found", "It ignores that line"], answer = 1 }
+hints = ["make tells recipe lines apart by their first character.", "Editors that turn tabs into spaces cause it.", "The answer is (b)."]
+explanation = "'missing separator' almost always means spaces where a tab belongs. cat -A Makefile shows tabs as ^I."
+
+[[task]]
+id = "vars"
+title = "Variables and a clean target"
+kind = "independent"
+instructions = "Rewrite ~/{{prog}}/Makefile so that it uses a variable CFLAGS (default -Wall) in the gcc command, and add a phony target clean that removes {{prog}}. make CFLAGS=-O2 must build with -O2."
+skills = { "q.build-systems" = 1.0 }
+checks = [
+    { type = "command_result", setup = ["cd ~/{{prog}} && make clean"], command = "cd ~/{{prog}} && make CFLAGS=-O2", stdout_contains = "-O2", checks = [{ type = "path_exists", path = "~/{{prog}}/{{prog}}" }] },
+    { type = "command_result", command = "cd ~/{{prog}} && make clean", status = 0, checks = [{ type = "path_absent", path = "~/{{prog}}/{{prog}}" }] },
+    { type = "file_contains", path = "~/{{prog}}/Makefile", regex = "\\.PHONY:.*clean" },
+]
+persistent = true
+hints = ["CFLAGS = -Wall at the top; $(CFLAGS) in the recipe.", "clean has no prerequisites; mark it with .PHONY: clean.", "printf 'CFLAGS = -Wall\\n\\n{{prog}}: {{prog}}.c\\n\\tgcc $(CFLAGS) -o $@ $<\\n\\n.PHONY: clean\\nclean:\\n\\trm -f {{prog}}\\n' > ~/{{prog}}/Makefile"]
+explanation = "Variables keep options in one place and let builders override them; .PHONY makes clean run even if a file called clean ever appears."
+
+[debrief]
+summary = """
+make runs a rule's recipe when its target is missing or older than a prerequisite. Recipes
+start with a tab; variables such as CFLAGS can be overridden on the command line; .PHONY marks
+action targets.
+"""
+alternatives = ["make -C DIR builds in DIR without cd", "make -n prints the commands without running them", "make -B rebuilds everything regardless of times"]
+pitfalls = ["Spaces instead of a tab before recipe lines.", "Prerequisites that are missing from the rule (headers!): make cannot know a rebuild is needed.", "A file named like a phony target (clean) without .PHONY."]
+next = "Next: a Makefile with four bugs."
+
+[[solution]]
+name = "as instructed"
+steps = ["printf '{{prog}}: {{prog}}.c\\n\\tgcc -Wall -o {{prog}} {{prog}}.c\\n' > ~/{{prog}}/Makefile", "cd ~/{{prog}}", "make", "make", ":answer b", "touch {{prog}}.c && make", ":answer b", "printf 'CFLAGS = -Wall\\n\\n{{prog}}: {{prog}}.c\\n\\tgcc $(CFLAGS) -o $@ $<\\n\\n.PHONY: clean\\nclean:\\n\\trm -f {{prog}}\\n' > Makefile", "make clean", "make CFLAGS=-O2"]
+
+[[solution]]
+name = "editor and make -C"
+steps = [{ edit = "{{prog}}: {{prog}}.c\n\tgcc -Wall -o {{prog}} {{prog}}.c\n" }, "nano ~/{{prog}}/Makefile", "make -C ~/{{prog}}", ":answer 2", "touch ~/{{prog}}/{{prog}}.c", "make -C ~/{{prog}}", ":answer 2", { edit = "CC = gcc\nCFLAGS = -Wall\n\n{{prog}}: {{prog}}.c\n\t$(CC) $(CFLAGS) -o {{prog}} {{prog}}.c\n\n.PHONY: clean\n\nclean:\n\trm -f {{prog}}\n" }, "nano ~/{{prog}}/Makefile"]
+
+[[counterexample]]
+name = "spaces and no variable"
+steps = ["printf '{{prog}}: {{prog}}.c\\n    gcc -Wall -o {{prog}} {{prog}}.c\\n' > ~/{{prog}}/Makefile", "cd ~/{{prog}}", "make", ":answer b", ":answer b"]

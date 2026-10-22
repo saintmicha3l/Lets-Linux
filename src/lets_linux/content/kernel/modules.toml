@@ -1,0 +1,324 @@
+# Kernel modules available to the simulated kernel (see distributions/kernel.py).
+#
+# path is relative to /lib/modules/RELEASE/kernel/ (the extension follows the
+# distribution: .ko on Debian, .ko.zst on Ubuntu and Arch, .ko.xz on Fedora).
+# depends are loaded first by modprobe; sysctls are the /proc/sys keys a module
+# adds while it is loaded (with their initial values); boot = loaded at every boot.
+
+schema = 1
+
+[module.ext4]
+path = "fs/ext4/ext4"
+description = "Fourth Extended Filesystem"
+license = "GPL"
+depends = ["mbcache", "jbd2", "crc16"]
+size = 1060864
+boot = true
+holds_fs = "ext4"
+
+[module.mbcache]
+path = "fs/mbcache"
+description = "Meta block cache (for extended attributes)"
+license = "GPL"
+size = 16384
+boot = true
+
+[module.jbd2]
+path = "fs/jbd2/jbd2"
+description = "Generic filesystem journal-writing module"
+license = "GPL"
+size = 196608
+boot = true
+
+[module.crc16]
+path = "lib/crc16"
+description = "CRC16 calculations"
+license = "GPL"
+size = 12288
+boot = true
+
+[module.xfs]
+path = "fs/xfs/xfs"
+description = "SGI XFS with ACLs, security attributes, realtime, scrub, quota, no debug enabled"
+license = "GPL"
+depends = ["libcrc32c"]
+size = 2187264
+holds_fs = "xfs"
+
+[module.libcrc32c]
+path = "lib/libcrc32c"
+description = "CRC32c (Castagnoli) calculations"
+license = "GPL"
+size = 12288
+
+[module.btrfs]
+path = "fs/btrfs/btrfs"
+description = "B-Tree File System"
+license = "GPL"
+depends = ["xor", "raid6_pq", "libcrc32c"]
+size = 1970176
+holds_fs = "btrfs"
+families = ["fedora"]
+boot = true
+
+[module.xor]
+path = "crypto/xor"
+description = "XOR block calculations"
+license = "GPL"
+size = 24576
+
+[module.raid6_pq]
+path = "lib/raid6/raid6_pq"
+description = "RAID6 Q-syndrome calculations"
+license = "GPL"
+size = 122880
+
+[module.vfat]
+path = "fs/fat/vfat"
+description = "VFAT filesystem support"
+license = "GPL"
+depends = ["fat"]
+size = 20480
+holds_fs = "vfat"
+
+[module.fat]
+path = "fs/fat/fat"
+description = "FAT filesystem core"
+license = "GPL"
+size = 90112
+
+[module.overlay]
+path = "fs/overlayfs/overlay"
+description = "Overlay filesystem"
+license = "GPL"
+size = 196608
+params = { redirect_dir = ["N", "Default to on or off for the redirect_dir feature"], metacopy = ["N", "Default to on or off for the metadata only copy up feature"] }
+
+[module.scsi_mod]
+path = "drivers/scsi/scsi_mod"
+description = "SCSI core"
+license = "GPL"
+size = 290816
+boot = true
+
+[module.sd_mod]
+path = "drivers/scsi/sd_mod"
+description = "SCSI disk (sd) driver"
+license = "GPL"
+depends = ["scsi_mod"]
+size = 77824
+boot = true
+
+[module.libata]
+path = "drivers/ata/libata"
+description = "Library module for ATA devices"
+license = "GPL"
+depends = ["scsi_mod"]
+size = 450560
+boot = true
+
+[module.libahci]
+path = "drivers/ata/libahci"
+description = "Common AHCI SATA low-level routines"
+license = "GPL"
+depends = ["libata"]
+size = 49152
+boot = true
+
+[module.ahci]
+path = "drivers/ata/ahci"
+description = "AHCI SATA low-level driver"
+license = "GPL"
+depends = ["libahci"]
+size = 49152
+boot = true
+params = { marvell_enable = ["1", "Marvell SATA via AHCI (1 = enabled) (int)"], mobile_lpm_policy = ["3", "Default LPM policy for mobile chipsets (int)"] }
+
+[module.e1000e]
+path = "drivers/net/ethernet/intel/e1000e/e1000e"
+description = "Intel(R) PRO/1000 Network Driver"
+license = "GPL v2"
+size = 163840
+boot = true
+params = { debug = ["-1", "Debug level (0=none,...,16=all) (int)"], copybreak = ["256", "Maximum size of packet that is copied to a new buffer on receive (uint)"] }
+
+[module.usbcore]
+path = "drivers/usb/core/usbcore"
+description = "USB core"
+license = "GPL"
+depends = ["usb_common"]
+size = 348160
+boot = true
+
+[module.usb_common]
+path = "drivers/usb/common/usb-common"
+description = "Common code for host and device side USB"
+license = "GPL"
+size = 16384
+boot = true
+
+[module.usb_storage]
+path = "drivers/usb/storage/usb-storage"
+description = "USB Mass Storage driver for Linux"
+license = "GPL"
+depends = ["usbcore", "scsi_mod"]
+size = 81920
+alias = ["usb-storage"]
+params = { delay_use = ["1", "seconds to delay before using a new device (uint)"], quirks = ["", "supplemental list of device IDs and their quirks (string)"] }
+
+[module.nfnetlink]
+path = "net/netfilter/nfnetlink"
+description = "Netfilter messages via netlink socket"
+license = "GPL"
+size = 20480
+
+[module.nf_tables]
+path = "net/netfilter/nf_tables"
+description = "Framework for packet filtering and classification"
+license = "GPL"
+depends = ["nfnetlink"]
+size = 356352
+firewall = true
+
+[module.llc]
+path = "net/llc/llc"
+description = "IEEE 802.2 LLC"
+license = "GPL"
+size = 16384
+
+[module.stp]
+path = "net/802/stp"
+description = "Spanning Tree Protocol"
+license = "GPL"
+depends = ["llc"]
+size = 12288
+
+[module.bridge]
+path = "net/bridge/bridge"
+description = "Ethernet bridge driver"
+license = "GPL"
+depends = ["stp", "llc"]
+size = 389120
+
+[module.br_netfilter]
+path = "net/bridge/br_netfilter"
+description = "Linux ethernet netfilter firewall bridge"
+license = "GPL"
+depends = ["bridge"]
+size = 32768
+sysctls = { "net.bridge.bridge-nf-call-iptables" = "1", "net.bridge.bridge-nf-call-ip6tables" = "1", "net.bridge.bridge-nf-call-arptables" = "1" }
+kmsg = "bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this."
+
+[module.mrp]
+path = "net/802/mrp"
+description = "Multiple Registration Protocol"
+license = "GPL"
+size = 20480
+
+[module.garp]
+path = "net/802/garp"
+description = "Generic Attribute Registration Protocol"
+license = "GPL"
+depends = ["stp", "llc"]
+size = 16384
+
+[module."8021q"]
+path = "net/8021q/8021q"
+description = "802.1Q/802.1ad VLAN support"
+license = "GPL"
+depends = ["garp", "mrp"]
+size = 45056
+kmsg = "8021q: 802.1Q VLAN Support v1.8"
+
+[module.bonding]
+path = "drivers/net/bonding/bonding"
+description = "Ethernet Channel Bonding Driver, v6.1"
+license = "GPL"
+size = 237568
+params = { mode = ["balance-rr", "Mode of operation; 0 for balance-rr, 1 for active-backup, 2 for balance-xor, 3 for broadcast, 4 for 802.3ad, 5 for balance-tlb, 6 for balance-alb (charp)"], miimon = ["0", "Link check interval in milliseconds (int)"], max_bonds = ["1", "Max number of bonded devices (int)"] }
+
+[module.dummy]
+path = "drivers/net/dummy"
+description = "Dummy netdevice driver which discards all packets sent to it"
+license = "GPL"
+size = 16384
+params = { numdummies = ["0", "Number of dummy pseudo devices (int)"] }
+
+[module.tun]
+path = "drivers/net/tun"
+description = "Universal TUN/TAP device driver"
+license = "GPL"
+size = 65536
+
+[module.veth]
+path = "drivers/net/veth"
+description = "Virtual Ethernet Tunnel"
+license = "GPL"
+size = 40960
+
+[module.udp_tunnel]
+path = "net/ipv4/udp_tunnel"
+description = "IPv4 Foo over UDP tunnel driver"
+license = "GPL"
+size = 32768
+
+[module.ip6_udp_tunnel]
+path = "net/ipv6/ip6_udp_tunnel"
+description = "IPv6 Foo over UDP tunnel driver"
+license = "GPL"
+size = 16384
+
+[module.wireguard]
+path = "drivers/net/wireguard/wireguard"
+description = "WireGuard secure network tunnel"
+license = "GPL v2"
+depends = ["udp_tunnel", "ip6_udp_tunnel"]
+size = 118784
+kmsg = "wireguard: WireGuard 1.0.0 loaded. See www.wireguard.com for information."
+
+[module.kvm]
+path = "arch/x86/kvm/kvm"
+description = "Kernel-based Virtual Machine"
+license = "GPL"
+size = 1351680
+params = { halt_poll_ns = ["200000", "(uint)"] }
+
+[module.kvm_intel]
+path = "arch/x86/kvm/kvm-intel"
+description = "KVM support for Intel VMX"
+license = "GPL"
+depends = ["kvm"]
+size = 409600
+alias = ["kvm-intel"]
+params = { nested = ["N", "(bool)"], ept = ["Y", "(bool)"] }
+needs_cpu = "vmx"
+
+[module.loop]
+path = "drivers/block/loop"
+description = "Loopback device support"
+license = "GPL"
+size = 40960
+params = { max_loop = ["0", "Maximum number of loop devices (int)"], max_part = ["0", "Maximum number of partitions per loop device (int)"] }
+
+[module.pcspkr]
+path = "drivers/input/misc/pcspkr"
+description = "PC Speaker beeper driver"
+license = "GPL"
+size = 12288
+boot = true
+
+[module.floppy]
+path = "drivers/block/floppy"
+description = "Floppy disk driver"
+license = "GPL"
+size = 114688
+boot = true
+params = { floppy = ["", "(charp)"] }
+kmsg = "floppy0: no floppy controllers found"
+
+[module.firewire_core]
+path = "drivers/firewire/firewire-core"
+description = "Core IEEE1394 transaction logic and API"
+license = "GPL"
+size = 90112
+alias = ["firewire-core"]

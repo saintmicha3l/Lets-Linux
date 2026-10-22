@@ -1,0 +1,274 @@
+schema = 1
+
+[mission]
+id = "s03-least-privilege"
+title = "Least Privilege"
+chapter = "S"
+kind = "lesson"
+order = 4
+difficulty = 5
+requires = ["s01-front-door", "l03-permission-audit"]
+skills = ["s.security-internals", "d.special-bits", "h.unit-files"]
+review_for = ["d.special-bits", "h.unit-files"]
+xp = 240
+estimated_minutes = 35
+
+[briefing]
+context = """
+A security review of this server found two things: "a program with unusual privileges" and
+"the web application runs as root". The web application is webapp.service — a small static
+site on port 80 (http://127.0.0.1/). A system user webapp already exists for it.
+(sudo password: letslinux)
+"""
+concept = """
+Root's power is split into about forty capabilities: CAP_NET_BIND_SERVICE (ports below
+1024), CAP_DAC_OVERRIDE and CAP_DAC_READ_SEARCH (ignore file permissions), CAP_SYS_ADMIN
+(almost everything) … A program can carry capabilities as a file attribute (setcap; list
+them with getcap -r /), much like a setuid bit — but limited to those privileges. A process
+shows its sets in /proc/PID/status (CapEff: a bit mask, capsh --decode=MASK names it).
+systemd starts services with exactly the privileges you grant: User= plus
+AmbientCapabilities=CAP_NET_BIND_SERVICE lets an ordinary user listen on port 80;
+CapabilityBoundingSet= limits even root; NoNewPrivileges=yes makes setuid programs
+powerless; ProtectSystem=strict, ProtectHome=yes and PrivateTmp=yes shrink what the service
+can see and change. systemd-analyze security UNIT scores how exposed a service is.
+"""
+objectives = ["Find programs with file capabilities", "Explain what a capability allows", "Run a service as an unprivileged user with one capability", "Read capability masks", "Harden a service with systemd's sandboxing"]
+
+[environment]
+profile = "debian"
+packages = ["curl"]
+
+[[environment.setup]]
+action = "user"
+name = "webapp"
+system = true
+shell = "/usr/sbin/nologin"
+home = "/srv/www"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/www/index.html"
+content = "<html><body><h1>{{site}}</h1><p>Opening hours: 9-17</p></body></html>\n"
+
+[[environment.setup]]
+action = "run"
+command = "cp /usr/bin/tar /usr/local/bin/{{tool}} && setcap cap_dac_read_search=ep /usr/local/bin/{{tool}}"
+
+[[environment.setup]]
+action = "service"
+name = "webapp.service"
+enable = true
+start = true
+content = """[Unit]
+Description=Static web application
+After=network.target
+
+[Service]
+WorkingDirectory=/srv/www
+ExecStart=/usr/bin/python3 -m http.server 80
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[environment.vars]
+tool = { choices = ["packit", "bundle", "squash"] }
+site = { choices = ["Riverside Library", "Hilltop Bakery", "Harbour Museum"] }
+
+[[task]]
+id = "find"
+title = "Unusual privileges"
+kind = "guided"
+instructions = "Search the whole file system for programs with file capabilities: `getcap -r / 2>/dev/null`."
+skills = { "s.security-internals" = 1.0 }
+question = { prompt = "Which program has a capability? (its full path)", type = "regex", accept = ["^/usr/local/bin/{{tool}}$"] }
+hints = ["getcap -r DIR lists every file below DIR that has capabilities.", "Errors for /proc and the like are noise — 2>/dev/null hides them.", "getcap -r / 2>/dev/null"]
+explanation = "Like find / -perm -4000 for setuid programs, getcap -r / belongs in every audit: capabilities are privileges, too."
+
+[[task]]
+id = "danger"
+title = "What it allows"
+kind = "explanation"
+instructions = """
+The program is a copy of tar with cap_dac_read_search=ep. Try it as yourself:
+`/usr/local/bin/{{tool}} -cf - /etc/shadow | tar -xOf -`.
+"""
+skills = { "s.security-internals" = 1.0, "d.special-bits" = 0.5 }
+question = { prompt = "What can every user on this machine do with it?", type = "choice", choices = ["Nothing — capabilities only work for root", "Read any file and list any directory, ignoring permissions: password hashes, keys, other users' files", "Change any file", "Only archive their own files faster"], answer = 1 }
+hints = ["What did the command above print?", "DAC = discretionary access control: the file permissions. READ_SEARCH: reading and searching (listing).", "Answer (b)."]
+explanation = "A capability on an archiver, an editor or an interpreter gives every user that power. Such programs must never carry capabilities that read or write files."
+
+[[task]]
+id = "remove"
+title = "Take it away"
+kind = "independent"
+instructions = "Remove the capability so that no program on the system carries file capabilities any more."
+skills = { "s.security-internals" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "getcap -r / 2>/dev/null", stdout_equals = "" },
+    { type = "command_result", user = "learner", command = "test -x /usr/local/bin/{{tool}} || exit 1; /usr/local/bin/{{tool}} -cf - /etc/shadow 2>/dev/null | tar -xOf - 2>/dev/null | grep -c root", stdout_regex = "^0?\\s*$" },
+]
+persistent = true
+hints = ["setcap -r FILE removes a file's capabilities.", "Deleting the copy works too — it was never a package's file.", "sudo setcap -r /usr/local/bin/{{tool}}"]
+explanation = "getcap -r / now prints nothing. Rewriting a file also drops its capabilities, so package updates do not keep stale privileges."
+
+[[task]]
+id = "deroot"
+title = "Off root"
+kind = "independent"
+instructions = """
+webapp.service runs as root only because it listens on port 80. Make it run as the user
+webapp — still on port 80, still started at boot — with no capability but the one it needs,
+and without giving any program file capabilities.
+"""
+skills = { "s.security-internals" = 1.0, "h.unit-files" = 1.0 }
+checks = [
+    { type = "unit_state", unit = "webapp.service", active = "active", sub = "running" },
+    { type = "unit_enabled", unit = "webapp.service" },
+    { type = "command_result", user = "root", command = "ps -o user= -p $(systemctl show -p MainPID --value webapp)", stdout_equals = "webapp" },
+    { type = "command_result", user = "root", command = "grep CapEff /proc/$(systemctl show -p MainPID --value webapp)/status", stdout_equals = "CapEff:\t0000000000000400" },
+    { type = "command_result", user = "root", command = "curl -s http://127.0.0.1/ | grep -c '{{site}}'", stdout_equals = "1" },
+    { type = "command_result", user = "root", command = "getcap -r / 2>/dev/null", stdout_equals = "" },
+]
+persistent = true
+hints = [
+    "Without help, an ordinary user cannot listen on a port below 1024 — try User=webapp alone and read the journal.",
+    "systemctl edit webapp (or edit the unit and daemon-reload): User=webapp and AmbientCapabilities=CAP_NET_BIND_SERVICE in [Service].",
+    "Then sudo systemctl daemon-reload && sudo systemctl restart webapp; check with grep Cap /proc/$(systemctl show -p MainPID --value webapp)/status.",
+]
+explanation = """
+CapEff 0000000000000400 is bit 10: cap_net_bind_service, nothing else. setcap on
+/usr/bin/python3 would have worked too — and handed the privilege to every Python program of
+every user. AmbientCapabilities= gives it to this one service only.
+"""
+
+[[task]]
+id = "decode"
+title = "Reading masks"
+kind = "explanation"
+instructions = "In an incident report you find a process with `CapEff: 0000000000003000`. Decode it (capsh --decode=…)."
+skills = { "s.security-internals" = 1.0 }
+question = { prompt = "Which capabilities did it have?", type = "choice", choices = ["cap_net_bind_service", "cap_net_admin and cap_net_raw: it could reconfigure the network and capture or forge packets", "All capabilities", "cap_sys_admin"], answer = 1 }
+hints = ["capsh --decode=0000000000003000", "0x3000 = bits 12 and 13.", "Answer (b)."]
+explanation = "Bit n of the mask is capability number n: 12 is CAP_NET_ADMIN, 13 CAP_NET_RAW — the pair a packet sniffer needs."
+
+[[task]]
+id = "harden"
+title = "A smaller blast radius"
+kind = "independent"
+instructions = """
+Now reduce what webapp.service could do if it were ever compromised: bring its overall
+exposure in `systemd-analyze security webapp` below 5.0 — while the site keeps working
+(as the user webapp, on port 80).
+"""
+skills = { "s.security-internals" = 1.0, "h.unit-files" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "systemd-analyze security webapp.service | tail -1", stdout_regex = "webapp\\.service: [0-4]\\.\\d " },
+    { type = "unit_state", unit = "webapp.service", active = "active", sub = "running" },
+    { type = "command_result", user = "root", command = "ps -o user= -p $(systemctl show -p MainPID --value webapp)", stdout_equals = "webapp" },
+    { type = "command_result", user = "root", command = "curl -s http://127.0.0.1/ | grep -c '{{site}}'", stdout_equals = "1" },
+    { type = "after_reboot", checks = [{ type = "command_result", user = "root", command = "curl -s http://127.0.0.1/ | grep -c '{{site}}'", stdout_equals = "1" }] },
+]
+persistent = true
+hints = [
+    "Run systemd-analyze security webapp and work through the ✗ lines with the highest exposure.",
+    "Strong, cheap settings: NoNewPrivileges=yes, CapabilityBoundingSet=CAP_NET_BIND_SERVICE, ProtectSystem=strict, ProtectHome=yes, PrivateTmp=yes, PrivateDevices=yes.",
+    "Add them under [Service], daemon-reload, restart — and check that curl still gets the page: ProtectHome=yes would hide a site kept in /home.",
+]
+explanation = """
+Each directive removes a way an attacker could go further: no setuid escalation
+(NoNewPrivileges), no capabilities beyond the one needed, a read-only operating system, no
+home directories, a private /tmp. The site still works because it only needs to read
+/srv/www and listen on port 80. The simulation enforces the file-system and capability
+directives; others (PrivateDevices=, SystemCallFilter= …) are scored but not simulated.
+"""
+
+[[task]]
+id = "layers"
+title = "The other layers"
+kind = "explanation"
+instructions = """
+Hardened units often also carry `SystemCallFilter=@system-service`, and distributions add
+AppArmor or SELinux profiles. A colleague asks what that adds to capabilities and the
+ProtectSystem=-style settings (which systemd implements with mount namespaces).
+"""
+skills = { "s.security-internals" = 1.0 }
+question = { prompt = "What does SystemCallFilter= do?", type = "choice", choices = ["It limits the service's CPU time", "It installs a seccomp filter: the kernel refuses system calls outside the allowed groups — even for root — so an exploited service cannot, say, load modules or mount file systems", "It hides other processes", "It logs every system call to the journal"], answer = 1 }
+hints = ["Capabilities limit privileges; namespaces limit what a process can see.", "seccomp limits which kernel functions it may call at all.", "Answer (b)."]
+explanation = """
+Defence in depth: capabilities (which privileged operations), namespaces (which files,
+processes, network a service sees — PrivateTmp=, ProtectSystem=, containers), seccomp (which
+system calls) and an LSM such as AppArmor or SELinux (a mandatory policy no process can
+override). This simulation enforces capabilities and the file-system namespace settings;
+seccomp filters are scored by systemd-analyze but not enforced.
+"""
+
+[debrief]
+summary = """
+Audit for capabilities like for setuid bits (getcap -r /); read CapEff masks with capsh
+--decode; give a service exactly the privilege it needs (User= + AmbientCapabilities=) rather
+than root or file capabilities on a shared interpreter; shrink the rest with systemd's
+sandboxing and measure it with systemd-analyze security.
+"""
+alternatives = ["A reverse proxy (nginx) on port 80 forwarding to the application on a high port", "sysctl net.ipv4.ip_unprivileged_port_start=80 — lets every user bind ports from 80 up", "DynamicUser=yes: systemd invents a throw-away user for the service"]
+pitfalls = ["setcap on /usr/bin/python3 or another interpreter: every user gains the privilege", "ProtectSystem=strict without ReadWritePaths= for the data a service writes", "Hardening without testing that the service still works"]
+next = "Next: networks with more than one way out."
+
+[[solution]]
+name = "unit edits"
+steps = [
+    { input = ["letslinux"] },
+    { answer_with = "getcap -r / 2>/dev/null | cut -d' ' -f1" },
+    ":answer 1",
+    ":answer 2",
+    "sudo setcap -r /usr/local/bin/{{tool}}",
+    { edit = "[Unit]\nDescription=Static web application\nAfter=network.target\n\n[Service]\nUser=webapp\nAmbientCapabilities=CAP_NET_BIND_SERVICE\nWorkingDirectory=/srv/www\nExecStart=/usr/bin/python3 -m http.server 80\nRestart=on-failure\n\n[Install]\nWantedBy=multi-user.target\n" },
+    "sudo nano /etc/systemd/system/webapp.service",
+    "sudo systemctl daemon-reload",
+    "sudo systemctl restart webapp",
+    "grep Cap /proc/$(systemctl show -p MainPID --value webapp)/status",
+    "capsh --decode=0000000000003000",
+    ":answer 2",
+    { edit = "[Unit]\nDescription=Static web application\nAfter=network.target\n\n[Service]\nUser=webapp\nAmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nPrivateDevices=yes\nWorkingDirectory=/srv/www\nExecStart=/usr/bin/python3 -m http.server 80\nRestart=on-failure\n\n[Install]\nWantedBy=multi-user.target\n" },
+    "sudo nano /etc/systemd/system/webapp.service",
+    "sudo systemctl daemon-reload",
+    "sudo systemctl restart webapp",
+    "systemd-analyze security webapp | tail -1",
+    ":answer 2",
+]
+
+[[solution]]
+name = "drop-in and deleted copy"
+steps = [
+    { input = ["letslinux"] },
+    { answer_with = "getcap -r / 2>/dev/null | cut -d' ' -f1" },
+    ":answer 1",
+    ":answer 2",
+    "sudo rm /usr/local/bin/{{tool}}",
+    "sudo mkdir -p /etc/systemd/system/webapp.service.d",
+    "printf '[Service]\\nUser=webapp\\nAmbientCapabilities=CAP_NET_BIND_SERVICE\\n' | sudo tee /etc/systemd/system/webapp.service.d/user.conf",
+    "sudo systemctl daemon-reload && sudo systemctl restart webapp",
+    ":answer 2",
+    "printf '[Service]\\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\\nNoNewPrivileges=true\\nProtectSystem=strict\\nProtectHome=true\\nPrivateTmp=true\\nProtectKernelTunables=yes\\nProtectKernelModules=yes\\nProtectControlGroups=yes\\n' | sudo tee /etc/systemd/system/webapp.service.d/harden.conf",
+    "sudo systemctl daemon-reload && sudo systemctl restart webapp",
+    ":answer b",
+]
+
+[[counterexample]]
+name = "capability on the interpreter"
+steps = [
+    { input = ["letslinux"] },
+    { answer_with = "getcap -r / 2>/dev/null | cut -d' ' -f1" },
+    ":answer 1",
+    ":answer 2",
+    "sudo setcap -r /usr/local/bin/{{tool}}",
+    "sudo setcap cap_net_bind_service=ep /usr/bin/python3",
+    "sudo mkdir -p /etc/systemd/system/webapp.service.d",
+    "printf '[Service]\\nUser=webapp\\n' | sudo tee /etc/systemd/system/webapp.service.d/user.conf",
+    "sudo systemctl daemon-reload && sudo systemctl restart webapp",
+    ":answer 2",
+    "printf '[Service]\\nNoNewPrivileges=yes\\nProtectSystem=strict\\nProtectHome=yes\\nPrivateTmp=yes\\n' | sudo tee /etc/systemd/system/webapp.service.d/harden.conf",
+    "sudo systemctl daemon-reload && sudo systemctl restart webapp",
+    ":answer 2",
+]

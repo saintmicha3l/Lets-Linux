@@ -1,0 +1,190 @@
+schema = 1
+
+[mission]
+id = "c07-compare-and-feed"
+title = "Spot the Difference"
+chapter = "C"
+kind = "lesson"
+order = 7
+difficulty = 2
+requires = ["c02-pipelines", "c03-grep"]
+skills = ["c.diff-compare", "c.tee-xargs", "c.redirect-input"]
+review_for = ["c.pipelines", "c.redirect-output"]
+xp = 130
+estimated_minutes = 25
+
+[briefing]
+context = """
+Two copies of the web server's configuration exist in ~/configs — the one from the old
+server and the one from the new — and something behaves differently. Afterwards, clean up
+a list of stale cache files and keep a record of what you did. Four tools for the job:
+diff, tee, xargs and input redirection.
+"""
+concept = """
+diff OLD NEW lists what changed between two files: "2c2" (line 2 changed), "3a4" (added
+after line 3), "5d4" (deleted), with < for the old and > for the new lines; diff -u prints
+the unified format with - and + that patches and git use; diff -r compares directories;
+cmp only says whether (and where) files differ. tee FILE copies its input both to the
+screen and to a file (tee -a appends) — the middle of a pipeline, or a way to write a
+root-owned file: … | sudo tee FILE. xargs turns lines of input into arguments for a command:
+find … | xargs rm; with -0 (and find -print0) names may contain spaces. < FILE makes a file
+a command's standard input (wc -l < file prints just the number); << WORD feeds the
+following lines up to WORD (a here-document).
+"""
+objectives = ["Read diff's normal and unified output", "Save a pipeline's output while watching it", "Turn a list into arguments with xargs", "Feed a file to standard input"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "dir"
+path = "/home/learner/configs"
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/configs/site-old.conf"
+owner = "learner"
+group = "learner"
+content = """server {
+    listen 80;
+    server_name shop.example.lan;
+    root /srv/www/shop;
+    client_max_body_size 20m;
+    gzip on;
+}
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/configs/site-new.conf"
+owner = "learner"
+group = "learner"
+content = """server {
+    listen 80;
+    server_name shop.example.lan;
+    root /srv/www/shop;
+    client_max_body_size 2m;
+    gzip on;
+    access_log off;
+}
+"""
+
+[[environment.setup]]
+action = "dir"
+path = "/home/learner/cache"
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "files"
+dir = "/home/learner/cache"
+count = 12
+prefix = "page-"
+owner = "learner"
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/stale.txt"
+owner = "learner"
+group = "learner"
+content = """/home/learner/cache/page-1
+/home/learner/cache/page-4
+/home/learner/cache/page-7
+/home/learner/cache/page-9
+"""
+
+[[task]]
+id = "diff"
+title = "What changed?"
+kind = "troubleshooting"
+instructions = "Compare ~/configs/site-old.conf with ~/configs/site-new.conf."
+skills = { "c.diff-compare" = 1.0 }
+question = { prompt = "Uploads above 2 MB now fail. Which setting explains it — and what was its old value?", type = "regex", accept = ["(?i)client_max_body_size.*20\\s*m", "(?i)20\\s*m.*client_max_body_size"] }
+hints = ["diff OLD NEW: < lines are from the first file, > from the second.", "diff -u shows the change in context with - and +.", "client_max_body_size went from 20m to 2m (and access_log off was added)."]
+explanation = "diff showed 5c5 (line 5 changed) and 6a8 (a line added after line 6) — exactly what a review of a configuration change needs."
+
+[[task]]
+id = "record"
+title = "Watch and keep"
+kind = "guided"
+instructions = "Save the unified diff of the two files to ~/configs/changes.diff while also seeing it on the screen — in one command line."
+skills = { "c.tee-xargs" = 1.0, "c.diff-compare" = 0.5 }
+checks = [
+    { type = "command_used", command = ["tee"], scope = "history" },
+    { type = "file_contains", path = "/home/learner/configs/changes.diff", text = "+    client_max_body_size 2m;" },
+]
+hints = ["diff -u … produces the unified format.", "Pipe it into tee FILE.", "diff -u ~/configs/site-old.conf ~/configs/site-new.conf | tee ~/configs/changes.diff"]
+explanation = "tee writes its input to the file and passes it on. Note diff's exit status 1 means 'files differ', not an error."
+
+[[task]]
+id = "xargs"
+title = "Delete a list"
+kind = "independent"
+instructions = "~/stale.txt lists cache files to delete, one per line. Delete exactly those, by feeding the list to rm (no loop, no typing the names)."
+skills = { "c.tee-xargs" = 1.0, "c.redirect-input" = 0.5 }
+checks = [
+    { type = "path_absent", path = "/home/learner/cache/page-1" },
+    { type = "path_absent", path = "/home/learner/cache/page-4" },
+    { type = "path_absent", path = "/home/learner/cache/page-7" },
+    { type = "path_absent", path = "/home/learner/cache/page-9" },
+    { type = "path_exists", path = "/home/learner/cache/page-2" },
+    { type = "path_exists", path = "/home/learner/cache/page-11" },
+    { type = "command_used", command = ["xargs"], scope = "history" },
+]
+hints = ["xargs reads names from its input and runs a command with them as arguments.", "xargs rm < ~/stale.txt — or cat ~/stale.txt | xargs rm", "xargs rm -v < ~/stale.txt"]
+explanation = "xargs builds 'rm file1 file2 …' from the list. With names that may contain spaces, produce NUL-separated lists (find -print0) and use xargs -0."
+
+[[task]]
+id = "input"
+title = "Just the number"
+kind = "independent"
+instructions = "Count how many cache files remain, printing only the number (no file name), and save that number in ~/remaining.txt."
+skills = { "c.redirect-input" = 1.0 }
+checks = [
+    { type = "file_equals_command", path = "/home/learner/remaining.txt", command = "ls /home/learner/cache | wc -l" },
+]
+hints = ["wc -l FILE prints the number and the name; wc -l < FILE only the number.", "ls ~/cache | wc -l also works: input from a pipe has no name either.", "ls ~/cache | wc -l > ~/remaining.txt"]
+explanation = "When a program reads standard input it does not know any file name — so it cannot print one. < redirects input just as > redirects output."
+
+[debrief]
+summary = """
+diff OLD NEW (-u unified, -r directories), cmp for "same or not"; … | tee FILE to keep what
+you watch (sudo tee for root-owned files); LIST | xargs CMD (-0 with -print0); CMD < FILE
+for standard input, << WORD for here-documents.
+"""
+alternatives = ["diff <(sort a) <(sort b) compares command outputs (process substitution)", "find … -delete or -exec rm {} + instead of xargs", "comm compares sorted lists line by line"]
+pitfalls = ["xargs with names containing spaces — use -print0/-0.", "sudo cmd > /root/file — the redirection is done by your shell, not by sudo; use | sudo tee.", "Reading diff's < and > backwards: < is the first file."]
+next = "Next: who owns files and who may use them."
+
+[[solution]]
+name = "diff, tee, xargs"
+steps = [
+    "diff ~/configs/site-old.conf ~/configs/site-new.conf",
+    ":answer client_max_body_size was 20m",
+    "diff -u ~/configs/site-old.conf ~/configs/site-new.conf | tee ~/configs/changes.diff",
+    "xargs rm -v < ~/stale.txt",
+    "wc -l < /dev/null",
+    "ls ~/cache | wc -l > ~/remaining.txt",
+]
+
+[[solution]]
+name = "pipes everywhere"
+steps = [
+    "cd ~/configs",
+    "diff -u site-old.conf site-new.conf",
+    ":answer 20m client_max_body_size",
+    "diff -u site-old.conf site-new.conf | tee changes.diff | grep '^[-+]'",
+    "cat ~/stale.txt | xargs rm",
+    "find ~/cache -type f | wc -l > ~/remaining.txt",
+]
+
+[[counterexample]]
+name = "typing the names"
+steps = [
+    ":answer client_max_body_size 20m",
+    "diff -u ~/configs/site-old.conf ~/configs/site-new.conf > ~/configs/changes.diff",
+    "rm ~/cache/page-1 ~/cache/page-4 ~/cache/page-7 ~/cache/page-9",
+    "ls ~/cache | wc -l > ~/remaining.txt",
+]

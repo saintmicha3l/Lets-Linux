@@ -1,0 +1,328 @@
+schema = 1
+
+[mission]
+id = "s05-change-control"
+title = "Change Control"
+chapter = "S"
+kind = "troubleshooting"
+order = 6
+difficulty = 5
+requires = ["k06-desired-state", "q06-git", "s01-front-door"]
+skills = ["s.infra-automation", "k.config-management-concepts", "q.version-control", "k.safe-automation"]
+review_for = ["k.config-management-concepts", "q.version-control"]
+xp = 250
+estimated_minutes = 40
+
+[briefing]
+context = """
+The team keeps the web server's configuration in a git repository, ~/infra: an Ansible
+playbook (site.yml) and its templates. Every change is committed, then applied with
+ansible-playbook. After yesterday's deployment the shop at http://localhost/ stopped
+answering. Colleagues have the repository too, so its history must not be rewritten.
+(sudo password: letslinux)
+"""
+concept = """
+Infrastructure as code: the desired state of the servers lives in files under version
+control. That gives every change an author, a date, a reason (the commit message) and a
+diff — and a way back. git log -p, git show COMMIT and git blame FILE find the change that
+broke something; git revert COMMIT makes a new commit that undoes it while keeping the
+history (and the changes made after it) — unlike git reset, which rewrites history others
+already have. Applying is the second half: ansible-playbook --check --diff shows what the
+repository's state would change on the server, the real run converges it, and a second
+check run must report changed=0. Changes made only on the server are drift; changes made
+only in the repository are not deployed.
+"""
+objectives = ["Find the commit that caused an outage", "Undo a change without rewriting shared history", "Deploy configuration from the repository safely", "Make a change the reviewable way: commit, preview, apply, verify"]
+
+[environment]
+profile = "debian"
+packages = ["ansible-core", "nginx", "curl", "git"]
+
+[[environment.setup]]
+action = "file"
+path = "~/infra/site.yml"
+owner = "learner"
+group = "learner"
+content = """---
+- name: Shop web server
+  hosts: localhost
+  become: true
+  vars:
+    listen_port: 80
+    site_root: /var/www/shop
+
+  tasks:
+    - name: nginx is installed
+      apt:
+        name: nginx
+        state: present
+
+    - name: site directory
+      file:
+        path: "\\{{ site_root }}"
+        state: directory
+        mode: "0755"
+
+    - name: shop pages
+      template:
+        src: templates/index.html.j2
+        dest: "\\{{ site_root }}/index.html"
+        mode: "0644"
+
+    - name: shop site configuration
+      template:
+        src: templates/shop.conf.j2
+        dest: /etc/nginx/sites-available/shop
+        mode: "0644"
+      notify: reload nginx
+
+    - name: shop site is enabled
+      file:
+        src: /etc/nginx/sites-available/shop
+        dest: /etc/nginx/sites-enabled/shop
+        state: link
+      notify: reload nginx
+
+    - name: default site is disabled
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: reload nginx
+
+    - name: nginx runs
+      service:
+        name: nginx
+        state: started
+        enabled: true
+
+  handlers:
+    - name: reload nginx
+      service:
+        name: nginx
+        state: reloaded
+"""
+
+[[environment.setup]]
+action = "file"
+path = "~/infra/templates/shop.conf.j2"
+owner = "learner"
+group = "learner"
+content = """# managed by Ansible (~/infra) - do not edit on the server
+server {
+    listen \\{{ listen_port }} default_server;
+    server_name shop.example.lan;
+    root \\{{ site_root }};
+    index index.html;
+}
+"""
+
+[[environment.setup]]
+action = "file"
+path = "~/infra/templates/index.html.j2"
+owner = "learner"
+group = "learner"
+content = "<html><head><title>{{shop}} - Shpo</title></head><body><h1>{{shop}}</h1></body></html>\n"
+
+[[environment.setup]]
+action = "file"
+path = "/tmp/history.sh"
+content = """set -e
+cd /home/learner/infra
+c() { GIT_AUTHOR_NAME="$1" GIT_AUTHOR_EMAIL="$2@example.lan" GIT_COMMITTER_NAME="$1" GIT_COMMITTER_EMAIL="$2@example.lan" GIT_AUTHOR_DATE="$3" git commit -q -am "$4"; }
+git init -q -b main .
+git add .
+GIT_AUTHOR_NAME="Ana Ruiz" GIT_AUTHOR_EMAIL=ana@example.lan GIT_COMMITTER_NAME="Ana Ruiz" GIT_COMMITTER_EMAIL=ana@example.lan GIT_AUTHOR_DATE=@1772010000 git commit -q -m "Shop web server: nginx site and pages"
+sed -i 's/^    index index.html;/    index index.html;\\n    add_header X-Content-Type-Options nosniff;/' templates/shop.conf.j2
+c "Ben Okafor" ben @1772100000 "Send X-Content-Type-Options on every response"
+sed -i 's/^    listen_port: 80$/    listen_port: 8080/' site.yml
+c "{{author}}" {{login}} @1772280000 "Move the shop to port 8080 for the new load balancer"
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/tmp/history2.sh"
+mode = "0644"
+content = """set -e
+cd /home/learner/infra
+sed -i 's/ - Shpo</ - Shop</' templates/index.html.j2
+GIT_AUTHOR_NAME="Ana Ruiz" GIT_AUTHOR_EMAIL=ana@example.lan GIT_AUTHOR_DATE=@1772290000 git commit -q -am "Fix typo in the page title"
+"""
+
+[[environment.setup]]
+action = "run"
+command = "chown -R learner:learner /home/learner/infra && chmod 644 /tmp/history.sh"
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "bash /tmp/history.sh"
+
+[[environment.setup]]
+action = "run"
+command = "cd /home/learner/infra && ansible-playbook site.yml >/dev/null 2>&1"
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "bash /tmp/history2.sh"
+
+[[environment.setup]]
+action = "run"
+command = "rm -f /tmp/history.sh /tmp/history2.sh"
+
+
+[environment.vars]
+shop = { choices = ["Bean & Leaf", "Northwind Books", "Tinker Garden"] }
+author = { choices = ["Carl Meyer", "Dana Holt", "Erik Lund"] }
+login = { choices = ["carl", "dana", "erik"] }
+
+[[task]]
+id = "who"
+title = "Which change?"
+kind = "guided"
+instructions = """
+Find the commit that made the shop stop answering on port 80: `cd ~/infra && git log
+--oneline`, then `git log -p` or `git show COMMIT` (or `git blame site.yml`). Compare with
+`ss -ltn` on the server.
+"""
+skills = { "s.infra-automation" = 1.0, "q.version-control" = 1.0 }
+question = { prompt = "Which commit was it? (its hash; the short form git log --oneline shows is enough)", type = "state", state = { command = "su learner -c 'cd ~/infra && git log --format=%H --grep=8080'", abbrev = true } }
+hints = ["git log --oneline lists the commits, newest first.", "git log -p site.yml shows the changes to the playbook; look for listen_port.", "git log --oneline --grep=8080"]
+explanation = "The commit message says why: a load balancer that is not there yet. git blame site.yml would point at the same commit for the listen_port line."
+
+[[task]]
+id = "revert"
+title = "Undo it — keeping history"
+kind = "independent"
+instructions = """
+Undo exactly that commit in the repository. Colleagues already have the history, so do not
+rewrite it — and keep the changes made after it (the typo fix). If git asks who you are,
+configure your name and e-mail first.
+"""
+skills = { "s.infra-automation" = 1.0, "q.version-control" = 1.0 }
+checks = [
+    { type = "command_result", user = "learner", command = "cd ~/infra && git log --format=%s | grep -c '^Revert \"Move the shop to port 8080'", stdout_equals = "1" },
+    { type = "command_result", user = "learner", command = "cd ~/infra && git log --format=%s | grep -c 'Fix typo in the page title'", stdout_equals = "1" },
+    { type = "command_result", user = "learner", command = "cd ~/infra && git log --format=%s | grep -c '^Move the shop to port 8080'", stdout_equals = "1" },
+    { type = "command_result", user = "learner", command = "cd ~/infra && grep -c 'listen_port: 80$' site.yml && git status --porcelain | wc -l", stdout_equals = "1\n0" },
+]
+persistent = true
+hints = [
+    "git revert COMMIT creates a new commit that applies the opposite of COMMIT.",
+    "git reset --hard would also remove the typo fix — and rewrite the history colleagues have.",
+    "git config --global user.name 'Your Name'; git config --global user.email you@example.lan; git revert --no-edit HASH",
+]
+explanation = "The history now tells the whole story: the change, and its reversal, each with author and reason. Nothing on the server has changed yet."
+
+[[task]]
+id = "deploy"
+title = "Deploy from the repository"
+kind = "independent"
+instructions = """
+Bring the server to the repository's state — preview first (--check --diff), then apply.
+Afterwards a check run must find nothing to change.
+"""
+skills = { "s.infra-automation" = 1.0, "k.config-management-concepts" = 1.0, "k.safe-automation" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "curl -s http://127.0.0.1/ | grep -c '{{shop}} - Shop<'", stdout_equals = "1" },
+    { type = "command_result", user = "root", command = "ss -ltn | grep -c ':8080 '", stdout_equals = "0" },
+    { type = "command_result", user = "root", command = "cd /home/learner/infra && ansible-playbook --check site.yml", stdout_regex = "changed=0 +unreachable=0 +failed=0" },
+]
+persistent = true
+hints = ["cd ~/infra && ansible-playbook -K --check --diff site.yml shows the port and title changes.", "The same without --check applies them; the handler reloads nginx.", "ansible-playbook -K site.yml"]
+explanation = "The diff showed two changes: the port back to 80 — and the typo fix, which had never been deployed by hand either. The repository and the server agree again (changed=0)."
+
+[[task]]
+id = "change"
+title = "A change, done properly"
+kind = "independent"
+instructions = """
+The security team asks for one more response header on the shop: `Referrer-Policy:
+same-origin`. Make the change in the repository (a commit with a meaningful message), then
+deploy it — no edits directly on the server.
+"""
+skills = { "s.infra-automation" = 1.0, "k.safe-automation" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "curl -sI http://127.0.0.1/ | tr -d '\\r' | grep -ic '^referrer-policy: same-origin$'", stdout_equals = "1" },
+    { type = "command_result", user = "learner", command = "cd ~/infra && git show HEAD:templates/shop.conf.j2 | grep -c 'Referrer-Policy'", stdout_equals = "1" },
+    { type = "command_result", user = "learner", command = "cd ~/infra && git status --porcelain | wc -l", stdout_equals = "0" },
+    { type = "command_result", user = "root", command = "cd /home/learner/infra && ansible-playbook --check site.yml", stdout_regex = "changed=0 +unreachable=0 +failed=0" },
+    { type = "command_result", user = "root", command = "curl -sI http://127.0.0.1/ | tr -d '\\r' | grep -ic '^x-content-type-options: nosniff$'", stdout_equals = "1" },
+]
+persistent = true
+hints = [
+    "The header belongs in templates/shop.conf.j2, next to the other add_header line.",
+    "Edit, then git commit -am 'Send Referrer-Policy: same-origin', then ansible-playbook -K --check --diff site.yml and the real run.",
+    "add_header Referrer-Policy same-origin;",
+]
+explanation = "Edit → commit → preview → apply → verify: every step leaves evidence, and the next person can review or revert it. The check run proves server and repository agree."
+
+[[task]]
+id = "why"
+title = "The argument"
+kind = "explanation"
+instructions = "A colleague says: \"Next time, just fix nginx on the server, it is faster.\""
+skills = { "s.infra-automation" = 1.0, "k.config-management-concepts" = 0.5 }
+question = { prompt = "What is the best reply?", type = "choice", choices = ["Right — the repository is only documentation", "A hand fix is drift: the next playbook run undoes it (or the next server lacks it), and nobody can review, find or revert it. Fix it in the repository and deploy", "Hand fixes are fine if you restart nginx", "Only root may change the repository"], answer = 1 }
+hints = ["What did ansible-playbook do with the server's state today?", "Think of fifty servers, and of next month.", "Answer (b)."]
+explanation = "In an emergency you may fix by hand — and then put the same fix into the repository at once, so the next run does not undo it."
+
+[debrief]
+summary = """
+Configuration in git gives changes authors, reasons and diffs. git log -p, git show and git
+blame find the breaking change; git revert undoes it without rewriting shared history.
+Deploy with ansible-playbook --check --diff first, apply, and confirm convergence
+(changed=0). Make every change in the repository: edit, commit, preview, apply, verify.
+"""
+alternatives = ["git bisect to find the bad commit among many", "A branch and a merge request for review before deploying", "Running the playbook from CI on every merge"]
+pitfalls = ["git reset --hard on shared history", "Fixing the server by hand and forgetting the repository", "Deploying without --check --diff"]
+next = "Next: measuring reliability."
+
+[[solution]]
+name = "revert, deploy, change"
+steps = [
+    { input = ["letslinux", "letslinux", "letslinux"] },
+    "cd ~/infra && git log --oneline",
+    "git log -p -1 --skip=1 site.yml",
+    { answer_with = "su learner -c 'cd ~/infra && git log --format=%h --grep=8080'" },
+    "git config --global user.name 'Learner' && git config --global user.email learner@example.lan",
+    "git revert --no-edit $(git log --format=%h --grep='port 8080')",
+    "git log --oneline",
+    "ansible-playbook -K --check --diff site.yml",
+    "ansible-playbook -K site.yml",
+    "curl -s http://localhost/",
+    { edit = "# managed by Ansible (~/infra) - do not edit on the server\nserver {\n    listen \\{{ listen_port }} default_server;\n    server_name shop.example.lan;\n    root \\{{ site_root }};\n    index index.html;\n    add_header X-Content-Type-Options nosniff;\n    add_header Referrer-Policy same-origin;\n}\n" },
+    "nano templates/shop.conf.j2",
+    "git commit -am 'Send Referrer-Policy: same-origin'",
+    "ansible-playbook -K --check --diff site.yml",
+    "ansible-playbook -K site.yml",
+    "curl -sI http://localhost/",
+    ":answer 2",
+]
+
+[[solution]]
+name = "blame, sed and become password file"
+steps = [
+    { input = ["letslinux", "letslinux"] },
+    "cd ~/infra && git blame site.yml | grep listen_port",
+    { answer_with = "su learner -c 'cd ~/infra && git log --format=%h --grep=8080'" },
+    "export GIT_AUTHOR_NAME=Learner GIT_AUTHOR_EMAIL=learner@example.lan GIT_COMMITTER_NAME=Learner GIT_COMMITTER_EMAIL=learner@example.lan",
+    "git revert --no-edit HEAD~1",
+    "ansible-playbook -K site.yml",
+    "sed -i 's/^    add_header X-Content-Type-Options nosniff;/&\\n    add_header Referrer-Policy same-origin;/' templates/shop.conf.j2",
+    "git add templates/shop.conf.j2 && git commit -m 'Add Referrer-Policy header (security review)'",
+    "ansible-playbook -K site.yml",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "reset and hand edits"
+steps = [
+    { input = ["letslinux", "letslinux"] },
+    { answer_with = "su learner -c 'cd ~/infra && git log --format=%h --grep=8080'" },
+    "cd ~/infra && git reset --hard HEAD~2",
+    "ansible-playbook -K site.yml",
+    "sudo sed -i 's/^    add_header X-Content-Type-Options nosniff;/&\\n    add_header Referrer-Policy same-origin;/' /etc/nginx/sites-available/shop",
+    "sudo systemctl reload nginx",
+    ":answer 2",
+]

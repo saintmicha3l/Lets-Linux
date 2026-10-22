@@ -1,0 +1,156 @@
+schema = 1
+
+[mission]
+id = "j01-new-disk"
+title = "A New Disk"
+chapter = "J"
+kind = "lesson"
+order = 1
+difficulty = 3
+requires = ["d04-sudo-and-accounts", "b07-lost-and-found"]
+skills = ["j.block-devices", "j.filesystems-mkfs", "j.mount-umount", "j.fstab-persistence"]
+xp = 140
+estimated_minutes = 25
+
+[briefing]
+context = """
+The data on this server keeps growing, so the hosting provider attached a second virtual
+disk. Your job: find it, partition it, put a filesystem on it, make it available as /srv/data
+and make sure it is still there after the next reboot. (sudo password: letslinux)
+"""
+concept = """
+Disks appear as block devices in /dev (sda, sdb, vda, nvme0n1); partitions get numbers (sdb1).
+A disk needs a partition table (gpt today) and partitions (parted), each partition needs a
+filesystem (mkfs.ext4), and a filesystem only becomes usable when it is mounted on a
+directory (mount). /etc/fstab lists what to mount at boot. Name filesystems there by UUID
+(blkid shows it): /dev/sdX names can change when disks are added. lsblk shows the whole
+picture at any time.
+"""
+objectives = ["Identify disks and partitions", "Create a partition table and a partition", "Create a filesystem", "Mount it", "Make the mount persistent and test it"]
+
+[environment]
+profile = "debian"
+packages = ["parted"]
+[environment.vars]
+size = { choices = ["8G", "10G", "16G"] }
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "{{size}}"
+
+[[task]]
+id = "find"
+title = "Which disk is new?"
+kind = "guided"
+instructions = "List the block devices. One disk has no partitions and nothing mounted: that is the new one."
+skills = { "j.block-devices" = 1.0 }
+question = { prompt = "What is the device file of the new disk? (e.g. /dev/sdx)", type = "exact", accept = ["/dev/sdb", "sdb"] }
+hints = ["lsblk lists disks (TYPE disk) and their partitions.", "sda has partitions mounted on / and /boot; look for the other disk.", "/dev/sdb"]
+explanation = "lsblk shows /dev/sdb ({{size}}) without partitions or mount points. sudo fdisk -l /dev/sdb shows it has no partition table either."
+
+[[task]]
+id = "partition"
+title = "Partition it"
+kind = "independent"
+instructions = "Give /dev/sdb a GPT partition table with one partition that uses the whole disk."
+skills = { "j.block-devices" = 1.0 }
+checks = [{ type = "disk_partitioned", disk = "sdb", table = "gpt", min = 1, min_percent = 95 }]
+hints = ["parted -s DEVICE mklabel gpt creates the table; mkpart NAME FSTYPE START END adds a partition.", "Start at 1MiB (alignment) and end at 100%.", "sudo parted -s /dev/sdb mklabel gpt mkpart data ext4 1MiB 100%"]
+explanation = "lsblk now shows sdb1 below sdb. The 'ext4' given to mkpart is only a hint in the table: there is no filesystem yet."
+
+[[task]]
+id = "format"
+title = "Create a filesystem"
+kind = "independent"
+instructions = "Create an ext4 filesystem with the label 'data' on the new partition."
+skills = { "j.filesystems-mkfs" = 1.0 }
+checks = [{ type = "filesystem_on", device = "/dev/sdb1", fstype = "ext4", label = "data" }]
+hints = ["mkfs.ext4 makes ext4 filesystems; -L sets the label.", "mkfs works on the partition (sdb1), not the whole disk (sdb).", "sudo mkfs.ext4 -L data /dev/sdb1"]
+explanation = "lsblk -f (or sudo blkid) now shows TYPE ext4, LABEL data and a freshly generated UUID."
+
+[[task]]
+id = "mount"
+title = "Mount it"
+kind = "independent"
+instructions = "Mount the new filesystem on /srv/data (create the directory first) and check its size with df."
+skills = { "j.mount-umount" = 1.0 }
+checks = [{ type = "mounted", target = "/srv/data", disk = "sdb", fstype = "ext4" }]
+hints = ["The mount point must be an existing directory.", "mkdir, then mount DEVICE DIRECTORY — both as root.", "sudo mkdir -p /srv/data && sudo mount /dev/sdb1 /srv/data && df -h /srv/data"]
+explanation = "df -h /srv/data shows /dev/sdb1 with a little less than {{size}}: ext4 keeps space for its metadata and journal, and reserves 5% for root."
+
+[[task]]
+id = "persist"
+title = "Survive a reboot"
+kind = "independent"
+instructions = "Add a line to /etc/fstab that mounts the filesystem on /srv/data by its UUID (ext4, defaults, fsck pass 2). Then prove that the line works: unmount, and let mount -a (or mount /srv/data, which looks the rest up in fstab) mount it again."
+skills = { "j.fstab-persistence" = 1.0 }
+checks = [
+    { type = "fstab_entry", target = "/srv/data", by = "uuid", disk = "sdb", fstype = "ext4" },
+    { type = "fstab_valid" },
+    { type = "mounted", target = "/srv/data", disk = "sdb" },
+    { type = "command_used", command = ["mount", "findmnt"], args_regex = "(^| )(-a|--all|--verify)( |$)|^/srv/data/?$", success = true, scope = "history" },
+    { type = "after_reboot", checks = [{ type = "mounted", target = "/srv/data", disk = "sdb", fstype = "ext4" }] },
+]
+persistent = true
+hints = [
+    "sudo blkid /dev/sdb1 shows the UUID (blkid lives in /usr/sbin: use sudo). The line format is SPEC MOUNTPOINT TYPE OPTIONS DUMP PASS.",
+    "UUID=<the uuid> /srv/data ext4 defaults 0 2 — append it with sudo tee -a /etc/fstab or an editor; then sudo umount /srv/data && sudo mount -a",
+    "echo \"UUID=$(sudo blkid -s UUID -o value /dev/sdb1) /srv/data ext4 defaults 0 2\" | sudo tee -a /etc/fstab; sudo umount /srv/data; sudo mount -a; findmnt /srv/data",
+]
+explanation = "mount -a mounting it again is the closest thing to a reboot test. sudo findmnt --verify checks the file without mounting anything — use both after every fstab change."
+
+[debrief]
+summary = """
+New storage: identify (lsblk) → partition table and partition (parted) → filesystem (mkfs) →
+mount point and mount → fstab by UUID → test with findmnt --verify and mount -a.
+"""
+alternatives = ["LABEL=data instead of the UUID works too, as long as labels are unique", "fdisk or gdisk interactively instead of parted", "A filesystem directly on the whole disk (no partition table) works, but surprises other tools and people"]
+pitfalls = ["mkfs on the wrong device destroys its data: check with lsblk first.", "Using /dev/sdb1 in fstab: the name can change when disks are added or removed.", "A typo in fstab can stop the next boot — always test with mount -a."]
+next = "Next: what to do when a filesystem will not unmount, and mount options."
+
+[[solution]]
+name = "parted, tee and mount -a"
+steps = [
+    "lsblk",
+    ":answer /dev/sdb",
+    { input = ["letslinux"] },
+    "sudo parted -s /dev/sdb mklabel gpt mkpart data ext4 1MiB 100%",
+    "sudo mkfs.ext4 -L data /dev/sdb1",
+    "sudo mkdir -p /srv/data",
+    "sudo mount /dev/sdb1 /srv/data",
+    "df -h /srv/data",
+    "echo \"UUID=$(sudo blkid -s UUID -o value /dev/sdb1) /srv/data ext4 defaults 0 2\" | sudo tee -a /etc/fstab",
+    "sudo umount /srv/data",
+    "sudo mount -a",
+    "findmnt /srv/data",
+]
+
+[[solution]]
+name = "root shell, fstab first"
+steps = [
+    "sudo fdisk -l /dev/sdb",
+    { input = ["letslinux"] },
+    ":answer sdb",
+    "sudo -i",
+    "parted -s /dev/sdb mklabel gpt",
+    "parted -s /dev/sdb mkpart primary ext4 0% 100%",
+    "mkfs -t ext4 -L data /dev/sdb1",
+    "mkdir /srv/data",
+    "printf 'UUID=%s /srv/data ext4 defaults 0 2\\n' \"$(blkid -s UUID -o value /dev/sdb1)\" >> /etc/fstab",
+    "findmnt --verify",
+    "mount /srv/data",
+    "exit",
+]
+
+[[counterexample]]
+name = "device name in fstab, never tested"
+steps = [
+    ":answer /dev/sdb",
+    { input = ["letslinux"] },
+    "sudo parted -s /dev/sdb mklabel gpt mkpart data ext4 1MiB 100%",
+    "sudo mkfs.ext4 -L data /dev/sdb1",
+    "sudo mkdir -p /srv/data",
+    "echo '/dev/sdb1 /srv/data ext4 defaults 0 2' | sudo tee -a /etc/fstab",
+    "sudo mount /dev/sdb1 /srv/data",
+]

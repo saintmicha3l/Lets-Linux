@@ -1,0 +1,103 @@
+schema = 1
+
+[mission]
+id = "a03-getting-help"
+title = "Asking for Help"
+chapter = "A"
+kind = "lesson"
+order = 3
+difficulty = 1
+requires = ["a02-command-anatomy"]
+skills = ["a.help-man", "a.builtin-vs-external"]
+xp = 50
+estimated_minutes = 10
+
+[briefing]
+context = """
+Nobody memorises every option. Good administrators know where to look. Your lead asks you to
+find the biggest programs in /usr/bin — and to do it without searching the web.
+"""
+concept = """
+Most commands print a summary with --help. The full manual is in man pages: man ls (press q to
+quit the pager). Some commands are built into the shell rather than being programs: type NAME
+tells you which, and help NAME documents built-ins.
+"""
+objectives = ["Use --help and man to discover options", "Tell built-ins from programs with type"]
+
+[environment]
+profile = "debian"
+
+[[task]]
+id = "help"
+title = "Ask ls for help"
+kind = "guided"
+instructions = "Run `ls --help` and skim the list of options."
+skills = { "a.help-man" = 1.0 }
+checks = [{ type = "command_used", command = "ls", args_contain = "--help" }]
+hints = ["Most programs accept a long option that prints their usage.", "That option is --help.", "Type: ls --help"]
+explanation = "--help prints a short summary of a command's options. It is the quickest reference."
+
+[[task]]
+id = "find-option"
+title = "Find the right option"
+kind = "independent"
+instructions = "Which single-letter ls option sorts the listing by file size, largest first? Answer with the option (for example -x)."
+skills = { "a.help-man" = 1.0 }
+question = { prompt = "Which ls option sorts by file size?", type = "exact", accept = ["-S", "S"], case_sensitive = true }
+hints = [
+    "Search the --help output for the word 'size'.",
+    "ls --help | grep -i size narrows it down.",
+    "The answer is -S (capital S): sort by file size, largest first.",
+]
+explanation = "-S sorts by size. Note the capital letter: options are case-sensitive, and -s means something else."
+
+[[task]]
+id = "use-option"
+title = "Use it"
+kind = "guided"
+instructions = "List /usr/bin in long format, sorted by size, and look at the first few entries. (Piping to head is optional.)"
+skills = { "a.help-man" = 0.5, "b.ls-listing" = 0.5 }
+checks = [{ type = "command_used", command = "ls", args_regex = "-[a-zA-Z]*S" }]
+hints = ["Combine the option you found with -l.", "ls -lS /usr/bin | head shows the largest few.", "Type: ls -lS /usr/bin | head"]
+explanation = "ls -lS lists largest files first; head keeps the first ten lines."
+
+[[task]]
+id = "man"
+title = "Read a manual page"
+kind = "guided"
+instructions = "Open the manual page for ls with `man ls`. Scroll with the arrow keys or PageDown and press q to return."
+skills = { "a.help-man" = 1.0 }
+checks = [{ type = "command_used", command = ["man", "info"], args_contain = "ls" }]
+hints = ["Manual pages are opened with a three-letter command.", "man followed by the command name.", "Type: man ls"]
+explanation = "man shows the full manual. Sections matter: man 5 passwd describes the /etc/passwd file format, not the passwd command."
+
+[[task]]
+id = "builtin"
+title = "Built-in or program?"
+kind = "independent"
+instructions = "Use type to investigate cd and ls."
+skills = { "a.builtin-vs-external" = 1.0 }
+question = { prompt = "Which of these is a shell builtin rather than a program in /usr/bin?", type = "choice", choices = ["ls", "cd", "cat", "date"], answer = 1 }
+hints = ["type NAME reports what NAME is.", "Run type cd and type ls and compare.", "The answer is (b) cd: 'cd is a shell builtin'. It must be, because a child program cannot change the shell's own directory."]
+explanation = "cd is built into the shell: a separate program could only change its own directory, not yours. type also reveals aliases, such as ls being an alias for ls --color=auto."
+
+[debrief]
+summary = """
+--help for a quick summary, man for the full story, type to learn what a name really is, and
+help for shell built-ins. With these you can learn any command on any Linux system.
+"""
+alternatives = ["man ls, then type /size to search inside the pager", "apropos size or man -k size searches manual descriptions", "help cd documents the builtin"]
+pitfalls = ["man cd usually has no entry on real systems because cd is a builtin: use help cd."]
+next = "Next: how commands report success and failure."
+
+[[solution]]
+name = "help and man"
+steps = ["ls --help", ":answer -S", "ls -lS /usr/bin | head", "man ls", ":answer b"]
+
+[[solution]]
+name = "searching the help"
+steps = ["ls --help | grep -i size", ":answer S", "ls -S -l /usr/bin", "man 1 ls", "type cd ls", ":answer cd"]
+
+[[counterexample]]
+name = "guessing without looking"
+steps = [":answer -s", "ls -l /usr/bin", ":answer a"]

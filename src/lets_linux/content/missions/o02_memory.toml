@@ -1,0 +1,180 @@
+schema = 1
+
+[mission]
+id = "o02-memory"
+title = "Slowly, Then Suddenly"
+chapter = "O"
+kind = "troubleshooting"
+order = 3
+difficulty = 6
+requires = ["o01-cpu-or-disk", "h03-your-own-service"]
+skills = ["o.memory-analysis", "o.observability", "o.capacity-planning"]
+review_for = ["h.unit-files", "h.journalctl"]
+xp = 230
+estimated_minutes = 35
+
+[briefing]
+context = """
+The inventory service on this Debian server died this morning, and nobody restarted it.
+sysstat has been recording the system's activity all week. Find out what killed the
+service, whether it was sudden or coming for days, how fast it was coming — and make sure
+it cannot take the server down with it next time. (sudo password: letslinux)
+"""
+concept = """
+free -m: 'free' is memory nobody uses; 'available' estimates what programs can still get
+(free plus reclaimable cache) — the number that matters. When available memory and swap run
+out, the kernel's OOM killer kills the process with the highest badness (usually the
+biggest) and logs it: journalctl -k | grep -i 'out of memory'; systemd marks the unit
+"Failed with result 'oom-kill'". Metrics give the history: sar -r (memory) per day from
+/var/log/sysstat/saDD (sar -r -f FILE; -s/-e choose a time window). A steady climb day after
+day is a leak; extrapolating it tells you when the next crash comes. Mitigation in the unit:
+Restart=on-failure brings the service back; MemoryMax= (a cgroup limit) makes the kernel
+kill only that service when it grows too large, instead of picking a victim system-wide.
+"""
+objectives = ["Recognise an OOM kill", "Read memory history with sar", "Estimate a growth rate", "Contain a leaking service with systemd"]
+
+[environment]
+profile = "debian"
+packages = ["sysstat", "netcat"]
+
+[[environment.setup]]
+action = "service"
+name = "inventory.service"
+enable = true
+start = true
+content = """[Unit]
+Description=Inventory API
+After=network.target
+
+[Service]
+User=nobody
+ExecStart=/usr/bin/nc -lk 8090
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "sysstat_history"
+days = 6
+mem = 34
+mem_growth = 9
+until_ago = 96
+cpu = 3
+cpu_peak = 18
+
+[[environment.setup]]
+action = "oom"
+unit = "inventory.service"
+rss_kb = 3412004
+ago = 95
+
+[[task]]
+id = "cause"
+title = "What killed it?"
+kind = "troubleshooting"
+instructions = "Find out why the inventory service is not running."
+skills = { "o.memory-analysis" = 1.0, "h.journalctl" = 0.5 }
+question = { prompt = "What ended the service?", type = "choice", choices = ["Someone stopped it", "The kernel's OOM killer, because memory ran out", "It crashed with a segmentation fault"], answer = 1 }
+hints = ["systemctl status inventory", "Result: oom-kill — and the kernel log has the details: journalctl -k | grep -i memory", "(b)"]
+explanation = "\"Out of memory: Killed process … (nc) … anon-rss:3412004kB\": the service had grown to over 3 GB on a 4 GB machine."
+
+[[task]]
+id = "trend"
+title = "Sudden or slow?"
+kind = "troubleshooting"
+instructions = "Look at the memory history sysstat recorded over the past days."
+skills = { "o.observability" = 1.0, "o.memory-analysis" = 0.5 }
+question = { prompt = "How did memory use develop?", type = "choice", choices = ["A sudden spike this morning", "A steady climb over several days — a leak", "Constant until the crash"], answer = 1 }
+hints = ["sar -r shows today; older days are in /var/log/sysstat/saDD (sar -r -f FILE).", "Compare %memused at the same time on different days: sar -r -f /var/log/sysstat/sa$(date -d '3 days ago' +%d) | head", "(b)"]
+explanation = "Day after day, %memused at midnight was higher than the day before — the service never gave memory back."
+
+[[task]]
+id = "rate"
+title = "How fast?"
+kind = "troubleshooting"
+instructions = "Estimate the growth: compare the average %memused of two consecutive full days (sar -r -f FILE prints an Average line)."
+skills = { "o.capacity-planning" = 1.0 }
+question = { prompt = "About how many percentage points per day does %memused grow?", type = "number", accept = [9], tolerance = 1.5 }
+hints = ["sar -r -f /var/log/sysstat/saDD | tail -1 gives a day's average.", "Take two consecutive days and subtract.", "About 9 points per day: from ~40 % to 100 % takes less than a week."]
+explanation = "With 9 points a day, a restarted service will exhaust memory again in about a week — a deadline for the developers, and for your mitigation."
+
+[[task]]
+id = "contain"
+title = "Contain it"
+kind = "independent"
+instructions = "Get the service running again. Make systemd restart it automatically when it fails, and give it a memory limit of at most 2 GiB (MemoryMax), so that next time only the service is killed, not a random process. Use a drop-in, not the original unit file."
+skills = { "o.memory-analysis" = 1.0, "h.unit-files" = 1.0 }
+checks = [
+    { type = "unit_state", unit = "inventory.service", active = "active" },
+    { type = "unit_setting", unit = "inventory.service", section = "Service", key = "Restart", regex = "^(on-failure|always|on-abnormal)$" },
+    { type = "unit_setting", unit = "inventory.service", section = "Service", key = "MemoryMax", regex = "^(1[0-9]{3}M|20[0-4][0-8]M|[1-9][0-9]{2}M|[12]G|2048M|[0-9.]+%)$" },
+    { type = "command_result", user = "root", command = "ls /etc/systemd/system/inventory.service.d/", stdout_regex = "\\.conf" },
+]
+hints = ["sudo systemctl edit inventory creates a drop-in (or create /etc/systemd/system/inventory.service.d/limits.conf and daemon-reload).", "[Service]\\nRestart=on-failure\\nMemoryMax=2G", "sudo mkdir -p /etc/systemd/system/inventory.service.d; printf '[Service]\\nRestart=on-failure\\nMemoryMax=2G\\n' | sudo tee /etc/systemd/system/inventory.service.d/limits.conf; sudo systemctl daemon-reload; sudo systemctl restart inventory"]
+explanation = "The service is back; with MemoryMax the kernel enforces the limit inside the service's cgroup, and Restart=on-failure brings it back. The leak itself is the developers' job — you bought them time and protected the rest of the server."
+
+[[task]]
+id = "available"
+title = "free versus available"
+kind = "explanation"
+instructions = "Run free -m."
+skills = { "o.memory-analysis" = 1.0 }
+question = { prompt = "Which column says how much memory programs can still get?", type = "choice", choices = ["free", "available — free memory plus cache the kernel can reclaim", "shared"], answer = 1 }
+hints = ["The page cache is given back on demand.", "Low 'free' with high 'available' is normal and healthy.", "(b)"]
+explanation = "Linux uses idle memory as cache; judging memory pressure by 'free' leads to false alarms."
+
+[debrief]
+summary = """
+systemctl status (oom-kill) → journalctl -k (OOM details) → sar -r over days (trend, rate) →
+extrapolate → mitigate: Restart=, MemoryMax=/MemoryHigh= in a drop-in → report the leak.
+"""
+alternatives = ["MemoryHigh= throttles before MemoryMax= kills", "OOMScoreAdjust= makes a service a preferred (or avoided) OOM victim", "Prometheus/Grafana graphs show the same trend continuously"]
+pitfalls = ["Judging memory by 'free'.", "Restarting without a limit: the next OOM may kill the database instead.", "Treating a leak as a one-off crash."]
+next = "Chapter O is complete."
+
+[[solution]]
+name = "status, sar, drop-in"
+steps = [
+    "systemctl status inventory",
+    "journalctl -k | grep -i 'out of memory'",
+    ":answer b",
+    "sar -r -f /var/log/sysstat/sa$(date -d '3 days ago' +%d) | tail -1",
+    "sar -r -f /var/log/sysstat/sa$(date -d '2 days ago' +%d) | tail -1",
+    ":answer b",
+    { answer_with = "a=$(sar -r -f /var/log/sysstat/sa$(date -d '3 days ago' +%d) | tail -1 | awk '{print $5}'); b=$(sar -r -f /var/log/sysstat/sa$(date -d '2 days ago' +%d) | tail -1 | awk '{print $5}'); echo \"$b - $a\" | bc 2>/dev/null || awk -v a=$a -v b=$b 'BEGIN{print b-a}'" },
+    { input = ["letslinux"] },
+    "sudo mkdir -p /etc/systemd/system/inventory.service.d",
+    "printf '[Service]\\nRestart=on-failure\\nMemoryMax=2G\\n' | sudo tee /etc/systemd/system/inventory.service.d/limits.conf",
+    "sudo systemctl daemon-reload",
+    "sudo systemctl restart inventory",
+    "free -m",
+    ":answer b",
+]
+
+[[solution]]
+name = "journal first, percent limit"
+steps = [
+    "journalctl -u inventory | tail -5",
+    ":answer The kernel's OOM killer, because memory ran out",
+    "ls /var/log/sysstat",
+    ":answer A steady climb over several days — a leak",
+    ":answer 9",
+    { input = ["letslinux"] },
+    "sudo mkdir -p /etc/systemd/system/inventory.service.d",
+    "sudo sh -c 'printf \"[Service]\\nRestart=always\\nMemoryMax=40%%\\n\" > /etc/systemd/system/inventory.service.d/50-memory.conf'",
+    "sudo systemctl daemon-reload",
+    "sudo systemctl start inventory",
+    ":answer b",
+]
+
+[[counterexample]]
+name = "just restart"
+steps = [
+    ":answer b",
+    ":answer b",
+    ":answer 9",
+    { input = ["letslinux"] },
+    "sudo systemctl restart inventory",
+    ":answer b",
+]

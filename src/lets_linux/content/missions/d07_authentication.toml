@@ -1,0 +1,175 @@
+schema = 1
+
+[mission]
+id = "d07-authentication"
+title = "Who Gets In"
+chapter = "D"
+kind = "lesson"
+order = 9
+difficulty = 4
+requires = ["d04-sudo-and-accounts", "d06-umask-and-acls"]
+skills = ["d.auth-concepts"]
+review_for = ["d.user-management", "l.account-security"]
+xp = 200
+estimated_minutes = 35
+
+[briefing]
+context = """
+An audit of this Debian server lists four findings: the intern account "temp" never
+expires, passwords may be as short as six characters, nothing stops someone from guessing
+passwords forever, and nobody on the team can explain how Linux decides whether a password
+is right. Fix the first three and learn the answer to the fourth. Keep a root shell open
+while you edit authentication settings. (sudo password: letslinux)
+"""
+concept = """
+/etc/passwd lists accounts (readable by everyone); the password hashes live in /etc/shadow
+(root only), together with the ageing fields: last change, minimum and maximum age, warning
+days, inactivity and the account's expiry date — chage -l USER shows them, chage -E DATE,
+-M DAYS, -d 0 (must change at next login) set them; passwd -l / usermod -L lock a password.
+Programs do not read shadow themselves: they ask PAM, which runs the stacks configured in
+/etc/pam.d — for each service (su, sudo, sshd, login, passwd) the facilities auth (who are
+you?), account (may you, now?), password (changing it) and session. Each line names a
+control (required, requisite, sufficient, optional, or [success=1 default=ignore] — on
+success skip one line) and a module: pam_unix (passwords and ageing), pam_pwquality
+(strength, /etc/security/pwquality.conf), pam_faillock (lock after repeated failures,
+/etc/security/faillock.conf; faillock --user X shows and --reset clears), pam_nologin,
+pam_wheel, pam_access. Debian's services include the common-* files. A typo in a stack can
+lock everyone out — always test from a second session.
+"""
+objectives = ["Read and set password ageing and account expiry", "Explain how PAM stacks decide", "Enforce password strength with pam_pwquality", "Lock accounts after repeated failures with pam_faillock"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "user"
+name = "temp"
+password = "Summer-Intern-2026"
+
+[[environment.setup]]
+action = "user"
+name = "dave"
+password = "dave-pass-123"
+
+[[task]]
+id = "expire"
+title = "The intern leaves"
+kind = "independent"
+instructions = "The account temp must stop working at the end of 2026-03-31: set its expiry date. (Its password itself stays.)"
+skills = { "d.auth-concepts" = 1.0, "d.user-management" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "chage -l temp", stdout_regex = "Account expires\\s*: Mar 31, 2026" },
+]
+hints = ["chage manages ageing and expiry; chage -l temp shows the current values.", "chage -E YYYY-MM-DD sets the account expiry date.", "sudo chage -E 2026-03-31 temp"]
+explanation = "The expiry is the eighth field of temp's line in /etc/shadow (days since 1970). From that day pam_unix's account check refuses every login — su, ssh, console — while the password hash stays untouched."
+
+[[task]]
+id = "where"
+title = "Where is the password?"
+kind = "explanation"
+instructions = "Look at temp's lines in /etc/passwd and /etc/shadow."
+skills = { "d.auth-concepts" = 1.0 }
+question = { prompt = "Why are password hashes in /etc/shadow rather than /etc/passwd?", type = "choice", choices = ["/etc/passwd is too small", "/etc/passwd must be readable by every user (programs look up names and UIDs); /etc/shadow is readable only by root, so nobody can copy the hashes to guess them offline", "Shadow passwords are encrypted, passwd ones are not"], answer = 1 }
+hints = ["ls -l /etc/passwd /etc/shadow", "Who may read each file?", "(b)"]
+explanation = "The x in the second field of /etc/passwd means \"see /etc/shadow\". A hash cannot be reversed, but a copied hash can be attacked with billions of guesses per second — hence keep it unreadable."
+
+[[task]]
+id = "quality"
+title = "Longer passwords"
+kind = "independent"
+instructions = "Make passwd refuse new passwords shorter than 12 characters for normal users. Debian's package for PAM password quality checks is libpam-pwquality."
+skills = { "d.auth-concepts" = 1.0 }
+checks = [
+    { type = "package_state", name = "libpam-pwquality", state = "installed" },
+    { type = "command_result", user = "dave", command = "passwd", input = ["dave-pass-123", "Ab1!cdefgh", "Ab1!cdefgh"], status = 10, stderr_contains = ["BAD PASSWORD"] },
+    { type = "command_result", user = "dave", command = "passwd", input = ["dave-pass-123", "Correct-Horse-9-Battery", "Correct-Horse-9-Battery"], status = 0 },
+]
+hints = ["Installing libpam-pwquality adds pam_pwquality to /etc/pam.d/common-password (look at it).", "Its settings are in /etc/security/pwquality.conf: minlen = 12.", "sudo apt install -y libpam-pwquality; echo 'minlen = 12' | sudo tee -a /etc/security/pwquality.conf"]
+explanation = "pam_pwquality now runs first in the password stack (requisite: a failure stops everything). The check changed a password on a copy of the server as dave: a 10-character password was refused, a long one accepted."
+
+[[task]]
+id = "faillock"
+title = "Stop the guessing"
+kind = "independent"
+instructions = "Lock an account for 15 minutes after 5 consecutive failed password attempts (for su, sudo and ssh — everything that includes common-auth). Root may stay exempt."
+skills = { "d.auth-concepts" = 1.0 }
+checks = [
+    { type = "command_result", user = "learner", command = "for i in 1 2 3 4 5; do su dave -c true; done; su dave -c 'echo IN'", input = ["w1", "w2", "w3", "w4", "w5", "dave-pass-123"], stdout_not_contains = ["IN"], stderr_contains = ["locked"] },
+    { type = "command_result", user = "learner", command = "for i in 1 2; do su dave -c true; done; su dave -c 'echo IN'", input = ["w1", "w2", "dave-pass-123"], stdout_contains = ["IN"] },
+    { type = "any_of", checks = [
+        { type = "file_contains", path = "/etc/security/faillock.conf", regex = "(?m)^\\s*deny\\s*=\\s*5" },
+        { type = "file_contains", path = "/etc/pam.d/common-auth", regex = "pam_faillock\\.so.*deny=5" },
+    ] },
+    { type = "any_of", checks = [
+        { type = "file_contains", path = "/etc/security/faillock.conf", regex = "(?m)^\\s*unlock_time\\s*=\\s*900" },
+        { type = "file_contains", path = "/etc/pam.d/common-auth", regex = "pam_faillock\\.so.*unlock_time=900" },
+    ] },
+]
+hints = ["pam_faillock needs three places in common-auth: preauth before pam_unix, authfail when pam_unix fails, and the settings in /etc/security/faillock.conf (deny = 5, unlock_time = 900).", "The failure path: change pam_unix's line to [success=2 default=ignore], add 'auth [default=die] pam_faillock.so authfail' right after it, and 'auth required pam_faillock.so preauth' before it.", "printf 'auth\\trequired\\tpam_faillock.so preauth\\nauth\\t[success=2 default=ignore]\\tpam_unix.so nullok\\nauth\\t[default=die]\\tpam_faillock.so authfail\\nauth\\trequisite\\tpam_deny.so\\nauth\\trequired\\tpam_permit.so\\nauth\\trequired\\tpam_faillock.so authsucc\\n' | sudo tee /etc/pam.d/common-auth; printf 'deny = 5\\nunlock_time = 900\\n' | sudo tee -a /etc/security/faillock.conf"]
+explanation = "preauth refuses early while the account is locked, authfail records each failure, authsucc clears the tally on success. faillock --user dave shows the record; faillock --user dave --reset unlocks early. The check made five wrong attempts on a copy — the correct password no longer worked — and confirmed two mistakes do not lock anyone out."
+
+[[task]]
+id = "controls"
+title = "Reading a stack"
+kind = "explanation"
+instructions = "Look at Debian's original line: auth [success=1 default=ignore] pam_unix.so nullok, followed by auth requisite pam_deny.so and auth required pam_permit.so."
+skills = { "d.auth-concepts" = 1.0 }
+question = { prompt = "What happens when the password is wrong?", type = "choice", choices = ["pam_unix's failure is ignored, so the login succeeds", "default=ignore passes over pam_unix's failure, the next line pam_deny is requisite and fails — the stack stops with an error", "PAM asks again forever"], answer = 1 }
+hints = ["success=1 skips one line — which one?", "On failure nothing is skipped: the next line runs.", "(b)"]
+explanation = "With the right password, success=1 jumps over pam_deny to pam_permit, which returns success. This jump pattern lets packages slot modules into the \"Primary\" block automatically (pam-auth-update)."
+
+[debrief]
+summary = """
+/etc/shadow: hashes and ageing (chage -l/-E/-M/-d, passwd -l). PAM (/etc/pam.d): per service,
+facilities auth/account/password/session, controls required/requisite/sufficient/optional/
+[…], modules pam_unix, pam_pwquality (pwquality.conf), pam_faillock (faillock.conf;
+faillock --user X [--reset]), pam_nologin, pam_wheel, pam_access. Test changes from a
+second session before closing the first.
+"""
+alternatives = ["authselect enable-feature with-faillock on Fedora/RHEL (authselect manages the stacks)", "fail2ban bans source addresses after failures, at the firewall", "SSH keys with PasswordAuthentication no make guessing pointless"]
+pitfalls = ["Editing PAM files without a second root session open.", "A misspelt module name: PAM cannot load it and every login fails.", "Locking root out with even_deny_root and no console access."]
+next = "Next: shell scripting."
+
+[[solution]]
+name = "chage, pwquality, faillock"
+steps = [
+    { input = ["letslinux"] },
+    "sudo chage -l temp",
+    "sudo chage -E 2026-03-31 temp",
+    "ls -l /etc/passwd /etc/shadow",
+    ":answer b",
+    "sudo apt install -y libpam-pwquality",
+    "cat /etc/pam.d/common-password",
+    "echo 'minlen = 12' | sudo tee -a /etc/security/pwquality.conf",
+    "printf 'auth\\trequired\\tpam_faillock.so preauth\\nauth\\t[success=2 default=ignore]\\tpam_unix.so nullok\\nauth\\t[default=die]\\tpam_faillock.so authfail\\nauth\\trequisite\\tpam_deny.so\\nauth\\trequired\\tpam_permit.so\\nauth\\trequired\\tpam_faillock.so authsucc\\n' | sudo tee /etc/pam.d/common-auth",
+    "printf 'deny = 5\\nunlock_time = 900\\n' | sudo tee -a /etc/security/faillock.conf",
+    ":answer b",
+]
+
+[[solution]]
+name = "a root shell and module arguments"
+steps = [
+    { input = ["letslinux"] },
+    "sudo -i",
+    "usermod -e 2026-03-31 temp",
+    "chage -E 2026-03-31 temp",
+    ":answer /etc/passwd must be readable by every user (programs look up names and UIDs); /etc/shadow is readable only by root, so nobody can copy the hashes to guess them offline",
+    "apt-get install -y libpam-pwquality",
+    "sed -i 's/pam_pwquality.so retry=3/pam_pwquality.so retry=3 minlen=12/' /etc/pam.d/common-password",
+    "sed -i 's/^auth\\t\\[success=1 default=ignore\\]\\tpam_unix.so nullok/auth\\trequired\\tpam_faillock.so preauth deny=5 unlock_time=900\\nauth\\t[success=2 default=ignore]\\tpam_unix.so nullok\\nauth\\t[default=die]\\tpam_faillock.so authfail deny=5 unlock_time=900/' /etc/pam.d/common-auth",
+    "exit",
+    ":answer default=ignore passes over pam_unix's failure, the next line pam_deny is requisite and fails — the stack stops with an error",
+]
+
+[[counterexample]]
+name = "lock after one failure"
+steps = [
+    { input = ["letslinux"] },
+    "sudo chage -E 2026-03-31 temp",
+    ":answer b",
+    "sudo apt install -y libpam-pwquality",
+    "echo 'minlen = 12' | sudo tee -a /etc/security/pwquality.conf",
+    "printf 'auth\\trequired\\tpam_faillock.so preauth\\nauth\\t[success=2 default=ignore]\\tpam_unix.so nullok\\nauth\\t[default=die]\\tpam_faillock.so authfail\\nauth\\trequisite\\tpam_deny.so\\nauth\\trequired\\tpam_permit.so\\n' | sudo tee /etc/pam.d/common-auth",
+    "printf 'deny = 1\\nunlock_time = 900\\n' | sudo tee -a /etc/security/faillock.conf",
+    ":answer b",
+]

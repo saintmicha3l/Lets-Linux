@@ -1,0 +1,266 @@
+schema = 1
+
+[mission]
+id = "m00-skill-check"
+title = "Skill Check M: Troubleshooting"
+chapter = "M"
+placement = "M"
+kind = "assessment"
+order = 0
+difficulty = 5
+requires = []
+skills = ["m.hypothesis-method", "m.verification", "m.evidence-correlation", "m.permission-rca", "m.service-rca", "m.disk-rca", "m.network-rca"]
+xp = 100
+estimated_minutes = 25
+sequential = false
+
+[briefing]
+context = """
+This skill check covers chapter M: finding root causes from evidence. Three things are broken
+on this server — a service, a full disk and the network — and the logs hold a story about who
+changed what. Tasks in any order; you have sudo (password: letslinux). Solve them all (one
+slip allowed) to test out of chapter M. :submit ends the check.
+"""
+concept = "No hints: show what you can do on your own."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "debian"
+
+[environment.vars]
+svc = { choices = ["ledgerd", "notifyd", "reportd"] }
+who = { choices = ["jonas", "priya", "tariq"] }
+mnt = { choices = ["exports", "uploads", "spool"] }
+
+[[environment.setup]]
+action = "user"
+name = "{{svc}}"
+system = true
+
+[[environment.setup]]
+action = "user"
+name = "{{who}}"
+groups = ["sudo"]
+
+[[environment.setup]]
+action = "dir"
+path = "/var/lib/{{svc}}"
+owner = "root"
+group = "root"
+mode = "0700"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/{{svc}}"
+mode = "0755"
+content = """#!/bin/sh
+# {{svc}}: keeps its state in /var/lib/{{svc}}
+if ! touch /var/lib/{{svc}}/state 2>/dev/null; then
+    echo "{{svc}}: cannot write /var/lib/{{svc}}/state: Permission denied" >&2
+    exit 1
+fi
+echo "{{svc}}: started"
+exec sleep infinity
+"""
+
+[[environment.setup]]
+action = "service"
+name = "{{svc}}.service"
+enable = true
+start = true
+content = """[Unit]
+Description={{svc}}
+
+[Service]
+User={{svc}}
+ExecStart=/usr/local/bin/{{svc}}
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "2G"
+partitions = [{ size = "rest", fs = "ext4", label = "{{mnt}}", mount = "/srv/{{mnt}}", fstab = true }]
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /srv/{{mnt}}/current /srv/{{mnt}}/archive"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/{{mnt}}/archive/2025-q1.tar"
+content = "x\n"
+size = 900000000
+age_days = 400
+
+[[environment.setup]]
+action = "file"
+path = "/srv/{{mnt}}/archive/2025-q2.tar"
+content = "x\n"
+size = 900000000
+age_days = 300
+
+[[environment.setup]]
+action = "file"
+path = "/srv/{{mnt}}/current/today.tar"
+content = "x\n"
+size = 100000000
+age_days = 1
+
+[[environment.setup]]
+action = "file"
+path = "/etc/backup/target.conf"
+content = "dest=/srv/backup\n"
+
+[[environment.setup]]
+action = "journal"
+identifier = "backup"
+message = "run completed: 412 files to /srv/backup"
+
+[[environment.setup]]
+action = "clock"
+seconds = 3000
+
+[[environment.setup]]
+action = "journal"
+identifier = "sudo"
+message = "{{who}} : TTY=pts/1 ; PWD=/home/{{who}} ; USER=root ; COMMAND=/usr/bin/sed -i s|/srv/backup|/mnt/nas/backup| /etc/backup/target.conf"
+
+[[environment.setup]]
+action = "run"
+command = "sed -i 's|/srv/backup|/mnt/nas/backup|' /etc/backup/target.conf"
+
+[[environment.setup]]
+action = "clock"
+seconds = 1800
+
+[[environment.setup]]
+action = "journal"
+identifier = "backup"
+priority = 3
+message = "cannot write /mnt/nas/backup: No such file or directory"
+
+[[environment.setup]]
+action = "net"
+del_route = "default"
+
+[[environment.setup]]
+action = "clock"
+seconds = 600
+
+[[task]]
+id = "service"
+title = "A service that will not start"
+kind = "assessment"
+instructions = "{{svc}}.service fails. Find the root cause and fix it there — without running the service as root and without opening its state directory to other users."
+skills = { "m.service-rca" = 1.0, "m.permission-rca" = 1.0 }
+checks = [
+    { type = "unit_state", unit = "{{svc}}.service", active = "active" },
+    { type = "unit_runs_as", unit = "{{svc}}.service", user = "{{svc}}" },
+    { type = "mode_lacks", path = "/var/lib/{{svc}}", bits = "007" },
+]
+explanation = "The journal says it cannot write /var/lib/{{svc}}: the directory belongs to root with mode 700. chown {{svc}}: /var/lib/{{svc}} (or StateDirectory=) fixes the cause; then restart."
+
+[[task]]
+id = "disk"
+title = "A full filesystem"
+kind = "assessment"
+instructions = "One mounted filesystem is almost full. Free space on it by deleting the archives older than 180 days — nothing newer — so that at least 40% of it is free."
+skills = { "m.disk-rca" = 1.0, "j.capacity" = 0.5 }
+checks = [
+    { type = "filesystem_free", mount = "/srv/{{mnt}}", min_percent = 40 },
+    { type = "path_exists", path = "/srv/{{mnt}}/current/today.tar" },
+]
+explanation = "df -h finds /srv/{{mnt}}; du -sh /srv/{{mnt}}/* finds the archive; find /srv/{{mnt}} -type f -mtime +180 -delete removes only the old ones."
+
+[[task]]
+id = "network"
+title = "Unreachable"
+kind = "assessment"
+instructions = "Nothing outside the local network can be reached. Fix it (the gateway is 10.0.2.2) and show that example.com answers a ping."
+skills = { "m.network-rca" = 1.0, "m.verification" = 1.0 }
+checks = [
+    { type = "default_route", via = "10.0.2.2" },
+    { type = "command_used", command = ["ping"], args_contain = ["example.com"], success = true, scope = "history" },
+]
+explanation = "'Network is unreachable' and ip route without a default route point at routing, not DNS: sudo ip route add default via 10.0.2.2, then verify with the original action."
+
+[[task]]
+id = "who"
+title = "What changed?"
+kind = "assessment"
+instructions = "The backup job has been failing since this morning. Use the logs to find out who caused it."
+skills = { "m.evidence-correlation" = 1.0 }
+question = { prompt = "Which user changed the backup's configuration?", type = "exact", accept = ["{{who}}"] }
+explanation = "journalctl -t backup -p err pins the first failure; journalctl -t sudo (or find /etc -mmin) shows the change made just before it, and by whom."
+
+[[task]]
+id = "method"
+title = "One at a time"
+kind = "assessment"
+instructions = "Think about method."
+skills = { "m.hypothesis-method" = 1.0 }
+question = { prompt = "A service fails after an upgrade. Which first step is best?", type = "choice", choices = ["Reinstall the service and reboot", "Reproduce the failure and read its exact error in the service's log before changing anything", "Change the configuration back and forth until it works", "Restore last week's backup of /etc"], answer = 1 }
+explanation = "Evidence first: the exact error usually names the cause. Then one hypothesis, one change, verify."
+
+[debrief]
+summary = """
+The check covered chapter M: service, permission, disk and network failures, a timeline from
+the logs, and the method. Multiple interacting faults are practised in the missions.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "status, journal, chown"
+steps = [
+    { input = ["letslinux"] },
+    "systemctl status {{svc}}",
+    "sudo journalctl -u {{svc}} -n 5",
+    "sudo chown {{svc}}:{{svc}} /var/lib/{{svc}}",
+    "sudo systemctl restart {{svc}}",
+    "df -h",
+    "sudo du -sh /srv/{{mnt}}/*",
+    "sudo find /srv/{{mnt}} -type f -mtime +180 -delete",
+    "ping -c 1 example.com",
+    "ip route",
+    "sudo ip route add default via 10.0.2.2",
+    "ping -c 1 example.com",
+    "journalctl -t backup -p err",
+    "journalctl -t sudo",
+    ":answer {{who}}",
+    ":answer b",
+]
+
+[[solution]]
+name = "StateDirectory and rm"
+steps = [
+    { input = ["letslinux"] },
+    "sudo mkdir -p /etc/systemd/system/{{svc}}.service.d",
+    "printf '[Service]\\nStateDirectory={{svc}}\\n' | sudo tee /etc/systemd/system/{{svc}}.service.d/state.conf",
+    "sudo chown -R {{svc}}: /var/lib/{{svc}}",
+    "sudo systemctl daemon-reload",
+    "sudo systemctl restart {{svc}}.service",
+    "sudo rm /srv/{{mnt}}/archive/2025-q1.tar /srv/{{mnt}}/archive/2025-q2.tar",
+    "sudo ip route replace default via 10.0.2.2",
+    "ping -c 2 example.com",
+    "sudo find /etc -mmin -60 -type f",
+    "journalctl | grep target.conf",
+    ":answer {{who}}",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "running it as root and deleting everything"
+steps = [
+    { input = ["letslinux"] },
+    "sudo sed -i 's/^User=.*/User=root/' /etc/systemd/system/{{svc}}.service",
+    "sudo systemctl daemon-reload",
+    "sudo systemctl restart {{svc}}",
+    "sudo rm -rf /srv/{{mnt}}/archive /srv/{{mnt}}/current",
+    "sudo ip route add default via 10.0.2.2",
+    ":answer root",
+    ":answer b",
+]

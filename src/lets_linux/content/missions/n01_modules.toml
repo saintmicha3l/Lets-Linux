@@ -1,0 +1,181 @@
+schema = 1
+
+[mission]
+id = "n01-modules"
+title = "Preparing a Container Host"
+chapter = "N"
+kind = "lesson"
+order = 1
+difficulty = 5
+requires = ["h02-reading-the-journal", "g04-slow-server"]
+skills = ["n.kernel-modules", "n.sysctl", "n.device-files", "n.kernel-logs"]
+review_for = ["g.proc-filesystem", "h.journalctl"]
+xp = 200
+estimated_minutes = 35
+
+[briefing]
+context = """
+This Ubuntu server will join a Kubernetes cluster. The installation guide demands two
+kernel modules (overlay, br_netfilter) and two kernel parameters, all surviving reboots.
+The security team adds two wishes: USB storage must be impossible to use, and the PC
+speaker driver must stop loading at boot. (sudo password: letslinux)
+"""
+concept = """
+The kernel is extended at runtime by modules (/lib/modules/$(uname -r)/kernel/…).
+lsmod lists loaded ones with their users; modinfo NAME describes one; sudo modprobe NAME
+loads it with its dependencies (insmod would not), sudo modprobe -r NAME removes it and
+unused dependencies. Boot-time loading: one name per line in /etc/modules-load.d/*.conf.
+Prevention lives in /etc/modprobe.d/*.conf: 'blacklist NAME' stops automatic loading,
+'install NAME /bin/false' makes every attempt fail. Some kernel parameters only exist while
+their module is loaded: net.bridge.* appears with br_netfilter. Parameters are read and set
+with sysctl (or /proc/sys) and made permanent in /etc/sysctl.d/*.conf. The kernel reports
+what it does in its ring buffer: dmesg or journalctl -k. Device files (/dev/sda, /dev/null)
+are the other door into drivers: their type (b/c) and major/minor numbers select a driver.
+"""
+objectives = ["Inspect and load modules with their dependencies", "Load modules at every boot", "Prevent modules from loading", "Set kernel parameters persistently", "Read kernel messages and device numbers"]
+
+[environment]
+profile = "ubuntu"
+
+[[task]]
+id = "missing"
+title = "A parameter that does not exist"
+kind = "troubleshooting"
+instructions = "The guide says: sysctl net.bridge.bridge-nf-call-iptables must be 1. Try reading it."
+skills = { "n.sysctl" = 1.0, "n.kernel-modules" = 0.5 }
+question = { prompt = "Why does sysctl say 'No such file or directory'?", type = "choice", choices = ["The parameter was renamed", "/proc/sys/net/bridge only exists while the br_netfilter module is loaded", "sysctl needs root to read it"], answer = 1 }
+hints = ["lsmod | grep br_netfilter", "modinfo br_netfilter — the description mentions bridge netfilter.", "(b)"]
+explanation = "Kernel parameters belong to the code that implements them; a module's parameters appear when it is loaded."
+
+[[task]]
+id = "load"
+title = "Modules and parameters, now and at boot"
+kind = "independent"
+instructions = "Load overlay and br_netfilter now and at every boot; set net.bridge.bridge-nf-call-iptables = 1 and net.ipv4.ip_forward = 1 now and at every boot."
+skills = { "n.kernel-modules" = 1.0, "n.sysctl" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "lsmod", stdout_regex = "(?m)^br_netfilter " },
+    { type = "command_result", user = "root", command = "lsmod", stdout_regex = "(?m)^overlay " },
+    { type = "command_result", user = "root", command = "sysctl -n net.bridge.bridge-nf-call-iptables net.ipv4.ip_forward", stdout_equals = "1\n1\n" },
+    { type = "after_reboot", checks = [
+        { type = "command_result", user = "root", command = "lsmod", stdout_regex = "(?m)^br_netfilter " },
+        { type = "command_result", user = "root", command = "lsmod", stdout_regex = "(?m)^overlay " },
+        { type = "command_result", user = "root", command = "sysctl -n net.bridge.bridge-nf-call-iptables net.ipv4.ip_forward", stdout_equals = "1\n1\n" },
+    ] },
+]
+hints = [
+    "Now: sudo modprobe overlay; sudo modprobe br_netfilter; sudo sysctl -w KEY=VALUE.",
+    "At boot: a file in /etc/modules-load.d/ (one module per line) and one in /etc/sysctl.d/ (KEY = VALUE lines). The modules must load before the sysctl file is applied — systemd does that in this order.",
+    "printf 'overlay\\nbr_netfilter\\n' | sudo tee /etc/modules-load.d/k8s.conf; printf 'net.bridge.bridge-nf-call-iptables = 1\\nnet.ipv4.ip_forward = 1\\n' | sudo tee /etc/sysctl.d/99-k8s.conf; sudo modprobe overlay; sudo modprobe br_netfilter; sudo sysctl --system",
+]
+explanation = "Verified on a rebooted copy: systemd-modules-load inserted both modules, then systemd-sysctl could set the bridge parameter."
+
+[[task]]
+id = "deny"
+title = "No USB storage, no beeping"
+kind = "independent"
+instructions = "Make loading usb_storage impossible (also by hand), and stop pcspkr from loading at boot."
+skills = { "n.kernel-modules" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "modprobe usb-storage", status_not = 0 },
+    { type = "after_reboot", checks = [
+        { type = "command_result", user = "root", command = "lsmod", stdout_not_contains = ["pcspkr"] },
+        { type = "command_result", user = "root", command = "modprobe usb_storage", status_not = 0 },
+    ] },
+]
+hints = ["/etc/modprobe.d/*.conf: 'blacklist NAME' only prevents automatic loading; 'install NAME /bin/false' blocks modprobe too.", "pcspkr is loaded automatically at boot: a blacklist line is enough. Unload it now with modprobe -r.", "printf 'install usb-storage /bin/false\\nblacklist usb-storage\\n' | sudo tee /etc/modprobe.d/no-usb-storage.conf; echo 'blacklist pcspkr' | sudo tee /etc/modprobe.d/no-beep.conf; sudo modprobe -r pcspkr"]
+explanation = "blacklist stops automatic loading (enough for pcspkr); only an install rule stops a deliberate modprobe."
+
+[[task]]
+id = "inuse"
+title = "In use"
+kind = "troubleshooting"
+instructions = "Try to remove the bridge module."
+skills = { "n.kernel-modules" = 1.0 }
+question = { prompt = "Why does sudo rmmod bridge fail?", type = "choice", choices = ["bridge is built into the kernel", "br_netfilter uses it — lsmod shows it in bridge's 'Used by' column", "rmmod needs the full path"], answer = 1 }
+hints = ["sudo rmmod bridge", "lsmod | grep bridge", "(b) — modprobe -r br_netfilter would remove both (and unused llc, stp)."]
+explanation = "The 'Used by' column is the dependency graph in reverse."
+
+[[task]]
+id = "kmsg"
+title = "What the kernel said"
+kind = "troubleshooting"
+instructions = "Read the kernel's messages since boot."
+skills = { "n.kernel-logs" = 1.0 }
+question = { prompt = "Which module does the kernel's 'bridge:' message tell you to load?", type = "exact", accept = ["br_netfilter"] }
+hints = ["dmesg needs root on some systems; journalctl -k works for the adm group.", "sudo dmesg | grep bridge", "'Update your scripts to load br_netfilter if you need this.'"]
+explanation = "The kernel log explains why the old automatic behaviour changed — the reason the guide asks for br_netfilter explicitly."
+
+[[task]]
+id = "dev"
+title = "Device numbers"
+kind = "troubleshooting"
+instructions = "Find out what kind of device file the first disk, /dev/sda, is and which driver number (major) handles it."
+skills = { "n.device-files" = 1.0 }
+question = { prompt = "What are type and major number of /dev/sda?", type = "choice", choices = ["c, 1", "b, 8 — a block device handled by the SCSI disk driver (sd)", "d, 0"], answer = 1 }
+hints = ["The first letter of the mode: b block, c character.", "ls -l shows 'MAJOR, MINOR' where a file's size would be.", "(b): brw-rw---- 1 root disk 8, 0 … /dev/sda"]
+explanation = "Major 8 selects the sd driver; minor 0 the first disk (16 for sdb). /dev/null is c 1,3. udev creates these files when drivers announce devices."
+
+[debrief]
+summary = """
+lsmod · modinfo · modprobe [-r] · /etc/modules-load.d (load at boot) · /etc/modprobe.d
+(blacklist, install … /bin/false, options) · sysctl -w / /etc/sysctl.d · dmesg, journalctl -k ·
+ls -l /dev (type, major, minor).
+"""
+alternatives = ["module_blacklist=NAME on the kernel command line blocks a module from the very start of the boot", "options NAME PARAM=VALUE in /etc/modprobe.d sets module parameters; modinfo lists them", "/proc/sys/net/ipv4/ip_forward can be written directly (echo 1 | sudo tee …)"]
+pitfalls = ["Expecting 'blacklist' to stop modprobe.", "Setting net.bridge.* in sysctl.d without loading br_netfilter at boot.", "insmod: no dependency resolution."]
+next = "Next: the kernel command line."
+
+[[solution]]
+name = "files then apply"
+steps = [
+    "sysctl net.bridge.bridge-nf-call-iptables",
+    ":answer b",
+    { input = ["letslinux"] },
+    "printf 'overlay\\nbr_netfilter\\n' | sudo tee /etc/modules-load.d/k8s.conf",
+    "printf 'net.bridge.bridge-nf-call-iptables = 1\\nnet.ipv4.ip_forward = 1\\n' | sudo tee /etc/sysctl.d/99-k8s.conf",
+    "sudo modprobe overlay",
+    "sudo modprobe br_netfilter",
+    "sudo sysctl --system",
+    "printf 'install usb-storage /bin/false\\nblacklist usb-storage\\n' | sudo tee /etc/modprobe.d/no-usb-storage.conf",
+    "echo 'blacklist pcspkr' | sudo tee /etc/modprobe.d/no-beep.conf",
+    "sudo modprobe -r pcspkr",
+    "sudo rmmod bridge",
+    ":answer b",
+    "sudo dmesg | grep bridge",
+    ":answer br_netfilter",
+    "ls -l /dev/sda",
+    ":answer b",
+]
+
+[[solution]]
+name = "runtime first, then persist"
+steps = [
+    ":answer /proc/sys/net/bridge only exists while the br_netfilter module is loaded",
+    { input = ["letslinux"] },
+    "sudo modprobe -a overlay br_netfilter",
+    "sudo modprobe br_netfilter",
+    "sudo modprobe overlay",
+    "sudo sysctl -w net.bridge.bridge-nf-call-iptables=1 net.ipv4.ip_forward=1",
+    "sudo sh -c 'echo br_netfilter > /etc/modules-load.d/bridge.conf; echo overlay > /etc/modules-load.d/overlay.conf'",
+    "sudo sh -c 'echo net.bridge.bridge-nf-call-iptables=1 > /etc/sysctl.d/90-bridge.conf; echo net.ipv4.ip_forward=1 >> /etc/sysctl.d/90-bridge.conf'",
+    "sudo sh -c 'echo install usb_storage /bin/false > /etc/modprobe.d/usb.conf; echo blacklist pcspkr >> /etc/modprobe.d/usb.conf'",
+    ":answer br_netfilter uses it — lsmod shows it in bridge's 'Used by' column",
+    "journalctl -k | grep bridge",
+    ":answer br_netfilter",
+    ":answer b",
+]
+
+[[counterexample]]
+name = "runtime only, blacklist only"
+steps = [
+    ":answer b",
+    { input = ["letslinux"] },
+    "sudo modprobe overlay",
+    "sudo modprobe br_netfilter",
+    "sudo sysctl -w net.bridge.bridge-nf-call-iptables=1 net.ipv4.ip_forward=1",
+    "echo 'blacklist usb-storage' | sudo tee /etc/modprobe.d/usb.conf",
+    ":answer b",
+    ":answer br_netfilter",
+    ":answer b",
+]

@@ -1,0 +1,160 @@
+schema = 1
+
+[mission]
+id = "k01-cron-jobs"
+title = "Every Night at Two"
+chapter = "K"
+kind = "lesson"
+order = 1
+difficulty = 3
+requires = ["h01-meet-the-services", "c01-redirection"]
+skills = ["k.cron-basics"]
+xp = 110
+estimated_minutes = 18
+
+[briefing]
+context = """
+The temporary upload directory fills up unless someone runs the cleanup script, and the
+operations team wants an hourly disk report. Nobody wants to do that by hand. cron runs
+commands on a schedule — once you learn to read and write its five time fields.
+(sudo password: letslinux)
+"""
+concept = """
+A crontab line has five fields — minute, hour, day of month, month, day of week — then the
+command: "30 2 * * *" means 02:30 every day; "*/5 * * * *" every five minutes; "0 9 * * 1-5"
+09:00 on weekdays. crontab -e edits your own crontab; crontab -l lists it. System-wide jobs
+go in /etc/cron.d/NAME, which has an extra field: the user to run as. cron must be running
+(systemctl status cron), and it logs every job it starts.
+"""
+objectives = ["Read and write crontab schedules", "Install a personal crontab", "Create a system cron job", "Verify that jobs actually run"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "file"
+path = "~/bin/cleanup.sh"
+mode = "0755"
+content = """#!/bin/sh
+# remove upload fragments older than a day (simulated)
+echo "$(date '+%F %T') cleanup ran" >> /home/learner/cleanup.log
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/sbin/diskreport"
+mode = "0755"
+content = """#!/bin/sh
+df -h / >> /var/log/diskreport.log
+"""
+
+[[task]]
+id = "check"
+title = "Is cron there?"
+kind = "guided"
+instructions = "Check that the cron service is running, and list your current crontab."
+skills = { "k.cron-basics" = 1.0 }
+checks = [
+    { type = "command_used", command = "systemctl", args_regex = "cron", scope = "history" },
+    { type = "output_contains", text = "no crontab for learner", command = "crontab", scope = "history" },
+]
+hints = ["systemctl status cron, then crontab -l.", "You do not have a crontab yet.", "Type: systemctl status cron   and   crontab -l"]
+explanation = "cron is running; your crontab is empty."
+
+[[task]]
+id = "read"
+title = "Reading schedules"
+kind = "prediction"
+instructions = "Read the five fields carefully."
+skills = { "k.cron-basics" = 1.0 }
+question = { prompt = "Which line runs a job at 06:15 on weekdays only?", type = "choice", choices = ["15 6 * * *", "15 6 * * 1-5", "6 15 * * 1-5", "*/15 6 * * 1-5"], answer = 1 }
+hints = ["Minute comes first, then hour.", "Day of week is the fifth field: 1-5 is Monday to Friday.", "The answer is (b)."]
+explanation = "(a) also runs at weekends, (c) swaps minute and hour (15:06), (d) runs four times during the 6 o'clock hour."
+
+[[task]]
+id = "personal"
+title = "Nightly cleanup"
+kind = "independent"
+instructions = "Add a line to your crontab that runs /home/learner/bin/cleanup.sh every day at 02:30."
+skills = { "k.cron-basics" = 1.0 }
+checks = [{ type = "file_contains", path = "/var/spool/cron/crontabs/learner", regex = "(?m)^\\s*30\\s+0?2\\s+\\*\\s+\\*\\s+\\*\\s+\\S*cleanup\\.sh" }]
+persistent = true
+hints = ["crontab -e opens your crontab in an editor; or write the line to a file and run crontab FILE.", "The schedule is: 30 2 * * *", "echo '30 2 * * * /home/learner/bin/cleanup.sh' | crontab -"]
+explanation = "crontab checks the syntax before installing; the file lives in /var/spool/cron/crontabs, which you cannot read directly."
+
+[[task]]
+id = "runs"
+title = "Prove it runs"
+kind = "independent"
+instructions = "Waiting until 02:30 is impractical. Add a second, temporary line that runs cleanup.sh every 5 minutes, then wait (sleep) until ~/cleanup.log shows that it ran."
+skills = { "k.cron-basics" = 1.0, "m.verification" = 0.5 }
+checks = [{ type = "file_contains", path = "~/cleanup.log", text = "cleanup ran" }]
+hints = ["*/5 * * * * means every five minutes.", "Add the line with crontab -e (keep the nightly one), then sleep 300.", "( crontab -l; echo '*/5 * * * * /home/learner/bin/cleanup.sh' ) | crontab - ; sleep 300; cat ~/cleanup.log"]
+explanation = "Testing with a frequent schedule is common practice — remember to remove the temporary line afterwards."
+
+[[task]]
+id = "system"
+title = "A system job"
+kind = "independent"
+instructions = "Create /etc/cron.d/diskreport so that /usr/local/sbin/diskreport runs as root at minute 0 of every hour. Then check that it ran."
+skills = { "k.cron-basics" = 1.0 }
+checks = [
+    { type = "file_contains", path = "/etc/cron.d/diskreport", regex = "(?m)^\\s*0\\s+\\*\\s+\\*\\s+\\*\\s+\\*\\s+root\\s+\\S*diskreport" },
+    { type = "path_exists", path = "/var/log/diskreport.log" },
+]
+persistent = true
+hints = ["Files in /etc/cron.d have a user field after the schedule.", "0 * * * * root /usr/local/sbin/diskreport — the file name must not contain a dot.", "echo '0 * * * * root /usr/local/sbin/diskreport' | sudo tee /etc/cron.d/diskreport; sleep 3600"]
+explanation = "/etc/cron.d is for system and package jobs. No crontab command is needed: cron re-reads the directory every minute."
+
+[debrief]
+summary = """
+Five fields, then the command; crontab -e for personal jobs, /etc/cron.d (with a user field)
+for system jobs. Always verify with a short test schedule and the logs.
+"""
+alternatives = ["@daily /path/script is shorthand for 0 0 * * *", "grep CRON /var/log/syslog shows every job cron started", "systemd timers (next missions)"]
+pitfalls = ["Swapping minute and hour.", "File names in /etc/cron.d with a dot (diskreport.cron) are silently ignored.", "Forgetting to remove a test schedule."]
+next = "Next: a job that works by hand but not from cron."
+
+[[solution]]
+name = "pipes into crontab"
+steps = [
+    "systemctl status cron",
+    "crontab -l",
+    ":answer b",
+    "echo '30 2 * * * /home/learner/bin/cleanup.sh' | crontab -",
+    "( crontab -l; echo '*/5 * * * * /home/learner/bin/cleanup.sh' ) | crontab -",
+    "sleep 300",
+    "cat ~/cleanup.log",
+    { input = ["letslinux"] },
+    "echo '0 * * * * root /usr/local/sbin/diskreport' | sudo tee /etc/cron.d/diskreport",
+    "sleep 3600",
+    "cat /var/log/diskreport.log",
+]
+
+[[solution]]
+name = "editor"
+steps = [
+    "systemctl is-active cron",
+    "systemctl status cron --no-pager",
+    "crontab -l",
+    ":answer 15 6 * * 1-5",
+    { edit = "# m h dom mon dow command\n30 02 * * * $HOME/bin/cleanup.sh\n*/5 * * * * $HOME/bin/cleanup.sh\n" },
+    "crontab -e",
+    "sleep 400",
+    { input = ["letslinux"] },
+    { edit = "# hourly disk report\n0 * * * *  root  /usr/local/sbin/diskreport\n" },
+    "sudo nano /etc/cron.d/diskreport",
+    "sleep 3700",
+]
+
+[[counterexample]]
+name = "dotted file name"
+steps = [
+    "systemctl status cron",
+    "crontab -l",
+    ":answer b",
+    "echo '30 2 * * * /home/learner/bin/cleanup.sh' | crontab -",
+    { input = ["letslinux"] },
+    "echo '0 * * * * root /usr/local/sbin/diskreport' | sudo tee /etc/cron.d/diskreport.cron",
+    "sleep 3600",
+]

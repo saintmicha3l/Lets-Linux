@@ -1,0 +1,205 @@
+schema = 1
+
+[mission]
+id = "s02-order-book"
+title = "The Order Book"
+chapter = "S"
+kind = "lesson"
+order = 3
+difficulty = 4
+requires = ["k05-safe-at-night", "s01-front-door"]
+skills = ["s.database-ops", "j.backup-restore", "k.backup-automation"]
+review_for = ["j.backup-restore", "k.cron-basics"]
+xp = 220
+estimated_minutes = 35
+
+[briefing]
+context = """
+The shop keeps its orders in an SQLite database, /var/lib/shop/orders.db, written by the
+order service (it runs as the user shop). Nobody has ever made a backup of it. Fix that —
+and then prove the backups are worth something. (sudo password: letslinux)
+"""
+concept = """
+A database file that is being written must not be copied with cp: the copy can catch it
+half-written. Databases have their own backup methods — sqlite3 DB ".backup FILE" makes a
+consistent copy (PostgreSQL: pg_dump, MariaDB: mariadb-dump), ".dump" writes the content as
+SQL. PRAGMA integrity_check verifies a database. A backup is only proven by a restore: check
+the copy, keep several generations, and know how to put one back — with the owner and
+permissions the service needs.
+"""
+objectives = ["Query a database from the command line", "Make consistent backups", "Automate and verify backups", "Restore after corruption", "Explain why restores must be tested"]
+
+[environment]
+profile = "debian"
+packages = ["sqlite3"]
+
+[[environment.setup]]
+action = "user"
+name = "shop"
+system = true
+shell = "/usr/sbin/nologin"
+home = "/var/lib/shop"
+
+[[environment.setup]]
+action = "file"
+path = "/root/seed.sql"
+content = """CREATE TABLE customers(id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE);
+CREATE TABLE orders(id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customers(id), total REAL, created TEXT);
+WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 40)
+INSERT INTO customers(name, email) SELECT 'customer ' || i, 'c' || i || '@example.net' FROM n;
+WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {{orders}})
+INSERT INTO orders(customer_id, total, created)
+SELECT 1 + (i * 7) % 40, round(5 + (i * 37) % 200 + 0.5, 2), date('2026-01-01', '+' || (i % 60) || ' days') FROM n;
+"""
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /var/lib/shop && sqlite3 /var/lib/shop/orders.db < /root/seed.sql && rm /root/seed.sql && chown -R shop:shop /var/lib/shop && chmod 640 /var/lib/shop/orders.db"
+
+[environment.vars]
+orders = { choices = ["412", "437", "458"] }
+
+[[task]]
+id = "count"
+title = "What is in there?"
+kind = "guided"
+instructions = "Look inside the database: `sudo sqlite3 /var/lib/shop/orders.db '.tables'`, then count the orders."
+skills = { "s.database-ops" = 1.0 }
+question = { prompt = "How many orders does it hold?", type = "number", accept = ["{{orders}}"] }
+hints = ["sqlite3 FILE 'SQL' runs one statement.", "SELECT count(*) FROM orders;", "sudo sqlite3 /var/lib/shop/orders.db 'SELECT count(*) FROM orders'"]
+explanation = "sqlite3 is a complete SQL shell: .schema shows the tables' definitions, -header -column makes results readable."
+
+[[task]]
+id = "nocp"
+title = "Why not cp?"
+kind = "explanation"
+instructions = "A colleague suggests a nightly `cp /var/lib/shop/orders.db /var/backups/`."
+skills = { "s.database-ops" = 1.0, "j.backup-restore" = 0.5 }
+question = { prompt = "What is wrong with it?", type = "choice", choices = ["Nothing, cp copies every byte", "cp may copy the file while the service is in the middle of writing a transaction: the copy can be inconsistent or corrupt. The database's own backup method copies a consistent state", "cp cannot copy binary files", "cp changes the original file"], answer = 1 }
+hints = ["What happens if a write happens halfway through the copy?", "A database spreads one change over several pages.", "Answer (b)."]
+explanation = "Consistent backups need the database's cooperation (.backup, pg_dump) or a quiesced/snapshotted file system."
+
+[[task]]
+id = "backup"
+title = "Every night, verified"
+kind = "independent"
+instructions = """
+Write /usr/local/sbin/backup-orders: it makes a consistent copy of the database as
+/var/backups/shop/orders-YYYY-MM-DD.db (today's date), checks the copy with PRAGMA
+integrity_check and fails (non-zero exit) if the check does not say ok. Schedule it to run
+every night (cron or a systemd timer).
+"""
+skills = { "s.database-ops" = 1.0, "k.backup-automation" = 1.0, "j.backup-restore" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", setup = ["rm -rf /var/backups/shop"], command = "/usr/local/sbin/backup-orders && sqlite3 /var/backups/shop/orders-$(date +%F).db 'PRAGMA integrity_check; SELECT count(*) FROM orders;'", stdout_equals = "ok\n{{orders}}", status = 0 },
+    { type = "command_result", user = "root", command = "grep -rl backup-orders /etc/cron.d /etc/crontab /var/spool/cron /etc/systemd/system 2>/dev/null | head -1", stdout_regex = "\\S" },
+    { type = "command_result", user = "root", setup = ["dd if=/dev/zero of=/var/lib/shop/orders.db bs=1 count=100 seek=4000 conv=notrunc 2>/dev/null", "rm -rf /var/backups/shop"], command = "/usr/local/sbin/backup-orders", status_not = 0 },
+]
+persistent = true
+hints = [
+    "sqlite3 DB \".backup FILE\" makes the copy; sqlite3 FILE 'PRAGMA integrity_check' prints ok for a healthy database. date +%F prints YYYY-MM-DD.",
+    "Script: set -euo pipefail; mkdir -p /var/backups/shop; target=/var/backups/shop/orders-$(date +%F).db; sqlite3 /var/lib/shop/orders.db \".backup $target\"; [ \"$(sqlite3 \"$target\" 'PRAGMA integrity_check')\" = ok ]",
+    "Schedule: echo '15 2 * * * root /usr/local/sbin/backup-orders' | sudo tee /etc/cron.d/backup-orders",
+]
+explanation = """
+The last test damaged the live database on a copy of the machine and ran your script: it
+refused to report success. A backup job that happily copies a broken database every night
+is how organisations discover, months later, that every backup is bad.
+"""
+
+[[task]]
+id = "restore"
+title = "The bad morning"
+kind = "troubleshooting"
+instructions = """
+Two days later. After a power failure the order service logs "database disk image is
+malformed". Put the newest good backup back, so that the service (user shop) can read and
+write the database again.
+"""
+skills = { "s.database-ops" = 1.0, "j.backup-restore" = 1.0 }
+setup = [
+    { action = "run", command = "/usr/local/sbin/backup-orders || true" },
+    { action = "clock", seconds = 172800 },
+    { action = "corrupt", path = "/var/lib/shop/orders.db", offset = 9000, length = 600 },
+    { action = "run", command = "logger -t shop-orders -p user.err 'sqlite3.DatabaseError: database disk image is malformed'" },
+]
+checks = [
+    { type = "command_result", user = "root", command = "sqlite3 /var/lib/shop/orders.db 'PRAGMA integrity_check; SELECT count(*) FROM orders;'", stdout_equals = "ok\n{{orders}}" },
+    { type = "command_result", user = "root", command = "stat -c '%U:%G' /var/lib/shop/orders.db", stdout_equals = "shop:shop" },
+    { type = "user_can_access", user = "shop", path = "/var/lib/shop/orders.db", access = "rw" },
+]
+persistent = true
+hints = [
+    "First confirm the diagnosis: PRAGMA integrity_check on the live database. Then find the newest backup in /var/backups/shop and check it the same way.",
+    "Restore by copying the backup over the database (cp keeps the existing file's owner) — or sqlite3 /var/lib/shop/orders.db \".restore BACKUP\". If you replace the file, fix the owner and mode afterwards.",
+    "sudo sqlite3 /var/lib/shop/orders.db \".restore $(ls -1 /var/backups/shop/orders-*.db | tail -1)\"",
+]
+explanation = "The backup brought the orders back to the state of its night — orders after that are lost unless they can be re-entered from another source. How much may be lost (RPO) decides how often you back up."
+
+[[task]]
+id = "rto"
+title = "The question afterwards"
+kind = "explanation"
+instructions = "The manager asks why the team should practise restores when backups already run every night."
+skills = { "s.database-ops" = 1.0, "j.backup-restore" = 1.0 }
+question = { prompt = "Best answer?", type = "choice", choices = ["They should not: nightly backups are enough", "Only a restore proves a backup is usable, and practice shows how long it takes (RTO) and what is lost (RPO) — before a real incident does", "Restores keep the disks healthy", "Because the law requires it"], answer = 1 }
+hints = ["Today's restore took you minutes — would it at 3 a.m. under pressure?", "Untested backups are hopes.", "Answer (b)."]
+explanation = "RPO (how much data may be lost) and RTO (how long recovery may take) are business decisions; rehearsed restores tell you whether you can meet them."
+
+[debrief]
+summary = """
+sqlite3 for inspection; .backup (or .dump) for consistent backups — never cp a live database;
+verify with PRAGMA integrity_check; automate with cron/timers and fail loudly; restore with
+the right owner and permissions; practise restores to know your RPO and RTO.
+"""
+alternatives = ["sqlite3 orders.db .dump | gzip > orders.sql.gz — a text backup that also survives version changes", "PostgreSQL: pg_dump / pg_restore; MariaDB: mariadb-dump; or file-system snapshots (LVM) for crash-consistent copies", "find /var/backups/shop -name 'orders-*.db' -mtime +7 -delete to keep a week of generations"]
+pitfalls = ["Restoring with a new root-owned file the service cannot write", "Backups that are never checked", "Backups on the same disk as the database"]
+next = "Next: networks with more than one way out."
+
+[[solution]]
+name = "script, cron, restore"
+steps = [
+    { input = ["letslinux"] },
+    "sudo sqlite3 /var/lib/shop/orders.db '.tables'",
+    { answer_with = "sqlite3 /var/lib/shop/orders.db 'SELECT count(*) FROM orders'" },
+    ":answer 2",
+    { edit = "#!/bin/bash\n# backup-orders: consistent, verified copy of the order database\nset -euo pipefail\nmkdir -p /var/backups/shop\ntarget=/var/backups/shop/orders-$(date +%F).db\nsqlite3 /var/lib/shop/orders.db \".backup $target\"\nresult=$(sqlite3 \"$target\" 'PRAGMA integrity_check')\nif [ \"$result\" != ok ]; then\n    echo \"backup-orders: $target failed the integrity check\" >&2\n    exit 1\nfi\n" },
+    "sudo nano /usr/local/sbin/backup-orders",
+    "sudo chmod 755 /usr/local/sbin/backup-orders",
+    "echo '15 2 * * * root /usr/local/sbin/backup-orders' | sudo tee /etc/cron.d/backup-orders",
+    "sudo /usr/local/sbin/backup-orders",
+    "sudo sqlite3 /var/lib/shop/orders.db 'PRAGMA integrity_check' | head -3",
+    "ls -l /var/backups/shop",
+    "sudo sqlite3 /var/lib/shop/orders.db \".restore $(ls -1 /var/backups/shop/orders-*.db | tail -1)\"",
+    "sudo sqlite3 /var/lib/shop/orders.db 'PRAGMA integrity_check'",
+    ":answer 2",
+]
+
+[[solution]]
+name = "dump-based check, timer, cp"
+steps = [
+    { input = ["letslinux"] },
+    { answer_with = "sqlite3 /var/lib/shop/orders.db 'SELECT count(*) FROM orders'" },
+    ":answer 2",
+    "printf '#!/bin/sh\\nset -e\\nmkdir -p /var/backups/shop\\nf=/var/backups/shop/orders-$(date +%%F).db\\nsqlite3 /var/lib/shop/orders.db \".backup $f\"\\nsqlite3 \"$f\" \"PRAGMA integrity_check\" | grep -qx ok\\n' | sudo tee /usr/local/sbin/backup-orders",
+    "sudo chmod +x /usr/local/sbin/backup-orders",
+    "printf '[Unit]\\nDescription=Back up the order database\\n\\n[Service]\\nType=oneshot\\nExecStart=/usr/local/sbin/backup-orders\\n' | sudo tee /etc/systemd/system/backup-orders.service",
+    "printf '[Unit]\\nDescription=Nightly order backup\\n\\n[Timer]\\nOnCalendar=*-*-* 02:15\\nPersistent=true\\n\\n[Install]\\nWantedBy=timers.target\\n' | sudo tee /etc/systemd/system/backup-orders.timer",
+    "sudo systemctl daemon-reload && sudo systemctl enable --now backup-orders.timer",
+    "sudo cp /var/backups/shop/$(ls /var/backups/shop | sort | tail -1) /var/lib/shop/orders.db",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "cp as the backup, restored as a new file"
+steps = [
+    { input = ["letslinux"] },
+    { answer_with = "sqlite3 /var/lib/shop/orders.db 'SELECT count(*) FROM orders'" },
+    ":answer 2",
+    "printf '#!/bin/sh\\nmkdir -p /var/backups/shop\\ncp /var/lib/shop/orders.db /var/backups/shop/orders-$(date +%%F).db\\n' | sudo tee /usr/local/sbin/backup-orders",
+    "sudo chmod +x /usr/local/sbin/backup-orders",
+    "echo '15 2 * * * root /usr/local/sbin/backup-orders' | sudo tee /etc/cron.d/backup-orders",
+    "sudo rm /var/lib/shop/orders.db",
+    "sudo cp /var/backups/shop/$(ls /var/backups/shop | sort | tail -1) /var/lib/shop/orders.db",
+    ":answer 2",
+]

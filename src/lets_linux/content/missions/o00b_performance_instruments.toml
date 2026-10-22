@@ -1,0 +1,166 @@
+schema = 1
+
+[mission]
+id = "o00b-performance-instruments"
+title = "Performance Instruments"
+chapter = "O"
+kind = "lesson"
+order = 1
+difficulty = 4
+requires = ["g03b-reading-the-load", "j02b-measuring-space"]
+skills = ["o.cpu-analysis", "o.io-analysis", "o.memory-analysis", "o.observability", "o.capacity-planning"]
+review_for = ["o.cpu-analysis", "o.io-analysis"]
+xp = 110
+estimated_minutes = 25
+
+[briefing]
+context = """
+"Slow" has several causes: CPUs busy computing, CPUs idle while waiting for disks, memory
+running out, or a trend that has been building for days. The sysstat tools tell them apart,
+and sysstat's history shows where things are heading. This server has two busy jobs and a
+week of recorded history.
+"""
+concept = """
+vmstat 1 5 prints a line per second: r (processes running or waiting for a CPU), b (blocked
+waiting for I/O, state D), and CPU time split into us (programs), sy (kernel), id (idle),
+wa (idle while waiting for I/O) and st (stolen by the hypervisor). High us+sy: CPU-bound.
+High wa with many b: I/O-bound.
+Per process: pidstat -u 1 1 (CPU), pidstat -d 1 1 or iotop -b -n 1 (disk reads/writes).
+Per disk: iostat -x 1 1 — r/s and w/s, await (milliseconds per request), %util (time busy).
+History: the sysstat service records samples every 10 minutes into /var/log/sysstat/saDD.
+sar -u (CPU), sar -r (memory), sar -d (disks) read today; sar -r -f FILE an older day; the
+Average: line summarises a day. A steady trend divided by its rate tells you when a resource
+runs out — that is capacity planning.
+"""
+objectives = ["Tell CPU-bound from I/O-bound load", "Find the process behind each", "Read disk utilisation", "Use recorded history to see trends"]
+
+[environment]
+profile = "ubuntu"
+packages = ["sysstat", "iotop"]
+[environment.vars]
+cpujob = { choices = ["ffmpeg", "gzip", "bzip2"] }
+iojob = { choices = ["pg_dump", "tar", "cp"] }
+
+[[environment.setup]]
+action = "process"
+comm = "{{cpujob}}"
+argv = ["{{cpujob}}", "/srv/media/input.dat"]
+user = "learner"
+state = "R"
+cpu = 98.0
+sys_share = 0.03
+rss_kb = 210000
+age_minutes = 25
+
+[[environment.setup]]
+action = "process"
+comm = "{{iojob}}"
+argv = ["{{iojob}}", "/srv/db", "/mnt/backup/db"]
+user = "root"
+state = "D"
+cpu = 5.0
+sys_share = 0.6
+io_read_kbs = 150000
+io_write_kbs = 140000
+age_minutes = 20
+
+[[environment.setup]]
+action = "sysstat_history"
+days = 5
+mem = 45
+mem_growth = 6
+until_ago = 30
+cpu = 4
+cpu_peak = 20
+
+[[task]]
+id = "vmstat"
+title = "Computing or waiting?"
+kind = "guided"
+instructions = "Take five one-second samples:  vmstat 1 5   (ignore the first line: it is the average since boot)"
+skills = { "o.cpu-analysis" = 1.0, "o.io-analysis" = 0.5 }
+question = { prompt = "Which vmstat column shows the share of time CPUs sat idle WAITING for disk I/O?", type = "exact", accept = ["wa"] }
+hints = ["The cpu block has us, sy, id, wa, st.", "One of them is idle time spent waiting on I/O.", "The answer is wa."]
+explanation = "Here both kinds of load exist: us is high (a computing job) and wa is high with processes in column b (a disk-heavy job). Each needs a different fix."
+
+[[task]]
+id = "cpu"
+title = "Who computes?"
+kind = "guided"
+instructions = "Per-process CPU use:  pidstat -u 1 1"
+skills = { "o.cpu-analysis" = 1.0 }
+question = { prompt = "Which program uses the most CPU?", type = "exact", accept = ["{{cpujob}}"] }
+hints = ["Look at the %CPU column.", "%usr is time in the program itself, %system in the kernel on its behalf.", "The answer is {{cpujob}}."]
+explanation = "A CPU-bound job shows ~100% CPU, almost all %usr. Nice it (chapter G) if it is not urgent, or give it more CPUs."
+
+[[task]]
+id = "io"
+title = "Who reads and writes?"
+kind = "guided"
+instructions = "Per-process disk activity:  pidstat -d 1 1   (or  sudo iotop -b -n 1 )"
+skills = { "o.io-analysis" = 1.0 }
+question = { prompt = "Which program causes the disk traffic?", type = "exact", accept = ["{{iojob}}"] }
+hints = ["kB_rd/s and kB_wr/s are per-second read and write rates.", "Only one process moves hundreds of MB per second.", "The answer is {{iojob}}."]
+explanation = "An I/O-bound job uses little CPU but keeps the disk busy and spends its time in state D. ionice -c3 (idle class) lets it use the disk only when nobody else needs it."
+
+[[task]]
+id = "disk"
+title = "How busy is the disk?"
+kind = "guided"
+instructions = "Per-device statistics:  iostat -x 1 1"
+skills = { "o.io-analysis" = 1.0 }
+question = { prompt = "What does a %util close to 100 for a disk mean?", type = "choice", choices = ["The disk is full", "The disk was busy with requests almost all the time: requests queue and their wait (await) grows", "The disk is broken", "The filesystem needs fsck"], answer = 1 }
+hints = ["%util is the share of time the device had requests in progress — not how full it is.", "Busy all the time means new requests wait.", "The answer is (b)."]
+explanation = "Fullness is df's business; %util and await measure how busy and how slow the device is. (On SSDs and arrays, which serve many requests in parallel, %util near 100 is less alarming than rising await.)"
+
+[[task]]
+id = "history"
+title = "What happened before?"
+kind = "guided"
+instructions = "sysstat keeps history. List the recorded days and look at today's memory:  ls /var/log/sysstat   and   sar -r | tail -3"
+skills = { "o.observability" = 1.0, "o.memory-analysis" = 0.5 }
+question = { prompt = "How many daily data files (saDD) are there?", type = "state", state = { command = "ls /var/log/sysstat | grep -c '^sa[0-9]'" } }
+hints = ["Each day gets a file saDD, DD being the day of the month.", "Count the files whose names are sa followed by digits.", "Run: ls /var/log/sysstat | grep -c '^sa[0-9]'"]
+explanation = "Without history you only see the present. Recorded metrics answer 'since when?' and 'is this normal?' — the core of observability."
+
+[[task]]
+id = "trend"
+title = "Where is it heading?"
+kind = "guided"
+instructions = "Print each past day's memory average, oldest first (careful: the files are named by day of the month, so sorting them by name breaks at the start of a month):  for d in 4 3 2 1; do sar -r -f /var/log/sysstat/sa$(date -d \"$d days ago\" +%d) | tail -1; done"
+skills = { "o.capacity-planning" = 1.0, "o.memory-analysis" = 0.5 }
+question = { prompt = "Is memory use steady, or growing day by day?", type = "choice", choices = ["Steady", "Growing every day — a likely leak", "Falling", "There is no data"], answer = 1 }
+hints = ["Look at %memused in each day's Average: line.", "Compare the first and the last day.", "The answer is (b)."]
+explanation = "A daily climb in the averages means something keeps more memory each day — classically a leak. The trend matters more than any single value."
+
+[[task]]
+id = "plan"
+title = "When does it run out?"
+kind = "prediction"
+instructions = "Do the capacity-planning arithmetic."
+skills = { "o.capacity-planning" = 1.0 }
+question = { prompt = "Memory use is at 70% and grows by 6 percentage points a day. Roughly when does it reach 100%?", type = "choice", choices = ["In about 5 days", "In about 12 hours", "In about a month", "Never: Linux frees memory automatically"], answer = 0 }
+hints = ["30 points of headroom are left.", "30 / 6 = 5.", "The answer is (a)."]
+explanation = "Headroom divided by growth rate gives the time left. That turns 'memory looks high' into 'we have five days to fix the leak or add RAM' — a decision people can act on."
+
+[debrief]
+summary = """
+vmstat separates computing (us, sy) from waiting (wa, b); pidstat and iotop name the processes;
+iostat -x shows how busy and slow each disk is; sar's recorded history shows trends, and
+headroom divided by growth rate is your deadline.
+"""
+alternatives = ["mpstat -P ALL 1 1 shows each CPU separately — one maxed core can hide in an average", "sar -u -f /var/log/sysstat/saDD -s 10:00:00 -e 11:00:00 zooms into an hour of an older day", "top's %wa and the D state in ps show the same story without sysstat"]
+pitfalls = ["Reading only the first line of vmstat or iostat: it is the average since boot.", "Confusing a full disk (df) with a busy disk (iostat %util).", "Judging a trend from a single sample."]
+next = "Next: a slow server with two culprits — then a service the OOM killer keeps ending."
+
+[[solution]]
+name = "as instructed"
+steps = ["vmstat 1 5", ":answer wa", "pidstat -u 1 1", ":answer {{cpujob}}", "pidstat -d 1 1", ":answer {{iojob}}", "iostat -x 1 1", ":answer b", "ls /var/log/sysstat", "sar -r | tail -3", { answer_with = "ls /var/log/sysstat | grep -c '^sa[0-9]'" }, "for d in 4 3 2 1; do sar -r -f /var/log/sysstat/sa$(date -d \"$d days ago\" +%d) | tail -1; done", ":answer b", ":answer a"]
+
+[[solution]]
+name = "top, iotop and sar"
+steps = ["sar -u 1 3", ":answer wa", "top -b -n 1 | head -12", ":answer {{cpujob}}", { input = ["letslinux"] }, "sudo iotop -b -n 1", ":answer {{iojob}}", "iostat -dx 1 1", ":answer 2", "ls -l /var/log/sysstat/", { answer_with = "ls /var/log/sysstat | grep -c '^sa[0-9]'" }, "sar -r -f /var/log/sysstat/sa$(date -d '4 days ago' +%d) | tail -1; sar -r -f /var/log/sysstat/sa$(date -d '1 day ago' +%d) | tail -1", ":answer 2", ":answer 1"]
+
+[[counterexample]]
+name = "guessing"
+steps = [":answer id", ":answer {{iojob}}", ":answer {{cpujob}}", ":answer a", ":answer a", ":answer b"]

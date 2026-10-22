@@ -1,0 +1,181 @@
+schema = 1
+
+[mission]
+id = "h05b-boot-and-order"
+title = "Boot, Targets and Order"
+chapter = "H"
+kind = "lesson"
+order = 6
+difficulty = 3
+requires = ["h03-your-own-service", "h02-reading-the-journal"]
+skills = ["h.boot-process", "h.targets-boot", "h.service-dependencies"]
+review_for = ["h.targets-boot", "h.service-dependencies"]
+xp = 100
+estimated_minutes = 25
+
+[briefing]
+context = """
+A service that works when started by hand can still fail at boot, because at boot everything
+starts at once. This lesson follows a Linux system from power-on to login, shows how systemd
+groups services into targets, and how to tell it what must start before what.
+(sudo password: letslinux)
+"""
+concept = """
+Boot: firmware (BIOS/UEFI) -> boot loader (GRUB) -> kernel + initramfs (a small temporary
+root that finds and mounts the real root filesystem) -> systemd, the first process (PID 1)
+-> the default target and everything it pulls in.
+Targets are groups of units that describe a state of the system: multi-user.target (a server:
+network, services, text logins), graphical.target (plus a graphical login), rescue.target
+(single-user maintenance), emergency.target (almost nothing: a root shell when booting
+failed). systemctl get-default / set-default choose the boot target;
+systemctl list-dependencies UNIT shows what it pulls in.
+Dependencies, in a unit's [Unit] section: Wants=X / Requires=X (start X too; Requires= also
+fails and stops together with X) and, separately, After=X / Before=X (ordering). Without
+After=, units start in parallel. Change a vendor's unit with a drop-in file:
+/etc/systemd/system/NAME.service.d/override.conf (systemctl edit NAME creates it), then
+systemctl daemon-reload.
+"""
+objectives = ["Describe the boot sequence", "Read and set the default target", "Express dependencies and ordering with a drop-in"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "service"
+name = "cache-warm.service"
+content = """[Unit]
+Description=Warm the report cache
+
+[Service]
+Type=oneshot
+ExecStart=/bin/echo cache warmed
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "service"
+name = "reports.service"
+vendor = true
+content = """[Unit]
+Description=Report generator
+
+[Service]
+ExecStart=/bin/sleep infinity
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[task]]
+id = "pid1"
+title = "The first process"
+kind = "guided"
+instructions = "Every process descends from PID 1. Find out which program it is:  ps -p 1 -o pid,comm"
+skills = { "h.boot-process" = 1.0 }
+question = { prompt = "Which program runs as PID 1?", type = "exact", accept = ["systemd", "/sbin/init", "/lib/systemd/systemd", "init"] }
+hints = ["ps -p 1 selects process 1; -o chooses the columns.", "On nearly every current distribution it is the service manager.", "The answer is systemd."]
+explanation = "The kernel starts exactly one program itself — PID 1 — and systemd starts everything else. If PID 1 dies, the kernel panics."
+
+[[task]]
+id = "sequence"
+title = "From power-on to login"
+kind = "prediction"
+instructions = "Put the boot stages in order."
+skills = { "h.boot-process" = 1.0 }
+question = { prompt = "Which order is right?", type = "choice", choices = ["kernel -> GRUB -> firmware -> systemd", "firmware -> GRUB -> kernel + initramfs -> systemd -> default target", "systemd -> kernel -> GRUB -> login", "firmware -> systemd -> kernel -> GRUB"], answer = 1 }
+hints = ["The firmware runs first and loads a boot loader.", "The boot loader loads the kernel and the initramfs; the kernel then starts PID 1.", "The answer is (b)."]
+explanation = "Knowing the order tells you where to look when booting fails: no GRUB menu (firmware/disk), kernel panic (kernel/initramfs/root filesystem), emergency mode (systemd could not reach its target, often a bad /etc/fstab)."
+
+[[task]]
+id = "default"
+title = "Which target?"
+kind = "guided"
+instructions = "Find out which target this machine boots into:  systemctl get-default"
+skills = { "h.targets-boot" = 1.0 }
+question = { prompt = "What is the default target?", type = "state", state = { command = "systemctl get-default" } }
+hints = ["get-default prints the name of a .target unit.", "It is a symbolic link: /etc/systemd/system/default.target.", "Run systemctl get-default."]
+explanation = "Servers normally boot into multi-user.target; desktops into graphical.target. systemctl set-default TARGET changes it for the next boot."
+
+[[task]]
+id = "wants"
+title = "What a target pulls in"
+kind = "guided"
+instructions = "See which units multi-user.target pulls in:  systemctl list-dependencies multi-user.target"
+skills = { "h.targets-boot" = 1.0, "h.service-dependencies" = 0.5 }
+checks = [{ type = "command_used", command = ["systemctl"], args_contain = ["list-dependencies"], success = true }]
+hints = ["list-dependencies shows a tree of Wants= and Requires= relations.", "systemctl enable added services to it through links in multi-user.target.wants/.", "Type: systemctl list-dependencies multi-user.target"]
+explanation = "'Enabled' means: linked into a target's .wants directory, so the target pulls the unit in at boot. That is what WantedBy= in [Install] is for."
+
+[[task]]
+id = "dropin"
+title = "Ordering with a drop-in"
+kind = "guided"
+instructions = """
+reports.service reads the cache that cache-warm.service prepares, so cache-warm must run first. Do not edit the vendor's file; add a drop-in:
+    sudo mkdir -p /etc/systemd/system/reports.service.d
+    printf '[Unit]\\nWants=cache-warm.service\\nAfter=cache-warm.service\\n' | sudo tee /etc/systemd/system/reports.service.d/override.conf
+    sudo systemctl daemon-reload
+"""
+skills = { "h.service-dependencies" = 1.0, "h.unit-files" = 0.5 }
+checks = [
+    { type = "unit_setting", unit = "reports.service", section = "Unit", key = "After", regex = "cache-warm\\.service" },
+    { type = "unit_setting", unit = "reports.service", section = "Unit", key = "Wants", regex = "cache-warm\\.service" },
+]
+persistent = true
+hints = ["Drop-ins live in /etc/systemd/system/UNIT.d/ and only need the lines they add.", "systemd reads unit files again only after daemon-reload.", "Run the three commands shown — or sudo systemctl edit reports.service and type the [Unit] section."]
+explanation = "Wants= makes starting reports also start cache-warm; After= makes reports wait until cache-warm has finished starting. The vendor's file stays untouched, so package updates cannot undo your change."
+
+[[task]]
+id = "check-dropin"
+title = "See the merged unit"
+kind = "guided"
+instructions = "Show the unit as systemd now sees it, vendor file and drop-in together:  systemctl cat reports.service"
+skills = { "h.service-dependencies" = 0.5, "h.unit-files" = 0.5 }
+checks = [{ type = "output_contains", text = "override.conf", command = ["systemctl"] }]
+hints = ["systemctl cat prints every file that makes up the unit, each with a comment naming its path.", "Look for the # /etc/systemd/system/reports.service.d/override.conf line.", "Type: systemctl cat reports.service"]
+explanation = "systemctl cat is the quickest way to see why a unit behaves as it does: it shows every drop-in, in the order they apply."
+
+[[task]]
+id = "parallel"
+title = "Requirement is not order"
+kind = "prediction"
+instructions = "Think about the two kinds of dependency."
+skills = { "h.service-dependencies" = 1.0 }
+question = { prompt = "app.service has Requires=db.service but no After= line. What happens at boot?", type = "choice", choices = ["db starts first, then app", "Both start at the same time, so app may run before db is ready", "app is not started", "db is started only when app fails"], answer = 1 }
+hints = ["Requires= and Wants= say WHAT starts; After= and Before= say WHEN.", "Without an ordering line, systemd starts both in parallel.", "The answer is (b)."]
+explanation = "A service that needs another one nearly always needs both lines: Requires= (or Wants=) and After=. Missing After= is the classic 'fails at boot, works by hand' bug."
+
+[[task]]
+id = "rescue"
+title = "When booting fails"
+kind = "prediction"
+instructions = "Think about the maintenance targets."
+skills = { "h.targets-boot" = 1.0, "h.boot-process" = 0.5 }
+question = { prompt = "A server stops during boot with a root password prompt and the message 'You are in emergency mode'. Which target is it in?", type = "choice", choices = ["graphical.target", "multi-user.target", "emergency.target: only the root filesystem (often read-only) and a root shell", "rescue.target with all services running"], answer = 2 }
+hints = ["systemd falls back to the smallest target when it cannot reach the default one.", "A failing mount from /etc/fstab is the most common reason.", "The answer is (c)."]
+explanation = "In emergency mode, journalctl -xb shows what failed. Fix it (often /etc/fstab), then systemctl default or reboot. Chapter J practises exactly this."
+
+[debrief]
+summary = """
+Firmware, GRUB, kernel and initramfs, then systemd as PID 1 starting the default target.
+Targets group units; enabling links a unit into a target. Wants=/Requires= say what starts
+together, After=/Before= say in which order — and drop-ins change vendor units safely.
+"""
+alternatives = ["sudo systemctl edit reports.service writes the drop-in for you and reloads systemd", "systemd-analyze critical-chain shows which units delayed the boot", "systemctl set-default multi-user.target changes the boot target"]
+pitfalls = ["Editing files in /lib/systemd/system: package updates overwrite them.", "Forgetting daemon-reload after changing unit files.", "Using Requires= without After= and expecting an order."]
+next = "Next: a shop server whose storefront dies at every boot."
+
+[[solution]]
+name = "as instructed"
+steps = ["ps -p 1 -o pid,comm", ":answer systemd", ":answer b", "systemctl get-default", { answer_with = "systemctl get-default" }, "systemctl list-dependencies multi-user.target", { input = ["letslinux"] }, "sudo mkdir -p /etc/systemd/system/reports.service.d", "printf '[Unit]\\nWants=cache-warm.service\\nAfter=cache-warm.service\\n' | sudo tee /etc/systemd/system/reports.service.d/override.conf", "sudo systemctl daemon-reload", "systemctl cat reports.service", ":answer b", ":answer c"]
+
+[[solution]]
+name = "systemctl edit"
+steps = ["cat /proc/1/comm", ":answer systemd", ":answer 2", "readlink /etc/systemd/system/default.target", { answer_with = "systemctl get-default" }, "systemctl list-dependencies --reverse cache-warm.service; systemctl list-dependencies multi-user.target | head", { input = ["letslinux"] }, { edit = "[Unit]\nWants=cache-warm.service\nAfter=cache-warm.service\n" }, "sudo systemctl edit reports.service", "systemctl cat reports.service", ":answer 2", ":answer 3"]
+
+[[counterexample]]
+name = "editing without reload"
+steps = ["ps -p 1 -o comm=", ":answer systemd", ":answer b", { answer_with = "systemctl get-default" }, "systemctl list-dependencies multi-user.target", { input = ["letslinux"] }, "sudo mkdir -p /etc/systemd/system/reports.service.d", "printf '[Unit]\\nAfter=cache-warm.service\\n' | sudo tee /etc/systemd/system/reports.service.d/override.conf", "systemctl cat reports.service", ":answer b", ":answer c"]

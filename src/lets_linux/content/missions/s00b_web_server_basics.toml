@@ -1,0 +1,164 @@
+schema = 1
+
+[mission]
+id = "s00b-web-server-basics"
+title = "Web Server Basics"
+chapter = "S"
+kind = "lesson"
+order = 1
+difficulty = 4
+requires = ["i12-https-for-the-lab", "h05b-boot-and-order", "c05b-reading-logs"]
+skills = ["s.web-server-ops"]
+review_for = ["s.web-server-ops"]
+xp = 110
+estimated_minutes = 25
+
+[briefing]
+context = """
+The web specialist path starts with nginx, the most common web server and reverse proxy on
+Linux. You will add a site, put an application behind it, and learn to read what the status
+codes and logs are telling you — the toolkit for the shop outage that follows.
+(sudo password: letslinux)
+"""
+concept = """
+Debian layout: /etc/nginx/nginx.conf includes every file in /etc/nginx/sites-enabled/, which
+are links to /etc/nginx/sites-available/. A server { } block is one site: listen PORT;
+server_name NAMES; root DIR (where files are served from); location PATH { ... } for parts
+of the site. proxy_pass http://127.0.0.1:PORT; in a location makes nginx a reverse proxy:
+it forwards those requests to an application and returns its answer.
+After every change: sudo nginx -t (syntax check), then sudo systemctl reload nginx (applies
+it without dropping connections; restart would).
+Status codes tell you which layer failed: 200 OK; 301/302 redirect; 403 nginx may not read
+the file or a rule denies it; 404 no such file; 502 Bad Gateway — the upstream did not answer
+(not running, wrong port); 504 — it answered too slowly. Logs: /var/log/nginx/access.log
+(one line per request) and error.log (the reasons). curl -I shows headers;
+curl -H 'Host: NAME' http://localhost/ talks to a site by name without DNS.
+"""
+objectives = ["Find your way around nginx's configuration", "Add and test a site safely", "Configure a reverse proxy", "Diagnose by status code and error log"]
+
+[environment]
+profile = "debian"
+packages = ["nginx", "curl", "python3"]
+[environment.vars]
+word = { word = true }
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /srv/notes /srv/notes-api/api && echo '<h1>notes {{word}}</h1>' > /srv/notes/index.html && echo '{\"status\": \"ok\"}' > /srv/notes-api/api/status.json && chmod -R a+rX /srv/notes /srv/notes-api"
+
+[[environment.setup]]
+action = "service"
+name = "notes-api.service"
+content = """[Unit]
+Description=Notes API (a small application on 127.0.0.1:9000)
+
+[Service]
+WorkingDirectory=/srv/notes-api
+ExecStart=/usr/bin/python3 -m http.server 9000 --bind 127.0.0.1
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[task]]
+id = "headers"
+title = "Who answers?"
+kind = "guided"
+instructions = "Ask the web server for its response headers:  curl -I http://localhost/"
+skills = { "s.web-server-ops" = 1.0, "i.http-curl" = 0.5 }
+question = { prompt = "Which server software answers (the Server header, without version)?", type = "exact", accept = ["nginx"] }
+hints = ["-I asks only for the headers.", "Look for the Server: line.", "The answer is nginx."]
+explanation = "The first line is the status (HTTP/1.1 200 OK); headers follow. Hiding the version (server_tokens off) is a common hardening step — the next mission asks for it."
+
+[[task]]
+id = "layout"
+title = "Where the sites live"
+kind = "guided"
+instructions = "List the enabled sites and find the default site's document root:  ls -l /etc/nginx/sites-enabled   and   grep root /etc/nginx/sites-available/default"
+skills = { "s.web-server-ops" = 1.0 }
+question = { prompt = "From which directory does the default site serve files?", type = "exact", accept = ["/var/www/html", "/var/www/html/"] }
+hints = ["Entries in sites-enabled are links to sites-available.", "The root directive names the directory.", "The answer is /var/www/html."]
+explanation = "Enabling a site = linking it into sites-enabled; disabling = removing the link. The configuration itself stays in sites-available."
+
+[[task]]
+id = "site"
+title = "Add a site"
+kind = "guided"
+instructions = """
+Add a site for the name notes.lab, serving /srv/notes, with /api/ passed to the application on 127.0.0.1:9000:
+    printf 'server {\\n    listen 80;\\n    server_name notes.lab;\\n    root /srv/notes;\\n    location /api/ {\\n        proxy_pass http://127.0.0.1:9000;\\n    }\\n}\\n' | sudo tee /etc/nginx/sites-available/notes
+    sudo ln -s /etc/nginx/sites-available/notes /etc/nginx/sites-enabled/
+    sudo nginx -t && sudo systemctl reload nginx
+Then test it by name:  curl -s -H 'Host: notes.lab' http://localhost/
+"""
+skills = { "s.web-server-ops" = 1.0 }
+checks = [{ type = "command_result", command = "curl -s -H 'Host: notes.lab' http://localhost/", stdout_contains = "notes {{word}}" }]
+persistent = true
+hints = ["Write the file, link it, test the syntax, reload.", "nginx -t must say 'syntax is ok' before you reload.", "Run the three commands shown, then the curl."]
+explanation = "nginx -t before every reload: a reload with a broken configuration is refused, but a restart with one takes the site down. -H 'Host: ...' picks the server block by name."
+
+[[task]]
+id = "badgateway"
+title = "502 Bad Gateway"
+kind = "guided"
+instructions = "Try the API through nginx:  curl -s -o /dev/null -w '%{http_code}\\n' -H 'Host: notes.lab' http://localhost/api/status.json   then read the reason:  sudo tail -2 /var/log/nginx/error.log"
+skills = { "s.web-server-ops" = 1.0, "h.journalctl" = 0.3 }
+question = { prompt = "What does the error log say about the upstream?", type = "choice", choices = ["Permission denied reading a file", "connect() failed (Connection refused): nothing listens on 127.0.0.1:9000", "The configuration has a syntax error", "The client was blocked"], answer = 1 }
+hints = ["502 means nginx itself works, but its upstream did not answer.", "error.log names the upstream address and the system error.", "The answer is (b)."]
+explanation = "502 always points behind nginx: is the application running, and on the address and port proxy_pass names? (ss -tlnp answers both.)"
+
+[[task]]
+id = "upstream"
+title = "Bring up the application"
+kind = "independent"
+instructions = "Make /api/status.json work through nginx — also after the next reboot."
+skills = { "s.web-server-ops" = 1.0, "h.enable-disable" = 0.5 }
+checks = [
+    { type = "command_result", command = "curl -s -H 'Host: notes.lab' http://localhost/api/status.json", stdout_contains = "ok" },
+    { type = "unit_enabled", unit = "notes-api.service" },
+]
+persistent = true
+hints = ["The application is a systemd service that is not running.", "notes-api.service must be started now and enabled for boot.", "Run: sudo systemctl enable --now notes-api.service"]
+explanation = "nginx and the application are separate services; both must run. For the next boot, a production unit would also say Wants=/After= for whatever it needs."
+
+[[task]]
+id = "codes"
+title = "Read the code"
+kind = "prediction"
+instructions = "Map a status code to its likely cause."
+skills = { "s.web-server-ops" = 1.0 }
+question = { prompt = "A page whose file exists returns 403 Forbidden. What is the most likely cause?", type = "choice", choices = ["The application crashed", "nginx's user (www-data) cannot read the file or traverse a directory on its path — or a deny rule matches", "DNS is broken", "The disk is full"], answer = 1 }
+hints = ["403 comes from nginx itself.", "nginx runs its workers as www-data; chapter D's rules apply to it.", "The answer is (b)."]
+explanation = "error.log says which: '(13: Permission denied)' for file permissions, 'access forbidden by rule' for deny rules. Check every directory on the path with ls -ld."
+
+[[task]]
+id = "reload"
+title = "Reload or restart?"
+kind = "prediction"
+instructions = "Think about running connections."
+skills = { "s.web-server-ops" = 1.0 }
+question = { prompt = "Why prefer systemctl reload nginx over restart after a configuration change?", type = "choice", choices = ["Reload is the only way to apply changes", "Reload starts new workers with the new configuration and lets old ones finish their requests — no dropped connections, and a broken configuration is rejected", "Restart deletes the logs", "There is no difference"], answer = 1 }
+hints = ["What happens to visitors in the middle of a download during a restart?", "On reload, nginx checks the new configuration and keeps running the old one if it is broken.", "The answer is (b)."]
+explanation = "Graceful reloads are standard practice for web servers. Restart only when you must (for example after an upgrade of nginx itself)."
+
+[debrief]
+summary = """
+Sites live in sites-available and are enabled by links in sites-enabled. Test with nginx -t,
+apply with reload. Status codes locate the failing layer — 403 permissions or rules, 404 missing,
+502/504 the upstream — and error.log says why.
+"""
+alternatives = ["curl -sI --resolve notes.lab:80:127.0.0.1 http://notes.lab/ is another way to test a name without DNS", "sudo nginx -T prints the complete, merged configuration", "ss -tlnp | grep 9000 checks whether the upstream listens"]
+pitfalls = ["Reloading without nginx -t.", "Editing sites-enabled copies instead of linking.", "Assuming 502 is nginx's fault: it is almost always the application behind it."]
+next = "Next: the shop's front door — four faults after a server move."
+
+[[solution]]
+name = "as instructed"
+steps = ["curl -I http://localhost/", ":answer nginx", "ls -l /etc/nginx/sites-enabled", "grep root /etc/nginx/sites-available/default", ":answer /var/www/html", { input = ["letslinux"] }, "printf 'server {\\n    listen 80;\\n    server_name notes.lab;\\n    root /srv/notes;\\n    location /api/ {\\n        proxy_pass http://127.0.0.1:9000;\\n    }\\n}\\n' | sudo tee /etc/nginx/sites-available/notes", "sudo ln -s /etc/nginx/sites-available/notes /etc/nginx/sites-enabled/", "sudo nginx -t && sudo systemctl reload nginx", "curl -s -H 'Host: notes.lab' http://localhost/", "curl -s -o /dev/null -w '%{http_code}\\n' -H 'Host: notes.lab' http://localhost/api/status.json", "sudo tail -2 /var/log/nginx/error.log", ":answer b", "sudo systemctl enable --now notes-api.service", "curl -s -H 'Host: notes.lab' http://localhost/api/status.json", ":answer b", ":answer b"]
+
+[[solution]]
+name = "editor and separate steps"
+steps = ["curl -sI http://localhost/ | grep Server", ":answer nginx", "cat /etc/nginx/sites-available/default", ":answer /var/www/html/", { input = ["letslinux"] }, { edit = "server {\n    listen 80;\n    server_name notes.lab;\n    root /srv/notes;\n\n    location /api/ {\n        proxy_pass http://127.0.0.1:9000;\n    }\n}\n" }, "sudo nano /etc/nginx/sites-available/notes", "cd /etc/nginx/sites-enabled && sudo ln -s ../sites-available/notes notes", "sudo nginx -t", "sudo systemctl reload nginx", "cd", "curl -sI -H 'Host: notes.lab' http://localhost/api/status.json", "sudo grep upstream /var/log/nginx/error.log", ":answer 2", "sudo systemctl start notes-api", "sudo systemctl enable notes-api", ":answer 2", ":answer 2"]
+
+[[counterexample]]
+name = "starting the application but not enabling it"
+steps = ["curl -I http://localhost/", ":answer nginx", ":answer /var/www/html", { input = ["letslinux"] }, "printf 'server {\\n    listen 80;\\n    server_name notes.lab;\\n    root /srv/notes;\\n    location /api/ {\\n        proxy_pass http://127.0.0.1:9000;\\n    }\\n}\\n' | sudo tee /etc/nginx/sites-available/notes", "sudo ln -s /etc/nginx/sites-available/notes /etc/nginx/sites-enabled/", "sudo nginx -t && sudo systemctl reload nginx", ":answer b", "sudo systemctl start notes-api.service", ":answer b", ":answer b"]

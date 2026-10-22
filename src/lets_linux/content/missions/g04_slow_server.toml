@@ -1,0 +1,215 @@
+schema = 1
+
+[mission]
+id = "g04-slow-server"
+title = "The Slow Server"
+chapter = "G"
+kind = "troubleshooting"
+order = 5
+difficulty = 4
+requires = ["g03-jobs", "g03b-reading-the-load", "c08-the-method"]
+skills = ["g.resource-monitoring", "g.proc-filesystem", "g.nice-priority", "g.resource-exhaustion"]
+review_for = ["g.resource-monitoring", "g.signals-kill", "g.ps-inspection"]
+xp = 140
+estimated_minutes = 22
+sequential = false
+
+[briefing]
+context = """
+"The intranet is crawling!" Users complain that the shared web server has been slow since
+this morning. Measure before you act: how busy are the CPUs, how much memory is left, and who
+is responsible? Then fix it — but the image thumbnails must still be generated today.
+Answer and act in any order. (sudo password: letslinux)
+"""
+concept = """
+uptime and /proc/loadavg show the load average (compare it with the number of CPUs from
+nproc). free -h shows memory: watch 'available' and swap use. top -b -n 1 and ps aux --sort
+rank processes by %CPU or %MEM. /proc/PID holds details about each process. Not every heavy
+process should be killed: renice lowers a job's priority so that it only uses spare CPU.
+"""
+objectives = ["Measure CPU load and memory pressure", "Identify the responsible processes", "Respond proportionately: kill or deprioritise"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+dev = { choices = ["maria", "tomas", "aiko"] }
+conf = { choices = ["cache-test.yml", "stress.yml", "bench-cache.yml"] }
+
+[[environment.setup]]
+action = "user"
+name = "{{dev}}"
+
+[[environment.setup]]
+action = "process"
+comm = "thumbgen"
+argv = ["/usr/local/bin/thumbgen", "--queue", "uploads", "--worker", "1"]
+user = "www-data"
+state = "R"
+cpu = 93.0
+rss_kb = 180000
+cpu_time = 8100
+age_minutes = 150
+
+[[environment.setup]]
+action = "process"
+comm = "thumbgen"
+argv = ["/usr/local/bin/thumbgen", "--queue", "uploads", "--worker", "2"]
+user = "www-data"
+state = "R"
+cpu = 88.0
+rss_kb = 176000
+cpu_time = 7900
+age_minutes = 150
+
+[[environment.setup]]
+action = "process"
+comm = "leaky-cache"
+argv = ["/home/{{dev}}/bin/leaky-cache", "--config", "/home/{{dev}}/{{conf}}"]
+user = "{{dev}}"
+state = "S"
+cpu = 2.5
+rss_kb = 3520000
+cpu_time = 900
+age_minutes = 610
+pid_var = "leak_pid"
+
+[[environment.setup]]
+action = "process"
+comm = "apache2"
+argv = ["/usr/sbin/apache2", "-k", "start"]
+user = "www-data"
+cpu = 4.0
+rss_kb = 64000
+age_minutes = 4000
+
+[[task]]
+id = "load"
+title = "How busy?"
+kind = "troubleshooting"
+instructions = "Measure the 1-minute load average."
+skills = { "g.resource-monitoring" = 1.0 }
+question = { prompt = "What is the 1-minute load average?", type = "state", state = { command = "cut -d' ' -f1 /proc/loadavg" } }
+hints = ["uptime shows three load averages: 1, 5 and 15 minutes.", "The first number after 'load average:' (also the first field of /proc/loadavg).", "Run uptime and copy the first load figure."]
+explanation = "The load counts processes that are running or waiting for a CPU."
+
+[[task]]
+id = "cpus"
+title = "Compared with what?"
+kind = "troubleshooting"
+instructions = "A load figure only means something compared with the number of CPUs."
+skills = { "g.resource-monitoring" = 1.0, "g.proc-filesystem" = 0.5 }
+question = { prompt = "How many CPUs does this server have?", type = "number", accept = ["2"] }
+hints = ["One command prints the number of processing units.", "nproc, or count 'processor' lines in /proc/cpuinfo.", "Two."]
+explanation = "A load near 2 on 2 CPUs means they are fully busy; above it, processes queue."
+
+[[task]]
+id = "cpuuser"
+title = "Who eats the CPU?"
+kind = "troubleshooting"
+instructions = "Find which user's processes consume most of the CPU."
+skills = { "g.resource-monitoring" = 1.0 }
+question = { prompt = "Which user runs the processes using the most CPU?", type = "exact", accept = ["www-data"] }
+hints = ["Sort processes by CPU use.", "top -b -n 1 | head -12, or ps aux --sort=-%cpu | head.", "www-data (the thumbgen workers)."]
+explanation = "Two thumbgen workers keep both CPUs busy: that explains the slowness for everyone else."
+
+[[task]]
+id = "swap"
+title = "Memory pressure?"
+kind = "troubleshooting"
+instructions = "Check the memory situation."
+skills = { "g.resource-monitoring" = 1.0, "g.resource-exhaustion" = 0.5 }
+question = { prompt = "Is the server using swap space?", type = "choice", choices = ["No, swap is unused", "Yes, part of swap is in use and available memory is low"], answer = 1 }
+hints = ["free -h shows a Swap: line.", "Compare Swap used with zero and look at 'available'.", "The answer is (b)."]
+explanation = "When RAM runs out the kernel shrinks the page cache and moves memory to swap, which is far slower."
+
+[[task]]
+id = "memhog"
+title = "The memory hog"
+kind = "troubleshooting"
+instructions = "Find the process that holds the most memory and read its full command line in /proc."
+skills = { "g.proc-filesystem" = 1.0, "g.resource-monitoring" = 0.5 }
+question = { prompt = "Which configuration file was leaky-cache started with?", type = "exact", accept = ["/home/{{dev}}/{{conf}}", "~/{{conf}}"] }
+hints = ["Sort by memory to find it, then look at /proc/PID/cmdline.", "ps aux --sort=-%mem | head -3; tr '\\0' ' ' < /proc/{{leak_pid}}/cmdline", "/home/{{dev}}/{{conf}}"]
+explanation = "/proc/PID/cmdline holds the exact arguments, separated by NUL bytes. Its owner is {{dev}}, testing a cache configuration."
+
+[[task]]
+id = "kill"
+title = "Remove the leftover test"
+kind = "troubleshooting"
+instructions = "{{dev}} confirms leaky-cache was a forgotten test. Stop it."
+skills = { "g.resource-exhaustion" = 1.0, "g.signals-kill" = 0.5 }
+checks = [{ type = "process_absent", comm = "leaky-cache" }]
+persistent = true
+hints = ["It belongs to another user.", "sudo kill PID (try SIGTERM first).", "sudo kill {{leak_pid}}"]
+explanation = "Memory comes back immediately: free -h shows more available memory and swap use stops growing."
+
+[[task]]
+id = "renice"
+title = "Thumbnails, but politely"
+kind = "troubleshooting"
+instructions = "The thumbgen workers must keep running, but should only use CPU that nobody else needs. Give every thumbgen process the lowest priority (niceness 19)."
+skills = { "g.nice-priority" = 1.0 }
+checks = [
+    { type = "process_running", comm = "thumbgen" },
+    { type = "not", check = { type = "process_running", comm = "thumbgen", max_nice = 18 } },
+]
+persistent = true
+hints = ["renice changes a running process's niceness.", "Other users' processes need sudo; renice accepts several PIDs or -u USER (but -u www-data would also slow down apache2).", "sudo renice -n 19 -p $(pgrep thumbgen)"]
+explanation = "With niceness 19 the workers still run, but the scheduler favours every normal process. Killing them would have lost the work."
+
+[debrief]
+summary = """
+Measure first (uptime, nproc, free, top/ps, /proc), then respond proportionately: stop what
+is unwanted, deprioritise what is merely heavy.
+"""
+alternatives = ["top -b -n 1 -o %MEM", "pkill -u {{dev}} leaky-cache", "systemd units can set Nice= and CPUQuota= permanently"]
+pitfalls = ["Killing a batch job that must finish today.", "renice -u www-data also slows the web server itself.", "Judging memory by 'free' alone: cache is reclaimable."]
+next = "Chapter H: services."
+
+[[solution]]
+name = "top and renice by PID"
+steps = [
+    "uptime",
+    { answer_with = "cut -d' ' -f1 /proc/loadavg" },
+    "nproc",
+    ":answer 2",
+    "top -b -n 1 | head -12",
+    ":answer www-data",
+    "free -h",
+    ":answer b",
+    "ps aux --sort=-%mem | head -3",
+    "tr '\\0' ' ' < /proc/{{leak_pid}}/cmdline",
+    ":answer /home/{{dev}}/{{conf}}",
+    { input = ["letslinux"] },
+    "sudo kill {{leak_pid}}",
+    "sudo renice -n 19 -p $(pgrep thumbgen)",
+]
+
+[[solution]]
+name = "/proc and ps"
+steps = [
+    "cat /proc/loadavg",
+    { answer_with = "cat /proc/loadavg | cut -d' ' -f1" },
+    "grep -c processor /proc/cpuinfo",
+    ":answer 2",
+    "ps aux --sort=-%cpu | head -4",
+    ":answer www-data",
+    "grep -i swap /proc/meminfo",
+    ":answer Yes, part of swap is in use and available memory is low",
+    "ps -eo pid,user,rss,args --sort=-rss | head -2",
+    ":answer /home/{{dev}}/{{conf}}",
+    { input = ["letslinux"] },
+    "sudo pkill leaky-cache",
+    "for p in $(pgrep thumbgen); do sudo renice -n 19 -p $p; done",
+]
+
+[[counterexample]]
+name = "kill everything heavy"
+steps = [
+    ":answer 2",
+    ":answer www-data",
+    ":answer b",
+    { input = ["letslinux"] },
+    "sudo pkill leaky-cache",
+    "sudo pkill thumbgen",
+]

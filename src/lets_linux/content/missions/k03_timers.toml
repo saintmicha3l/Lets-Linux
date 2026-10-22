@@ -1,0 +1,142 @@
+schema = 1
+
+[mission]
+id = "k03-timers"
+title = "Timers Instead of Cron"
+chapter = "K"
+kind = "lesson"
+order = 4
+difficulty = 4
+requires = ["k01-cron-jobs", "h03-your-own-service"]
+skills = ["k.systemd-timers", "h.timers"]
+xp = 130
+estimated_minutes = 22
+
+[briefing]
+context = """
+The database backup should run every night at 01:00 and its output should land in the
+journal, where the team already looks. systemd timers do that: a service unit says what to
+run, a timer unit says when. (sudo password: letslinux)
+"""
+concept = """
+A timer NAME.timer activates NAME.service. [Timer] OnCalendar= takes calendar expressions
+such as daily, hourly, Mon..Fri 08:30 or *-*-* 01:00:00; Persistent=true runs a missed job
+after downtime; [Install] WantedBy=timers.target makes enabling work. The service is usually
+Type=oneshot. Enable and start the timer (not the service), check it with systemctl
+list-timers, and test calendar expressions with systemd-analyze calendar.
+"""
+objectives = ["Write a oneshot service and a timer", "Use calendar expressions", "Enable and inspect timers", "Run the job on demand"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/sbin/db-backup"
+mode = "0755"
+content = """#!/bin/sh
+echo "db-backup: dumping database to /var/backups/db-$(date +%F).sql"
+date > /var/backups/db-latest.sql
+echo "db-backup: done"
+"""
+
+[[task]]
+id = "when"
+title = "Calendar expressions"
+kind = "independent"
+instructions = "Use `systemd-analyze calendar` to find out what the expression 'Mon..Fri *-*-* 22:00' means."
+skills = { "k.systemd-timers" = 1.0 }
+question = { prompt = "When does 'Mon..Fri *-*-* 22:00' next elapse? (as shown: Day YYYY-MM-DD HH:MM:SS)", type = "regex", accept = ["^Mon 2026-03-02 22:00:00( UTC)?$"] }
+hints = ["systemd-analyze calendar 'EXPRESSION' shows the next elapse.", "Today is Monday 2026-03-02.", "Mon 2026-03-02 22:00:00"]
+explanation = "systemd-analyze calendar is the quickest way to check an expression before you rely on it."
+
+[[task]]
+id = "service"
+title = "What to run"
+kind = "independent"
+instructions = "Create /etc/systemd/system/db-backup.service: a oneshot service that runs /usr/local/sbin/db-backup."
+skills = { "k.systemd-timers" = 1.0, "h.unit-files" = 0.5 }
+checks = [
+    { type = "unit_setting", unit = "db-backup.service", on_disk = true, section = "Service", key = "Type", value = "oneshot" },
+    { type = "unit_setting", unit = "db-backup.service", on_disk = true, section = "Service", key = "ExecStart", regex = "^/usr/local/sbin/db-backup$" },
+]
+hints = ["Two lines in [Service] are enough.", "Type=oneshot and ExecStart=/usr/local/sbin/db-backup", "printf '[Unit]\\nDescription=Database backup\\n\\n[Service]\\nType=oneshot\\nExecStart=/usr/local/sbin/db-backup\\n' | sudo tee /etc/systemd/system/db-backup.service"]
+explanation = "A oneshot service runs to completion; systemd logs its output in the journal under the service's name."
+
+[[task]]
+id = "timer"
+title = "When to run"
+kind = "independent"
+instructions = "Create /etc/systemd/system/db-backup.timer that activates the backup every day at 01:00, catches up missed runs, and can be enabled. Enable and start it."
+skills = { "k.systemd-timers" = 1.0, "h.timers" = 1.0 }
+checks = [
+    { type = "unit_setting", unit = "db-backup.timer", section = "Timer", key = "OnCalendar", regex = "^(\\*-\\*-\\* )?0?1:00(:00)?$" },
+    { type = "unit_setting", unit = "db-backup.timer", section = "Timer", key = "Persistent", regex = "^(true|yes|1|on)$" },
+    { type = "unit_enabled", unit = "db-backup.timer" },
+    { type = "unit_state", unit = "db-backup.timer", active = "active", sub = "waiting" },
+]
+persistent = true
+hints = ["[Timer] needs OnCalendar= and Persistent=; [Install] needs WantedBy=timers.target.", "OnCalendar=*-*-* 01:00:00 — then sudo systemctl enable --now db-backup.timer", "printf '[Unit]\\nDescription=Nightly database backup\\n\\n[Timer]\\nOnCalendar=*-*-* 01:00:00\\nPersistent=true\\n\\n[Install]\\nWantedBy=timers.target\\n' | sudo tee /etc/systemd/system/db-backup.timer; sudo systemctl enable --now db-backup.timer"]
+explanation = "systemctl list-timers now shows the next run tonight at 01:00 and which service it activates."
+
+[[task]]
+id = "now"
+title = "Run it now"
+kind = "independent"
+instructions = "Don't wait for tonight: run the backup once immediately, then read its output in the journal."
+skills = { "k.systemd-timers" = 1.0, "h.journalctl" = 0.5 }
+checks = [
+    { type = "path_exists", path = "/var/backups/db-latest.sql" },
+    { type = "output_contains", text = "db-backup: done", command = ["journalctl", "systemctl"] },
+]
+hints = ["Start the service, not the timer.", "sudo systemctl start db-backup.service", "sudo systemctl start db-backup.service && journalctl -u db-backup.service"]
+explanation = "Starting the service by hand is how you test a timer's job. Its output went straight to the journal — no mail, no lost output."
+
+[debrief]
+summary = """
+Timers = a oneshot service (what) + a timer (when). Enable the timer, check list-timers, run
+the service by hand to test, read the journal for output.
+"""
+alternatives = ["OnCalendar=daily for midnight", "OnBootSec=15min plus OnUnitActiveSec=1h for 'every hour since boot'", "systemctl edit --force --full db-backup.timer to create the file in an editor"]
+pitfalls = ["Enabling the service instead of the timer.", "Forgetting daemon-reload after editing an existing timer.", "Expecting a Type=simple service with a long sleep to behave like a job."]
+next = "Chapter K continues with log rotation (planned)."
+
+[[solution]]
+name = "printf and tee"
+steps = [
+    "systemd-analyze calendar 'Mon..Fri *-*-* 22:00'",
+    ":answer Mon 2026-03-02 22:00:00",
+    { input = ["letslinux"] },
+    "printf '[Unit]\\nDescription=Database backup\\n\\n[Service]\\nType=oneshot\\nExecStart=/usr/local/sbin/db-backup\\n' | sudo tee /etc/systemd/system/db-backup.service",
+    "printf '[Unit]\\nDescription=Nightly database backup\\n\\n[Timer]\\nOnCalendar=*-*-* 01:00:00\\nPersistent=true\\n\\n[Install]\\nWantedBy=timers.target\\n' | sudo tee /etc/systemd/system/db-backup.timer",
+    "sudo systemctl daemon-reload",
+    "sudo systemctl enable --now db-backup.timer",
+    "systemctl list-timers",
+    "sudo systemctl start db-backup.service",
+    "journalctl -u db-backup.service",
+]
+
+[[solution]]
+name = "editor"
+steps = [
+    "systemd-analyze calendar 'Mon..Fri *-*-* 22:00' | grep 'Next elapse'",
+    ":answer Mon 2026-03-02 22:00:00 UTC",
+    { input = ["letslinux"] },
+    { edit = "[Unit]\nDescription=DB backup\n[Service]\nType=oneshot\nExecStart=/usr/local/sbin/db-backup\n" },
+    "sudo nano /etc/systemd/system/db-backup.service",
+    { edit = "[Timer]\nOnCalendar=01:00\nPersistent=yes\n[Install]\nWantedBy=timers.target\n" },
+    "sudo nano /etc/systemd/system/db-backup.timer",
+    "sudo systemctl enable db-backup.timer",
+    "sudo systemctl start db-backup.timer",
+    "sudo systemctl start db-backup",
+    "systemctl status db-backup.service",
+]
+
+[[counterexample]]
+name = "enabling the service"
+steps = [
+    ":answer Mon 2026-03-02 22:00:00",
+    { input = ["letslinux"] },
+    "printf '[Service]\\nType=oneshot\\nExecStart=/usr/local/sbin/db-backup\\n[Install]\\nWantedBy=multi-user.target\\n' | sudo tee /etc/systemd/system/db-backup.service",
+    "sudo systemctl enable --now db-backup.service",
+]

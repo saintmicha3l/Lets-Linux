@@ -1,0 +1,169 @@
+schema = 1
+
+[mission]
+id = "o01-cpu-or-disk"
+title = "Busy Doing What?"
+chapter = "O"
+kind = "troubleshooting"
+order = 2
+difficulty = 5
+requires = ["g04-slow-server", "n04-syscalls", "o00b-performance-instruments", "c08-the-method"]
+skills = ["o.cpu-analysis", "o.load-average", "o.io-analysis"]
+review_for = ["g.resource-monitoring", "g.nice-priority"]
+xp = 210
+estimated_minutes = 30
+
+[briefing]
+context = """
+Users of this Ubuntu reporting server complain that everything has been sluggish for the
+last quarter of an hour. The monitoring shows a load average above 2. Before anyone buys a
+bigger server, find out which resource is actually the bottleneck and which processes cause
+it — then make the batch work yield to the users without stopping it.
+(sudo password: letslinux)
+"""
+concept = """
+Load average counts tasks that are running, waiting for a CPU, or waiting in uninterruptible
+sleep (state D, usually disk I/O) — averaged over 1, 5 and 15 minutes. Compare it with the
+number of CPUs (nproc): a load of 2 on 2 CPUs can mean "both CPUs busy" or "one busy, one
+task stuck on the disk". Find out which: vmstat 1 (r = runnable, b = blocked on I/O; us/sy =
+CPU work, wa = waiting for I/O), mpstat -P ALL (per CPU: a single-threaded program can
+saturate only one), iostat -x (per disk: %util, await), pidstat -d or sudo iotop -o (who does
+the I/O). Rising 1-minute versus 15-minute values mean the pressure is recent. Batch work can
+yield: renice +19 lowers CPU priority, ionice -c3 (idle) lets it use the disk only when nobody
+else does. (sysstat provides iostat, mpstat, pidstat.)
+"""
+objectives = ["Interpret load averages relative to CPUs", "Separate CPU work from I/O wait", "Find the processes behind each", "Lower the priority of batch work"]
+
+[environment]
+profile = "ubuntu"
+packages = ["sysstat", "iotop"]
+
+[[environment.setup]]
+action = "process"
+comm = "xz"
+argv = ["xz", "-9", "-T1", "/srv/reports/archive-2025.tar"]
+user = "learner"
+state = "R"
+cpu = 99.0
+sys_share = 0.02
+rss_kb = 690000
+age_minutes = 16
+cpu_time = 950
+
+[[environment.setup]]
+action = "process"
+comm = "rsync"
+argv = ["rsync", "-a", "/srv/reports/", "/mnt/backup/reports/"]
+user = "root"
+state = "D"
+cpu = 6.0
+sys_share = 0.6
+io_read_kbs = 175000
+io_write_kbs = 170000
+age_minutes = 14
+
+[[task]]
+id = "cpus"
+title = "Load relative to what?"
+kind = "guided"
+instructions = "Find out how many CPUs this machine has, and look at the load averages."
+skills = { "o.load-average" = 1.0 }
+question = { prompt = "How many CPUs?", type = "number", accept = [2] }
+hints = ["nproc, or lscpu.", "uptime shows the load averages.", "2"]
+explanation = "A load around 2 on 2 CPUs is not alarming by itself — what it consists of matters. 1-minute > 15-minute: it started recently."
+
+[[task]]
+id = "split"
+title = "CPU or disk?"
+kind = "troubleshooting"
+instructions = "Watch a few samples of vmstat (or mpstat -P ALL)."
+skills = { "o.cpu-analysis" = 1.0, "o.load-average" = 0.5 }
+question = { prompt = "What does the load consist of?", type = "choice", choices = ["Both CPUs are fully busy computing", "One CPU computes at 100% (us) while one task is blocked on disk I/O (b, wa)", "Memory is exhausted and the system swaps"], answer = 1 }
+hints = ["vmstat 1 5: look at r, b, us and wa.", "mpstat -P ALL 1 1 shows one CPU near 100% user and one mostly idle or waiting.", "(b) — r ≈ 1, b ≈ 1, us ≈ 50 (one of two CPUs), wa high; si/so are 0."]
+explanation = "One single-threaded program saturates one CPU; a second task is stuck in D state waiting for the disk. Neither more CPUs nor more memory would help the second problem."
+
+[[task]]
+id = "who"
+title = "Who is busy?"
+kind = "troubleshooting"
+instructions = "Find the program behind each part."
+skills = { "o.io-analysis" = 1.0, "o.cpu-analysis" = 0.5 }
+question = { prompt = "Which program keeps the disk busy?", type = "exact", accept = ["rsync"] }
+hints = ["CPU: top or pidstat 1 1. Disk: pidstat -d 1 1, or sudo iotop -b -o -n 1.", "iostat -x 1 2 shows the disk near 100 %util.", "rsync — reading and writing ~170 MB/s each; xz is the CPU user."]
+explanation = "xz (-T1: one thread) uses one CPU fully; rsync saturates the disk, so everything else that touches the disk waits."
+
+[[task]]
+id = "yield"
+title = "Let the users go first"
+kind = "independent"
+instructions = "Without stopping either job: give xz the lowest CPU priority and put rsync in the idle I/O class."
+skills = { "o.cpu-analysis" = 1.0, "o.io-analysis" = 1.0, "g.nice-priority" = 0.5 }
+checks = [
+    { type = "process_running", comm = "xz", min_nice = 19 },
+    { type = "process_running", comm = "rsync" },
+    { type = "command_result", user = "root", command = "ionice -p $(pgrep -x rsync)", stdout_equals = "idle\n" },
+]
+hints = ["renice changes CPU priority (+19 is the lowest); ionice -c3 is the idle I/O class.", "pgrep -x xz and pgrep -x rsync give the PIDs. rsync belongs to root: you need sudo.", "renice -n 19 -p $(pgrep -x xz); sudo ionice -c3 -p $(pgrep -x rsync)"]
+explanation = "Both jobs continue, but interactive work now wins every contest for CPU and disk. (In the simulation the priorities are recorded; their scheduling effect is not modelled.)"
+
+[[task]]
+id = "meaning"
+title = "Reading load"
+kind = "explanation"
+instructions = "Summarise."
+skills = { "o.load-average" = 1.0 }
+question = { prompt = "On a 2-CPU server the load is 6.0 while top shows the CPUs 95 % idle. Most likely?", type = "choice", choices = ["A measurement error", "Many tasks are blocked in uninterruptible I/O (state D) — for example a hung NFS server or a saturated disk", "The CPUs are too slow"], answer = 1 }
+hints = ["What else besides running tasks does the load count?", "D-state tasks count, even though they use no CPU.", "(b)"]
+explanation = "Linux's load includes uninterruptible sleep; always check the D column (ps, vmstat b, top) before blaming CPUs."
+
+[debrief]
+summary = """
+uptime (load vs nproc) → vmstat 1 (r/b, us/sy/wa) → mpstat -P ALL (per CPU) → iostat -x
+(%util, await) → pidstat -u/-d, iotop (who) → renice / ionice, or reschedule the batch work.
+"""
+alternatives = ["xz -T0 would use both CPUs — faster, but even more contention", "systemd-run --scope -p CPUWeight=10 -p IOWeight=10 COMMAND starts batch work with low cgroup weights", "Schedule backups at night (timers)"]
+pitfalls = ["Equating load with CPU usage.", "Adding CPUs to fix an I/O bottleneck.", "Killing the backup instead of deprioritising it."]
+next = "Next: where did the memory go?"
+
+[[solution]]
+name = "vmstat, pidstat, renice, ionice"
+steps = [
+    "nproc",
+    "uptime",
+    ":answer 2",
+    "vmstat 1 5",
+    ":answer b",
+    "pidstat -d 1 1",
+    ":answer rsync",
+    "renice -n 19 -p $(pgrep -x xz)",
+    { input = ["letslinux"] },
+    "sudo ionice -c3 -p $(pgrep -x rsync)",
+    ":answer b",
+]
+
+[[solution]]
+name = "mpstat, iotop and top"
+steps = [
+    "lscpu | grep '^CPU(s)'",
+    ":answer 2",
+    "mpstat -P ALL 1 2",
+    ":answer One CPU computes at 100% (us) while one task is blocked on disk I/O (b, wa)",
+    { input = ["letslinux"] },
+    "sudo iotop -b -o -n 1",
+    ":answer rsync",
+    "sudo renice 19 $(pgrep -x xz)",
+    "sudo ionice -c idle -p $(pgrep -x rsync)",
+    ":answer b",
+]
+
+[[counterexample]]
+name = "kill the backup"
+steps = [
+    ":answer 2",
+    ":answer b",
+    ":answer rsync",
+    "renice -n 19 -p $(pgrep -x xz)",
+    { input = ["letslinux"] },
+    "sudo pkill -x rsync",
+    ":answer b",
+]

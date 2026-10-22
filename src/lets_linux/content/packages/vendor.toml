@@ -1,0 +1,61 @@
+# Package catalogue: software from third-party archives (see distributions/archives.py).
+# A package with repo = "NAME" is only available after its archive has been added as a
+# trusted apt source and apt update has fetched it.
+
+schema = 1
+
+[[package]]
+name = "acme-agent"
+summary = "Acme monitoring agent"
+section = "admin"
+repo = "acme"
+families = ["debian"]
+versions = { debian = "2.4.1-1", ubuntu = "2.4.1-1" }
+bin = ["acme-agent"]
+services = ["acme-agent.service"]
+
+[[package.file]]
+path = "/usr/lib/systemd/system/acme-agent.service"
+content = """[Unit]
+Description=Acme monitoring agent
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/acme-agent --listen 0.0.0.0:9310
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[package.file]]
+path = "/etc/acme/agent.yaml"
+conffile = true
+content = """# Acme agent settings
+listen: 0.0.0.0:9310
+report_interval: 60s
+"""
+
+# An in-house service delivered as a package (no archive: missions install it directly).
+# Its cache grows without bound — a memory leak, for the cgroup lessons.
+[[package]]
+name = "imgcache"
+summary = "Example Corp image thumbnail cache"
+section = "web"
+versions = { debian = "1.8.2-1", ubuntu = "1.8.2-1", fedora = "1.8.2-1", arch = "1.8.2-1", generic = "1.8.2" }
+bin = ["imgcache"]
+services = ["imgcache.service"]
+
+[[package.file]]
+path = "/usr/lib/systemd/system/imgcache.service"
+content = """[Unit]
+Description=Image thumbnail cache
+After=network-online.target
+
+[Service]
+User=nobody
+ExecStart=/usr/bin/imgcache --listen 0.0.0.0:8095
+
+[Install]
+WantedBy=multi-user.target
+"""

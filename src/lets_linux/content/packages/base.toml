@@ -1,0 +1,554 @@
+# Package catalogue: core system packages.
+#
+# Each package lists the programs it installs. `bin` entries go to /usr/bin,
+# `sbin` entries to /usr/sbin. An entry "name=impl" installs program `name`
+# backed by implementation `impl`. Every implementation must exist in the
+# command registry (enforced by tests): no placeholder programs.
+#
+# `names` maps distribution families to native package names; `versions`
+# gives per-family versions. Files are installed with the given content.
+
+schema = 1
+
+[[package]]
+name = "bash"
+summary = "GNU Bourne Again SHell (Let's Linux simulated subset)"
+section = "shells"
+essential = true
+versions = { debian = "5.2.15-2+b7", ubuntu = "5.2.21-2ubuntu4", fedora = "5.2.32-1.fc41", arch = "5.2.037-1", generic = "5.2.37" }
+bin = ["bash=sh"]
+depends = ["base-files"]
+
+[[package]]
+name = "dash"
+summary = "POSIX-compliant shell (sh)"
+section = "shells"
+essential = true
+families = ["debian"]
+versions = { debian = "0.5.12-2", ubuntu = "0.5.12-6ubuntu5" }
+bin = ["dash=sh", "sh=sh"]
+
+[[package]]
+name = "base-files"
+summary = "Debian base system miscellaneous files"
+section = "admin"
+essential = true
+names = { fedora = "filesystem", arch = "filesystem" }
+versions = { debian = "12.4+deb12u7", ubuntu = "13ubuntu10", fedora = "3.18-23.fc41", arch = "2024.11.21-1", generic = "1.0" }
+
+[[package]]
+name = "coreutils"
+summary = "GNU core utilities"
+section = "utils"
+essential = true
+versions = { debian = "9.1-1", ubuntu = "9.4-3ubuntu6", fedora = "9.5-6.fc41", arch = "9.5-2", generic = "9.5" }
+bin = [
+    "cat", "ls", "cp", "mv", "rm", "unlink", "mkdir", "rmdir", "touch", "ln", "chmod", "chown", "chgrp", "install",
+    "stat", "echo", "printf", "pwd=pwd_external", "true", "false", "test", "[", "whoami", "id",
+    "groups", "uname", "date", "sleep", "env", "printenv", "basename", "dirname", "realpath",
+    "readlink", "seq", "expr", "head", "tail", "wc", "sort", "uniq", "cut", "paste", "tr", "tee",
+    "nl", "tac", "fold", "comm", "md5sum", "sha1sum", "sha256sum", "sha512sum", "base64", "od",
+    "du", "df", "mktemp", "truncate", "yes", "nproc", "arch", "logname", "tty", "nice", "sync", "dd",
+    "who", "users", "/usr/sbin/chroot=chroot", "nohup", "timeout",
+]
+
+[[package]]
+name = "util-linux"
+summary = "miscellaneous system utilities"
+section = "utils"
+essential = true
+versions = { debian = "2.38.1-5+deb12u3", ubuntu = "2.39.3-9ubuntu6", fedora = "2.40.2-4.fc41", arch = "2.40.2-1", generic = "2.40" }
+bin = ["more", "dmesg", "logger", "renice", "lsblk", "findmnt", "fallocate", "last", "lastb", "ionice", "lscpu", "setsid", "flock",
+       "unshare", "nsenter", "lsns"]
+sbin = ["blkid", "mkfs", "mkswap", "swapon", "swapoff", "fsck"]
+# Debian and Ubuntu ship logger and renice in bsdutils
+only = { logger = ["fedora", "arch"], renice = ["fedora", "arch"] }
+
+[[package]]
+name = "bsdutils"
+summary = "basic utilities from 4.4BSD-Lite (logger, renice)"
+section = "utils"
+essential = true
+families = ["debian", "generic"]
+versions = { debian = "1:2.38.1-5+deb12u3", ubuntu = "1:2.39.3-9ubuntu6", generic = "2.40" }
+bin = ["logger", "renice"]
+
+
+[[package]]
+name = "bsdextrautils"
+summary = "extra utilities from 4.4BSD-Lite (column, rev)"
+section = "utils"
+names = { fedora = "util-linux-core", arch = "util-linux-tools" }
+versions = { debian = "2.38.1-5+deb12u3", ubuntu = "2.39.3-9ubuntu6", fedora = "2.40.2-4.fc41", arch = "2.40.2-1", generic = "2.40" }
+bin = ["column", "rev"]
+
+[[package]]
+name = "grep"
+summary = "GNU grep, egrep and fgrep"
+section = "utils"
+essential = true
+versions = { debian = "3.8-5", ubuntu = "3.11-4build1", fedora = "3.11-9.fc41", arch = "3.11-1", generic = "3.11" }
+bin = ["grep", "egrep", "fgrep"]
+
+[[package]]
+name = "sed"
+summary = "GNU stream editor for filtering/transforming text"
+section = "utils"
+essential = true
+versions = { debian = "4.9-1", ubuntu = "4.9-2build1", fedora = "4.9-3.fc41", arch = "4.9-3", generic = "4.9" }
+bin = ["sed"]
+
+[[package]]
+name = "gawk"
+summary = "GNU awk, a pattern scanning and processing language"
+section = "interpreters"
+names = { debian = "mawk" }
+versions = { debian = "1.3.4.20200120-3.1", ubuntu = "1.3.4.20240123-1build1", fedora = "5.3.0-4.fc41", arch = "5.3.1-1", generic = "5.3.1" }
+bin = ["awk"]
+
+[[package]]
+name = "findutils"
+summary = "utilities for finding files--find, xargs"
+section = "utils"
+essential = true
+versions = { debian = "4.9.0-4", ubuntu = "4.9.0-5build1", fedora = "4.10.0-4.fc41", arch = "4.10.0-1", generic = "4.10.0" }
+bin = ["find", "xargs"]
+
+[[package]]
+name = "diffutils"
+summary = "File comparison utilities"
+section = "utils"
+essential = true
+versions = { debian = "1:3.8-4", ubuntu = "1:3.10-1build1", fedora = "3.10-8.fc41", arch = "3.10-1", generic = "3.10" }
+bin = ["diff", "cmp"]
+
+[[package]]
+name = "file"
+summary = "Recognize the type of data in a file using \"magic\" numbers"
+section = "utils"
+versions = { debian = "1:5.44-3", ubuntu = "1:5.45-3build1", fedora = "5.45-7.fc41", arch = "5.46-1", generic = "5.46" }
+bin = ["file"]
+
+[[package]]
+name = "less"
+summary = "pager program similar to more"
+section = "text"
+versions = { debian = "590-2.1~deb12u2", ubuntu = "590-2ubuntu2.1", fedora = "668-1.fc41", arch = "1:668-1", generic = "668" }
+bin = ["less"]
+
+[[package]]
+name = "binutils"
+summary = "GNU assembler, linker and binary utilities"
+section = "devel"
+versions = { debian = "2.40-2", ubuntu = "2.42-4ubuntu2", fedora = "2.43.1-2.fc41", arch = "2.43+r4-1", generic = "2.43" }
+bin = ["strings", "readelf", "objdump", "nm", "strip"]
+
+[[package]]
+name = "hostname"
+summary = "utility to set/show the host name or domain name"
+section = "admin"
+versions = { debian = "3.23+nmu1", ubuntu = "3.23+nmu2ubuntu2", fedora = "3.23-13.fc41", arch = "3.23-4", generic = "3.23" }
+names = { arch = "inetutils" }
+bin = ["hostname"]
+
+[[package]]
+name = "debianutils"
+summary = "Miscellaneous utilities specific to Debian (which, run-parts)"
+section = "utils"
+names = { fedora = "which", arch = "which" }
+versions = { debian = "5.7-0.5~deb12u1", ubuntu = "5.17build1", fedora = "2.21-42.fc41", arch = "2.21-6", generic = "5.17" }
+bin = ["which", "run-parts"]
+# Fedora's and Arch's "which" package has no run-parts (cronie ships it there)
+only = { run-parts = ["debian", "generic"] }
+
+[[package]]
+name = "ncurses-bin"
+summary = "terminal-related programs (clear, tput)"
+section = "utils"
+names = { fedora = "ncurses", arch = "ncurses" }
+versions = { debian = "6.4-4", ubuntu = "6.4+20240113-1ubuntu2", fedora = "6.5-2.20240629.fc41", arch = "6.5-3", generic = "6.5" }
+bin = ["clear"]
+
+[[package]]
+name = "procps"
+summary = "/proc file system utilities (ps, kill, pgrep, pkill)"
+section = "admin"
+names = { fedora = "procps-ng", arch = "procps-ng" }
+versions = { debian = "2:4.0.2-3", ubuntu = "2:4.0.4-4ubuntu3", fedora = "4.0.4-4.fc41", arch = "4.0.4-3", generic = "4.0.4" }
+bin = ["ps", "kill", "pgrep", "pkill", "free", "uptime", "top", "pidof", "w", "vmstat"]
+sbin = ["sysctl"]
+# Debian and Ubuntu ship pidof in sysvinit-utils
+only = { pidof = ["fedora", "arch"] }
+
+[[package.file]]
+path = "/etc/sysctl.d"
+kind = "dir"
+mode = "755"
+
+[[package.file]]
+path = "/etc/sysctl.conf"
+content = """#
+# /etc/sysctl.conf - Configuration file for setting system variables
+# See /etc/sysctl.d/ for additional system variables.
+# See sysctl.conf (5) for information.
+#
+
+# Uncomment the next line to enable packet forwarding for IPv4
+#net.ipv4.ip_forward=1
+"""
+
+[[package.file]]
+path = "/etc/sysctl.d/README.sysctl"
+content = """Kernel system variables configuration files
+
+Files found in this directory will be processed by systemd-sysctl(8) at boot,
+in lexical order. Lines are "variable = value", for example
+
+    vm.swappiness = 10
+
+The changes take effect at the next boot; to apply them now, run
+"sysctl --system" (or write the value to /proc/sys).
+"""
+
+[[package]]
+name = "psmisc"
+summary = "utilities that use the proc file system (killall, fuser)"
+section = "admin"
+versions = { debian = "23.6-1", ubuntu = "23.7-1build1", fedora = "23.6-8.fc41", arch = "23.7-1", generic = "23.7" }
+bin = ["killall", "fuser"]
+
+[[package]]
+name = "sudo"
+summary = "Provide limited super user privileges to specific users"
+section = "admin"
+versions = { debian = "1.9.13p3-1+deb12u1", ubuntu = "1.9.15p5-3ubuntu5", fedora = "1.9.15-5.p5.fc41", arch = "1.9.16-1", generic = "1.9.16" }
+bin = ["sudo"]
+# security update available in the repositories
+updates = { debian = "1.9.13p3-1+deb12u2", ubuntu = "1.9.15p5-3ubuntu5.24.04.1", fedora = "1.9.15-6.p5.fc41", arch = "1.9.16.p2-1", generic = "1.9.16p2" }
+sbin = ["visudo"]
+setuid = ["sudo"]
+
+[[package]]
+name = "passwd"
+summary = "change and administer password and group data"
+section = "admin"
+names = { fedora = "shadow-utils", arch = "shadow" }
+versions = { debian = "1:4.13+dfsg1-1+b1", ubuntu = "1:4.13+dfsg1-4ubuntu3", fedora = "4.15.1-12.fc41", arch = "4.16.0-1", generic = "4.16" }
+bin = ["passwd", "chage", "gpasswd"]
+sbin = ["useradd", "usermod", "userdel", "groupadd", "groupdel", "groupmod", "chpasswd"]
+setuid = ["passwd", "gpasswd", "chage"]
+
+[[package]]
+name = "adduser"
+summary = "add and remove users and groups (Debian front-end)"
+section = "admin"
+families = ["debian"]
+versions = { debian = "3.134", ubuntu = "3.137ubuntu1" }
+sbin = ["adduser"]
+
+[[package]]
+name = "login"
+summary = "system login tools (su)"
+section = "admin"
+names = { fedora = "util-linux", arch = "util-linux" }
+versions = { debian = "1:4.13+dfsg1-1+b1", ubuntu = "1:4.13+dfsg1-4ubuntu3", fedora = "2.40.2-4.fc41", arch = "2.40.2-1", generic = "4.16" }
+bin = ["su", "lastlog"]
+setuid = ["su"]
+# Fedora and Arch replaced lastlog with lastlog2
+only = { lastlog = ["debian"] }
+
+[[package]]
+name = "libc6"
+summary = "GNU C Library: Shared libraries"
+section = "libs"
+essential = true
+names = { fedora = "glibc", arch = "glibc" }
+versions = { debian = "2.36-9+deb12u9", ubuntu = "2.39-0ubuntu8.3", fedora = "2.40-9.fc41", arch = "2.40+r16-1", generic = "2.40" }
+# on Arch, glibc also carries the tools Debian puts in libc-bin
+bin = ["getent", "ldd"]
+sbin = ["ldconfig"]
+only = { getent = ["arch"], ldd = ["arch"], ldconfig = ["arch"] }
+
+[[package.library]]
+soname = "libc.so.6"
+glibc = true
+loader = true
+builtin = "libc"
+symbols = ["printf", "fprintf", "puts", "putchar", "malloc", "free", "strlen", "strcmp", "strcpy", "getenv", "exit", "atoi", "abort", "fopen", "fclose", "fgets", "perror", "sleep", "time", "rand", "srand", "memset", "sprintf", "snprintf", "__libc_start_main"]
+
+[[package.library]]
+soname = "libm.so.6"
+glibc = true
+builtin = "libm"
+symbols = ["sqrt", "pow", "floor", "ceil", "sin", "cos"]
+
+[[package.file]]
+path = "/etc/ld.so.conf"
+content = """include /etc/ld.so.conf.d/*.conf
+"""
+families = ["debian", "generic"]
+
+[[package.file]]
+path = "/etc/ld.so.conf"
+content = """include ld.so.conf.d/*.conf
+"""
+families = ["fedora"]
+
+[[package.file]]
+path = "/etc/ld.so.conf"
+content = """# See ld.so(8) for more information.
+include /etc/ld.so.conf.d/*.conf
+"""
+families = ["arch"]
+
+[[package.file]]
+path = "/etc/ld.so.conf.d/libc.conf"
+content = """# libc default configuration
+/usr/local/lib
+"""
+families = ["debian", "generic"]
+
+[[package.file]]
+path = "/etc/ld.so.conf.d/x86_64-linux-gnu.conf"
+content = """# Multiarch support
+/usr/local/lib/x86_64-linux-gnu
+/lib/x86_64-linux-gnu
+/usr/lib/x86_64-linux-gnu
+"""
+families = ["debian"]
+
+[[package]]
+name = "libc-bin"
+summary = "GNU C Library: Binaries (getent, ldconfig, ldd)"
+section = "libs"
+families = ["debian", "fedora", "generic"]
+names = { fedora = "glibc-common" }
+versions = { debian = "2.36-9+deb12u9", ubuntu = "2.39-0ubuntu8.3", fedora = "2.40-9.fc41", generic = "2.40" }
+depends = ["libc6"]
+bin = ["getent", "ldd"]
+sbin = ["ldconfig"]
+
+[[package]]
+name = "man-db"
+summary = "tools for reading manual pages"
+section = "doc"
+versions = { debian = "2.11.2-2", ubuntu = "2.12.0-4build2", fedora = "2.12.1-2.fc41", arch = "2.13.0-1", generic = "2.13" }
+bin = ["man", "whatis", "apropos"]
+
+[[package]]
+name = "nano"
+summary = "small, friendly text editor inspired by Pico"
+section = "editors"
+versions = { debian = "7.2-1+deb12u1", ubuntu = "7.2-2ubuntu0.1", fedora = "8.1-1.fc41", arch = "8.2-1", generic = "8.2" }
+bin = ["nano=editor"]
+
+[[package]]
+name = "vim"
+summary = "Vi IMproved - enhanced vi editor (opens the simulator's simple editor)"
+section = "editors"
+names = { debian = "vim-tiny", fedora = "vim-minimal", arch = "vi" }
+versions = { debian = "2:9.0.1378-2", ubuntu = "2:9.1.0016-1ubuntu7", fedora = "2:9.1.785-1.fc41", arch = "1:070224-6", generic = "9.1" }
+bin = ["vi=editor", "vim=editor"]
+
+[[package]]
+name = "tar"
+summary = "GNU version of the tar archiving utility"
+section = "utils"
+versions = { debian = "1.34+dfsg-1.2+deb12u1", ubuntu = "1.35+dfsg-3build1", fedora = "2:1.35-4.fc41", arch = "1.35-2", generic = "1.35" }
+bin = ["tar"]
+updates = { debian = "1.34+dfsg-1.2+deb12u2", ubuntu = "1.35+dfsg-3build1", fedora = "2:1.35-5.fc41", arch = "1.35-3", generic = "1.35.1" }
+
+[[package]]
+name = "gzip"
+summary = "GNU compression utilities"
+section = "utils"
+versions = { debian = "1.12-1", ubuntu = "1.12-1ubuntu3", fedora = "1.13-2.fc41", arch = "1.13-4", generic = "1.13" }
+bin = ["gzip", "gunzip=gzip", "zcat=gzip"]
+
+[[package]]
+name = "bzip2"
+summary = "high-quality block-sorting file compressor"
+section = "utils"
+versions = { debian = "1.0.8-5+b1", ubuntu = "1.0.8-5.1", fedora = "1.0.8-19.fc41", arch = "1.0.8-6", generic = "1.0.8" }
+bin = ["bzip2", "bunzip2=bzip2", "bzcat=bzip2"]
+
+[[package]]
+name = "xz-utils"
+summary = "XZ-format compression utilities"
+section = "utils"
+names = { fedora = "xz", arch = "xz" }
+versions = { debian = "5.4.1-1", ubuntu = "5.6.1+really5.4.5-1build0.1", fedora = "1:5.6.2-2.fc41", arch = "5.6.3-1", generic = "5.6" }
+bin = ["xz", "unxz=xz", "xzcat=xz"]
+
+# ---------------------------------------------------------------- not installed by default
+
+[[package]]
+name = "tree"
+summary = "displays an indented directory tree, in color"
+section = "utils"
+size_kb = 116
+versions = { debian = "2.1.0-1", ubuntu = "2.1.1-2ubuntu3", fedora = "2.1.1-5.fc41", arch = "2.1.3-1", generic = "2.1.3" }
+bin = ["tree"]
+
+[[package]]
+name = "iproute2"
+summary = "networking and traffic control tools"
+section = "net"
+names = { fedora = "iproute" }
+versions = { debian = "6.1.0-3", ubuntu = "6.1.0-1ubuntu6", fedora = "6.10.0-2.fc41", arch = "6.11.0-1", generic = "6.11.0" }
+bin = ["ss", "ip"]
+
+[[package.file]]
+path = "/etc/iproute2/rt_tables"
+conffile = true
+content = """#
+# reserved values
+#
+255	local
+254	main
+253	default
+0	unspec
+#
+# local
+#
+#1	inr.ruhep
+"""
+
+[[package]]
+name = "iputils-ping"
+summary = "Tools to test the reachability of network hosts"
+section = "net"
+names = { fedora = "iputils", arch = "iputils" }
+versions = { debian = "3:20221126-1+deb12u1", ubuntu = "3:20240117-1build1", fedora = "20240905-1.fc41", arch = "20240905-1", generic = "20240905" }
+bin = ["ping"]
+sbin = ["arping"]
+only = { arping = ["fedora", "arch"] }
+
+[[package]]
+name = "ca-certificates"
+summary = "Common CA certificates"
+section = "misc"
+size_kb = 400
+versions = { debian = "20230311", ubuntu = "20240203", fedora = "2024.2.69_v8.0.401-1.0.fc41", arch = "20240618-1", generic = "20240203" }
+sbin = ["update-ca-certificates"]
+bin = ["update-ca-trust"]
+only = { update-ca-certificates = ["debian", "generic"], update-ca-trust = ["fedora", "arch"] }
+
+[[package]]
+name = "openssl"
+summary = "Secure Sockets Layer toolkit - cryptographic utility"
+section = "utils"
+size_kb = 2300
+versions = { debian = "3.0.15-1~deb12u1", ubuntu = "3.0.13-0ubuntu3.4", fedora = "1:3.2.2-9.fc41", arch = "3.4.0-1", generic = "3.0.15" }
+bin = ["openssl"]
+
+[[package]]
+name = "iputils-arping"
+summary = "Tool to send ICMP echo requests to an ARP address"
+section = "net"
+families = ["debian", "generic"]
+versions = { debian = "3:20221126-1+deb12u1", ubuntu = "3:20240117-1build1", generic = "20240905" }
+sbin = ["arping"]
+
+[[package]]
+name = "libcap2-bin"
+summary = "POSIX 1003.1e capabilities (utilities)"
+section = "utils"
+size_kb = 120
+names = { fedora = "libcap", arch = "libcap" }
+versions = { debian = "1:2.66-4", ubuntu = "1:2.66-5ubuntu2", fedora = "2.70-4.fc41", arch = "2.71-1", generic = "2.66" }
+bin = ["capsh"]
+sbin = ["setcap", "getcap"]
+
+[[package]]
+name = "python3"
+summary = "interactive high-level object-oriented language (simulated: only -m http.server)"
+section = "python"
+size_kb = 500
+names = { arch = "python" }
+versions = { debian = "3.11.2-1+b1", ubuntu = "3.12.3-0ubuntu2", fedora = "3.13.0-1.fc41", arch = "3.12.7-1", generic = "3.11.2" }
+bin = ["python3"]
+
+[[package]]
+name = "tcpdump"
+summary = "command-line network traffic analyzer"
+section = "net"
+size_kb = 1200
+versions = { debian = "4.99.3-1", ubuntu = "4.99.4-3ubuntu4", fedora = "14:4.99.5-1.fc41", arch = "4.99.5-1", generic = "4.99.5" }
+sbin = ["tcpdump"]
+
+[[package]]
+name = "net-tools"
+summary = "NET-3 networking toolkit (arp, ifconfig, netstat, route)"
+section = "net"
+size_kb = 1000
+versions = { debian = "2.10-0.1", ubuntu = "2.10-0.1ubuntu4", fedora = "2.0-0.70.20160912git.fc41", arch = "2.10-2", generic = "2.10" }
+sbin = ["arp", "ifconfig", "route"]
+bin = ["netstat"]
+
+[[package]]
+name = "dnsutils"
+summary = "Clients provided with BIND 9 (dig, host, nslookup)"
+section = "net"
+size_kb = 820
+names = { debian = "bind9-dnsutils", fedora = "bind-utils", arch = "bind" }
+# Debian and Ubuntu keep "dnsutils" as a transitional package name
+aliases = { debian = ["dnsutils"] }
+versions = { debian = "1:9.18.28-1~deb12u2", ubuntu = "1:9.18.28-0ubuntu0.24.04.1", fedora = "32:9.18.30-1.fc41", arch = "9.20.3-1", generic = "9.20.3" }
+bin = ["dig", "host", "nslookup"]
+
+[[package]]
+name = "curl"
+summary = "command line tool for transferring data with URL syntax"
+section = "web"
+size_kb = 500
+versions = { debian = "7.88.1-10+deb12u8", ubuntu = "8.5.0-2ubuntu10.5", fedora = "8.9.1-2.fc41", arch = "8.11.0-1", generic = "8.11.0" }
+bin = ["curl"]
+
+[[package]]
+name = "wget"
+summary = "retrieves files from the web"
+section = "web"
+size_kb = 3600
+versions = { debian = "1.21.3-1+b2", ubuntu = "1.21.4-1ubuntu4.1", fedora = "1.24.5-2.fc41", arch = "1.24.5-3", generic = "1.24.5" }
+bin = ["wget"]
+
+[[package]]
+name = "netcat"
+summary = "TCP/IP swiss army knife (OpenBSD variant)"
+section = "net"
+names = { debian = "netcat-openbsd", fedora = "nmap-ncat", arch = "openbsd-netcat" }
+versions = { debian = "1.219-1", ubuntu = "1.226-1ubuntu2", fedora = "3:7.92-3.fc41", arch = "1.226_1-1", generic = "1.226" }
+bin = ["nc"]
+
+[[package]]
+name = "mount"
+summary = "tools for mounting and manipulating filesystems"
+section = "admin"
+essential = true
+names = { fedora = "util-linux", arch = "util-linux" }
+versions = { debian = "2.38.1-5+deb12u3", ubuntu = "2.39.3-9ubuntu6", fedora = "2.40.2-4.fc41", arch = "2.40.2-1", generic = "2.40" }
+bin = ["mount", "umount"]
+
+[[package]]
+name = "lsof"
+summary = "utility to list open files"
+section = "utils"
+versions = { debian = "4.95.0-1", ubuntu = "4.95.0-1build3", fedora = "4.98.0-6.fc41", arch = "4.99.4-1", generic = "4.99.4" }
+bin = ["lsof"]
+
+[[package]]
+name = "sysvinit-utils"
+summary = "System-V-like utilities (pidof)"
+section = "admin"
+essential = true
+families = ["debian", "generic"]
+versions = { debian = "3.06-4", ubuntu = "3.08-6ubuntu3", generic = "3.08" }
+bin = ["pidof"]
+
+[[package]]
+name = "acl"
+summary = "access control list - utilities"
+section = "utils"
+versions = { debian = "2.3.1-3", ubuntu = "2.3.2-1build1", fedora = "2.3.2-2.fc41", arch = "2.3.2-1", generic = "2.3.1" }
+bin = ["getfacl", "setfacl"]

@@ -1,0 +1,150 @@
+schema = 1
+
+[mission]
+id = "j08-emergency-mode"
+title = "It Did Not Come Back"
+chapter = "J"
+kind = "troubleshooting"
+order = 10
+difficulty = 6
+requires = ["j07-fstab-rescue", "h05b-boot-and-order"]
+skills = ["j.fstab-persistence", "j.fs-integrity", "h.boot-process", "m.hypothesis-method"]
+review_for = ["h.journalctl", "j.mount-options"]
+xp = 200
+estimated_minutes = 25
+
+[briefing]
+context = """
+After last night's maintenance reboot the file server did not come back: the hosting
+provider's console shows "You are in emergency mode". Over the weekend the provider also
+detached the USB backup disk, which is only plugged in for the monthly backup. You are on the
+console as root. Get the server booting normally again — the archive must be available, and
+the backup disk must be mounted automatically whenever it is attached, without ever blocking
+a boot again.
+"""
+concept = """
+systemd mounts every /etc/fstab entry at boot. If an entry without the nofail option cannot
+be mounted — the device does not appear within 90 seconds, a mount option is wrong, or fsck
+finds problems it may not repair on its own — local-fs.target fails and the boot stops in
+emergency mode: a root shell with the root filesystem and almost nothing else. journalctl -xb
+(this boot) and systemctl --failed show why. Fix the cause, then systemctl default (or exit)
+continues the boot. nofail makes an entry optional; x-systemd.device-timeout=10s shortens the
+wait for a device that may be absent.
+"""
+objectives = ["Read why the boot failed", "Repair a filesystem fsck refused to fix", "Make an optional disk optional", "Continue the boot and verify it"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "4G"
+partitions = [{ size = "rest", fs = "ext4", label = "archive", mount = "/srv/archive", fstab = true, errors = true }]
+
+[[environment.setup]]
+action = "file"
+path = "/srv/archive/2025/annual-report.pdf"
+content = "%PDF-1.7 (annual report)\n"
+
+[[environment.setup]]
+action = "append"
+path = "/etc/fstab"
+content = "# USB backup disk (attached for the monthly backup)\nUUID=5d6c9e2a-3b1f-4c8e-9a70-2e4f81b7c3d4 /mnt/backup ext4 defaults 0 2\n"
+
+[[environment.setup]]
+action = "reboot"
+
+[[task]]
+id = "why"
+title = "Why emergency mode?"
+kind = "troubleshooting"
+instructions = "Find out which fstab entries stopped the boot. Start with the error messages of this boot."
+skills = { "h.boot-process" = 1.0, "h.journalctl" = 0.5 }
+question = { prompt = "Which mount point is waiting for a device that is not there?", type = "exact", accept = ["/mnt/backup", "/mnt/backup/", "mnt-backup.mount"] }
+hints = ["journalctl -xb -p err shows the errors of this boot; systemctl --failed lists failed units.", "Look for 'Timed out waiting for device' and 'Dependency failed for ...mount'.", "/mnt/backup: the USB disk with that UUID is not attached."]
+explanation = "The backup disk is missing — and it is not the only problem: the archive's filesystem check failed too."
+
+[[task]]
+id = "fsck"
+title = "Repair the archive"
+kind = "troubleshooting"
+instructions = "systemd-fsck refused to repair the archive filesystem automatically. Check and repair it by hand."
+skills = { "j.fs-integrity" = 1.0 }
+checks = [{ type = "filesystem_on", device = "/dev/sdb1", label = "archive", clean = true }]
+persistent = true
+hints = ["journalctl -b -t systemd-fsck shows: UNEXPECTED INCONSISTENCY; RUN fsck MANUALLY.", "The archive is not mounted (that failed), so it can be checked now: e2fsck -f /dev/sdb1 (or fsck LABEL=archive).", "e2fsck -f -y /dev/sdb1"]
+explanation = "At boot fsck runs in 'preen' mode (-p): it only fixes harmless problems on its own and asks a human for the rest — that is why the boot stopped."
+
+[[task]]
+id = "optional"
+title = "An optional disk"
+kind = "troubleshooting"
+instructions = "Keep the /mnt/backup entry — the disk should be mounted whenever it is attached — but make sure its absence can never stop a boot again."
+skills = { "j.fstab-persistence" = 1.0, "j.mount-options" = 0.5 }
+checks = [
+    { type = "fstab_entry", target = "/mnt/backup", options = ["nofail"], resolves = false },
+    { type = "file_contains", path = "/etc/fstab", regex = "(?m)^UUID=5d6c9e2a-3b1f-4c8e-9a70-2e4f81b7c3d4\\s" },
+]
+persistent = true
+hints = ["One mount option makes an fstab entry optional for the boot.", "Add nofail to the options of the /mnt/backup line (x-systemd.device-timeout=10s also shortens the wait).", "sed -i '/\\/mnt\\/backup/s/defaults/defaults,nofail,x-systemd.device-timeout=10s/' /etc/fstab"]
+explanation = "With nofail the boot no longer depends on the disk: systemd still mounts it when it is present."
+
+[[task]]
+id = "boot"
+title = "Boot normally"
+kind = "troubleshooting"
+instructions = "Continue the boot into the normal system and check that the archive is mounted."
+skills = { "h.boot-process" = 1.0, "j.fstab-persistence" = 0.5 }
+checks = [
+    { type = "boot_state", state = "running" },
+    { type = "mounted", target = "/srv/archive", label = "archive" },
+    { type = "after_reboot", checks = [{ type = "mounted", target = "/srv/archive", label = "archive" }] },
+]
+persistent = true
+hints = ["The emergency banner tells you how to continue.", "systemctl default (or exit) retries the boot with the repaired configuration.", "systemctl default — then, as the normal user: findmnt /srv/archive"]
+explanation = "The boot completed: the archive is mounted, the backup entry waits politely, and systemctl is-system-running says running. The next reboot will work as well — the game checked that on a copy of the machine."
+
+[debrief]
+summary = """
+Emergency mode = a required unit of the boot failed, usually from /etc/fstab. Read journalctl
+-xb and systemctl --failed, fix the cause (fsck by hand, correct the line, or make optional
+disks nofail), then systemctl default. Test fstab changes with mount -a before rebooting.
+"""
+alternatives = ["noauto: never mount at boot, mount by hand with mount /mnt/backup", "x-systemd.automount: mount on first access", "Commenting the line out until the disk returns"]
+pitfalls = ["Deleting the line of the disk that is merely detached.", "Running fsck on a mounted filesystem.", "Rebooting again without fixing anything: the boot fails the same way."]
+next = "Chapter J continues with backups (planned)."
+
+[[solution]]
+name = "journal, e2fsck, nofail, systemctl default"
+steps = [
+    "journalctl -xb -p err --no-pager",
+    ":answer /mnt/backup",
+    "journalctl -b -t systemd-fsck --no-pager",
+    "e2fsck -f -y /dev/sdb1",
+    "sed -i '/\\/mnt\\/backup/s/defaults/defaults,nofail,x-systemd.device-timeout=10s/' /etc/fstab",
+    "findmnt --verify",
+    "systemctl default",
+    "findmnt /srv/archive",
+    "systemctl is-system-running",
+]
+
+[[solution]]
+name = "failed units, fsck by label, exit"
+steps = [
+    "systemctl --failed",
+    "journalctl -b -u mnt-backup.mount --no-pager",
+    ":answer mnt-backup.mount",
+    "fsck -y LABEL=archive",
+    "sed -i 's|^\\(UUID=5d6c9e2a[^ ]* /mnt/backup ext4 \\)defaults|\\1nofail|' /etc/fstab",
+    "exit",
+    "ls /srv/archive/2025",
+]
+
+[[counterexample]]
+name = "deleting the backup line and skipping fsck"
+steps = [
+    ":answer /mnt/backup",
+    "sed -i '/\\/mnt\\/backup/d' /etc/fstab",
+    "systemctl default",
+]

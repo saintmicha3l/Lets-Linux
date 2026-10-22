@@ -1,0 +1,254 @@
+schema = 1
+
+[mission]
+id = "q05-debugging"
+title = "Segmentation Fault (Core Dumped)"
+chapter = "Q"
+kind = "troubleshooting"
+order = 9
+difficulty = 6
+requires = ["q04-make", "n04-syscalls", "q01d-debugging-basics"]
+skills = ["q.debugging-tracing"]
+review_for = ["q.toolchain", "n.syscalls"]
+xp = 240
+estimated_minutes = 35
+
+[briefing]
+context = """
+logsum, a small in-house tool that summarises the web server's access log, crashes on this
+Fedora server: "Segmentation fault (core dumped)". It worked last week. The source and its
+Makefile are in ~/logsum (it is built with -g). Find where and why it crashes from the core
+dump, then make it robust. (sudo password: letslinux)
+"""
+concept = """
+A segmentation fault is the kernel stopping a program that touched memory it may not —
+in C most often through a NULL pointer. The process's memory can be saved as a core dump:
+Fedora and Arch hand every crash to systemd-coredump (coredumpctl list / info / debug);
+elsewhere a file named core appears in the working directory when `ulimit -c` allows it.
+gdb PROGRAM CORE (or coredumpctl debug) shows the moment of death: bt (backtrace) lists the
+chain of function calls, frame N / up / down move along it, print VAR and info locals show
+variables — with source lines only if the program was compiled with -g. gdb PROGRAM, then
+break FUNCTION and run, stops a living program. Choose the tool by the question: strace
+for the program's conversation with the kernel (files, permissions, network), ltrace for
+its calls into libraries, gdb for its own logic and crashes.
+"""
+objectives = ["Find a crash in coredumpctl", "Read a backtrace", "Inspect variables in a core dump with gdb", "Fix and verify the program", "Choose between gdb, strace and ltrace"]
+
+[environment]
+profile = "fedora"
+packages = ["gcc", "make", "gdb", "ltrace"]
+
+[[environment.setup]]
+action = "dir"
+path = "/home/learner/logsum"
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/logsum/logsum.c"
+owner = "learner"
+group = "learner"
+content = """/* logsum: count the requests in an access log by status class */
+#include <stdio.h>
+#include <string.h>
+
+/* the Nth space-separated field of LINE, or NULL when the line has fewer fields */
+char *field(char *line, int n)
+{
+    char *p = line;
+    for (int i = 0; i < n; i++) {
+        p = strchr(p, ' ');
+        if (p == NULL)
+            return NULL;
+        p = p + 1;
+    }
+    return p;
+}
+
+int classify(char *status)
+{
+    if (status[0] == '5')
+        return 5;
+    if (status[0] == '4')
+        return 4;
+    return 2;
+}
+
+int main(int argc, char *argv[])
+{
+    char line[256];
+    int lineno = 0;
+    int ok = 0, client = 0, server = 0;
+
+    if (argc < 2) {
+        fprintf(stderr, "usage: logsum FILE\\n");
+        return 1;
+    }
+    FILE *f = fopen(argv[1], "r");
+    if (f == NULL) {
+        perror(argv[1]);
+        return 1;
+    }
+    while (fgets(line, sizeof line, f) != NULL) {
+        lineno++;
+        char *status = field(line, 3);
+        int kind = classify(status);
+        if (kind == 5)
+            server++;
+        else if (kind == 4)
+            client++;
+        else
+            ok++;
+    }
+    fclose(f);
+    printf("ok=%d client_errors=%d server_errors=%d\\n", ok, client, server);
+    return 0;
+}
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/logsum/Makefile"
+owner = "learner"
+group = "learner"
+content = """CFLAGS = -g -Wall
+
+logsum: logsum.c
+\t$(CC) $(CFLAGS) -o $@ $<
+
+.PHONY: clean
+clean:
+\trm -f logsum
+"""
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "cd ~/logsum && make CC=gcc"
+
+[[environment.setup]]
+action = "dir"
+path = "/var/log/app"
+
+[[environment.setup]]
+action = "file"
+path = "/var/log/app/access.log"
+content = """10.0.0.5 GET /index.html 200
+10.0.0.7 GET /shop 200
+10.0.0.9 POST /cart 500
+10.0.0.5 GET /missing 404
+10.0.0.8 GET /index.html 200
+10.0.0.7 GET /admin 403
+10.0.0.9 GET
+10.0.0.5 GET /shop 200
+10.0.0.6 GET /index.html 200
+"""
+
+[[task]]
+id = "where"
+title = "Where did it die?"
+kind = "troubleshooting"
+instructions = "Run ~/logsum/logsum /var/log/app/access.log, then find the crash in systemd-coredump's records."
+skills = { "q.debugging-tracing" = 1.0 }
+question = { prompt = "In which function did logsum crash?", type = "exact", accept = ["classify", "classify()"] }
+hints = ["coredumpctl list shows the crashes; coredumpctl info shows the stack trace of the latest.", "Frame #0 is where it died, #1 who called it.", "classify"]
+explanation = "The stack trace is the call chain at the moment of the crash: main called classify, and classify touched memory it should not have."
+
+[[task]]
+id = "why"
+title = "What did it touch?"
+kind = "troubleshooting"
+instructions = "Open the core dump in gdb (coredumpctl debug) and look at the crashing frame."
+skills = { "q.debugging-tracing" = 1.0 }
+question = { prompt = "What was the value of the pointer status when classify crashed?", type = "exact", accept = ["0x0", "NULL", "null", "0"] }
+hints = ["coredumpctl debug opens gdb with the program and its core; bt shows the frames with their arguments.", "print status in frame 0.", "0x0 — a NULL pointer."]
+explanation = "classify read status[0] through a NULL pointer; address 0 is never mapped, so the kernel sent SIGSEGV."
+
+[[task]]
+id = "which"
+title = "Which line of the log?"
+kind = "troubleshooting"
+instructions = "The bug is not in classify but in what it was given. Move to main's frame in the same gdb session and find out which line of the log file was being processed."
+skills = { "q.debugging-tracing" = 1.0 }
+question = { prompt = "Which line number of access.log triggered the crash?", type = "number", accept = ["7"] }
+hints = ["up (or frame 1) selects main's frame.", "print lineno — and print line shows the text.", "7: \"10.0.0.9 GET\" has no status field."]
+explanation = "field() correctly returns NULL for a line with too few fields; main passes it on without checking. The crash site is often not the bug site — the backtrace leads you there."
+
+[[task]]
+id = "fix"
+title = "Make it robust"
+kind = "independent"
+instructions = "Fix logsum so that it skips malformed lines instead of crashing (a warning on stderr is welcome), rebuild it in ~/logsum, and check the summary."
+skills = { "q.debugging-tracing" = 1.0, "q.toolchain" = 0.5 }
+checks = [
+    { type = "command_result", user = "learner", command = "~/logsum/logsum /var/log/app/access.log", status = 0, stdout_equals = "ok=5 client_errors=2 server_errors=1\n" },
+    { type = "command_result", user = "learner", command = "cd ~/logsum && make -B >/dev/null && ./logsum /var/log/app/access.log", status = 0, stdout_contains = ["server_errors=1"] },
+    { type = "command_result", user = "learner", command = "printf 'a GET\\n\\nb GET / 500\\nc\\n' > /tmp/malformed.log && ~/logsum/logsum /tmp/malformed.log", status = 0, stdout_equals = "ok=0 client_errors=0 server_errors=1\n" },
+]
+hints = ["The check belongs in main, right after status = field(line, 3).", "if (status == NULL) { fprintf(stderr, \"line %d: malformed\\n\", lineno); continue; }", "sed -i 's/char \\*status = field(line, 3);/&\\n        if (status == NULL) continue;/' logsum.c; make"]
+explanation = "Rebuilt and re-run on the same input — the real verification. Other invalid input (an empty file, a missing file) is handled too: fgets returns NULL, fopen's error is reported with perror."
+
+[[task]]
+id = "tools"
+title = "The right tool"
+kind = "explanation"
+instructions = "Last week a different tool failed with \"cannot open configuration\" without saying which file."
+skills = { "q.debugging-tracing" = 1.0, "n.syscalls" = 0.5 }
+question = { prompt = "Which tool shows fastest which file it tried to open?", type = "choice", choices = ["gdb, with a breakpoint on main", "strace -e trace=openat: every open request and the kernel's answer", "ltrace, to see printf"], answer = 1 }
+hints = ["Opening a file is a request to the kernel.", "System calls are strace's view.", "(b)"]
+explanation = "strace answers questions about the program's dealings with the kernel; ltrace about its library calls; gdb about its internal state — as with the NULL pointer here."
+
+[debrief]
+summary = """
+coredumpctl list / info / debug (or gdb PROGRAM core): bt for the call chain, frame/up/down,
+print and info locals for variables (with -g). The crash site is where the bad value was
+used; walk up the stack to where it came from. Fix, rebuild, re-run the failing input.
+"""
+alternatives = ["ulimit -c unlimited before running, where systemd-coredump is not installed, then gdb PROGRAM core", "gdb --args ./logsum FILE, then run and bt on a live crash", "valgrind or -fsanitize=address find memory errors before they crash (not simulated)"]
+pitfalls = ["Debugging a program built without -g: no lines, no variables.", "Fixing the crash site (classify) instead of the missing check.", "Not re-running the original failing input after the fix."]
+next = "Next: tracking changes with version control."
+
+[[solution]]
+name = "coredumpctl and gdb"
+steps = [
+    "~/logsum/logsum /var/log/app/access.log",
+    "coredumpctl list",
+    "coredumpctl info",
+    ":answer classify",
+    { input = ["bt", "print status", "up", "print lineno", "print line", "quit"] },
+    "coredumpctl debug",
+    ":answer 0x0",
+    ":answer 7",
+    "cd ~/logsum",
+    "sed -i 's/char \\*status = field(line, 3);/&\\n        if (status == NULL) { fprintf(stderr, \"line %d: malformed\\\\n\", lineno); continue; }/' logsum.c",
+    "make",
+    "./logsum /var/log/app/access.log",
+    ":answer b",
+]
+
+[[solution]]
+name = "gdb on a live run"
+steps = [
+    "cd ~/logsum",
+    "./logsum /var/log/app/access.log",
+    { input = ["run", "bt", "frame 1", "info locals", "quit"] },
+    "gdb -q --args ./logsum /var/log/app/access.log",
+    ":answer classify()",
+    ":answer NULL",
+    ":answer 7",
+    "sed -i 's/int kind = classify(status);/if (!status) continue;\\n        int kind = classify(status);/' logsum.c",
+    "make",
+    ":answer strace -e trace=openat: every open request and the kernel's answer",
+]
+
+[[counterexample]]
+name = "delete the bad line"
+steps = [
+    ":answer classify",
+    ":answer 0x0",
+    ":answer 7",
+    { input = ["letslinux"] },
+    "sudo sed -i '7d' /var/log/app/access.log",
+    ":answer b",
+]

@@ -1,0 +1,212 @@
+schema = 1
+
+[mission]
+id = "i08-fixed-address"
+title = "An Address That Stays"
+chapter = "I"
+kind = "lesson"
+order = 8
+difficulty = 4
+requires = ["i03-no-connection"]
+skills = ["i.network-config", "i.interfaces-addresses", "i.dns-resolution"]
+review_for = ["i.routing-gateways", "i.dns-resolution"]
+xp = 170
+estimated_minutes = 25
+
+[briefing]
+context = """
+This Ubuntu server is becoming the monitoring host. Other machines' firewalls will allow it
+by address, so it can no longer take whatever the DHCP server hands out: it needs the fixed
+address 10.0.2.35/24 — now and after every reboot. A colleague has already started on the
+network configuration. (sudo password: letslinux)
+"""
+concept = """
+ip addr and ip route change the running kernel only; at boot the distribution's network
+service configures the cards from files. Which files depends on the distribution:
+Debian's ifupdown reads /etc/network/interfaces, Ubuntu's netplan reads YAML in
+/etc/netplan (merged in file-name order) and hands it to systemd-networkd, Fedora's
+NetworkManager keeps keyfiles in /etc/NetworkManager/system-connections (edited with nmcli),
+Arch's systemd-networkd reads /etc/systemd/network/*.network. A static configuration needs
+everything DHCP used to supply: the address with its prefix, the default gateway, the DNS
+servers and the search domain.
+"""
+objectives = ["Tell a DHCP lease from a static address", "Read and fix netplan YAML", "Configure a static address, gateway and DNS persistently", "Apply network changes safely"]
+
+[environment]
+profile = "ubuntu"
+
+[[environment.setup]]
+action = "file"
+path = "/etc/netplan/60-monitoring.yaml"
+mode = "0644"
+content = """# monitoring VLAN uplink: the switch port needs a smaller MTU  -- K.
+network:
+  ethernets:
+    enp0s3:
+	mtu: 1400
+"""
+
+[[task]]
+id = "lease"
+title = "Where the address comes from"
+kind = "guided"
+instructions = "Look at enp0s3's IPv4 address with `ip addr show enp0s3`, and at the files in /etc/netplan."
+skills = { "i.network-config" = 0.5, "i.interfaces-addresses" = 0.5 }
+question = { prompt = "How did enp0s3 get 10.0.2.15?", type = "choice", choices = ["It is set in a configuration file", "A DHCP server leased it (it is marked dynamic)", "The kernel picks it from the MAC address", "Someone typed ip addr add"], answer = 1 }
+hints = ["ip addr marks some addresses 'dynamic' and shows how long they stay valid.", "50-cloud-init.yaml says dhcp4: true."]
+explanation = "'dynamic' with a valid_lft means a DHCP lease; 50-cloud-init.yaml asks for DHCP. A static address shows 'valid_lft forever'."
+
+[[task]]
+id = "temporary"
+title = "Not like that"
+kind = "guided"
+instructions = "What would `sudo ip addr add 10.0.2.35/24 dev enp0s3` do?"
+skills = { "i.network-config" = 1.0 }
+question = { prompt = "Choose the best description.", type = "choice", choices = ["It adds a second address now; it is gone after the next reboot", "It replaces the DHCP address permanently", "It writes 10.0.2.35 into /etc/netplan", "Nothing: ip only displays settings"], answer = 0 }
+hints = ["ip talks to the running kernel, not to configuration files."]
+explanation = "ip changes the kernel's tables only — useful for testing, lost at reboot. Persistent configuration lives in files the network service reads at boot."
+
+[[task]]
+id = "broken"
+title = "The colleague's file"
+kind = "troubleshooting"
+instructions = """
+The colleague's 60-monitoring.yaml sets the MTU the switch port needs, but netplan does not
+accept the configuration (try `sudo netplan generate`). Make netplan accept it — the MTU of
+1400 must stay — and make sure it prints no warnings either.
+"""
+skills = { "i.network-config" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "netplan generate 2>&1", stdout_equals = "", status = 0 },
+    { type = "command_result", user = "root", command = "netplan get ethernets.enp0s3.mtu", stdout_equals = "1400\n" },
+]
+persistent = true
+hints = [
+    "Read the error: file, line and column, then the reason.",
+    "YAML forbids tabs in indentation: the mtu line must be indented with spaces, deeper than enp0s3:. The warning is about the file's permissions — netplan files should be readable by root only.",
+    "sudo sed -i 's/^\\t/      /' /etc/netplan/60-monitoring.yaml; sudo chmod 600 /etc/netplan/60-monitoring.yaml",
+]
+explanation = "In YAML, indentation is structure and must be spaces. Netplan files may contain secrets (Wi-Fi passwords), so it warns when they are readable by others: chmod 600."
+
+[[task]]
+id = "static"
+title = "A fixed address"
+kind = "independent"
+instructions = """
+Configure enp0s3 statically and persistently: address 10.0.2.35/24, default gateway
+10.0.2.2, DNS server 10.0.2.3 and search domain example.lan (so that short names like `db`
+keep working) — and no DHCP. Apply it now, too: the running system must match.
+"""
+skills = { "i.network-config" = 1.0, "i.interfaces-addresses" = 0.5, "i.dns-resolution" = 0.5 }
+checks = [
+    { type = "command_result", command = "ip -4 -br addr show enp0s3", stdout_regex = "enp0s3\\s+UP\\s+10\\.0\\.2\\.35/24\\s*\\n" },
+    { type = "default_route", via = "10.0.2.2" },
+    { type = "after_reboot", checks = [
+        { type = "command_result", command = "ip -4 -br addr show enp0s3", stdout_regex = "enp0s3\\s+UP\\s+10\\.0\\.2\\.35/24\\s*\\n" },
+        { type = "default_route", via = "10.0.2.2" },
+        { type = "name_resolves", name = "db", address = "10.0.2.30" },
+        { type = "can_reach", host = "mirror.example.org", port = 80 },
+        { type = "command_result", command = "ip link show enp0s3", stdout_contains = "mtu 1400" },
+    ] },
+]
+persistent = true
+hints = [
+    "The settings go under network: ethernets: enp0s3: in a YAML file in /etc/netplan; files are merged, so the dhcp4: true in 50-cloud-init.yaml must go (or become false).",
+    "Keys: dhcp4: false, addresses: [10.0.2.35/24], routes: with '- to: default' and 'via: 10.0.2.2', nameservers: with addresses: [10.0.2.3] and search: [example.lan]. Then sudo netplan apply.",
+    "Write 50-cloud-init.yaml as:\nnetwork:\n  version: 2\n  ethernets:\n    enp0s3:\n      dhcp4: false\n      addresses: [10.0.2.35/24]\n      routes:\n        - to: default\n          via: 10.0.2.2\n      nameservers:\n        addresses: [10.0.2.3]\n        search: [example.lan]\nthen: sudo netplan apply",
+]
+explanation = """
+The address, the route and the resolver settings are now in a file that systemd-networkd
+applies at every boot. Without nameservers the machine would come up unable to resolve
+names; without search, 'db' would not be found although db.example.lan would.
+"""
+
+[[task]]
+id = "remote"
+title = "Over SSH"
+kind = "explanation"
+instructions = "Next time you change the network of a server you are logged into remotely, a typo could cut you off."
+skills = { "i.network-config" = 1.0 }
+question = { prompt = "Which command protects you against that?", type = "choice", choices = ["netplan generate", "netplan apply", "netplan try — it rolls back unless you confirm in time", "ip addr flush"], answer = 2 }
+hints = ["Think about what happens if the change cuts your connection.", "One of them waits for you to confirm.", "netplan try."]
+explanation = "netplan try applies the new configuration and restores the old one after 120 seconds unless you press ENTER — if the change cut your connection, you cannot confirm, and it reverts. nmcli has no equivalent; there, a scheduled job that restores the old profile does the same."
+
+[debrief]
+summary = """
+ip changes the running system; the network service applies files at boot — netplan YAML on
+Ubuntu, /etc/network/interfaces on Debian, nmcli/keyfiles on Fedora, .network files on Arch.
+A static configuration replaces everything DHCP provided: address/prefix, gateway, DNS
+servers and search domain.
+"""
+alternatives = [
+    "Debian: iface enp0s3 inet static, address 10.0.2.35/24, gateway 10.0.2.2 in /etc/network/interfaces; then ifdown enp0s3; ifup enp0s3",
+    "Fedora: nmcli con mod enp0s3 ipv4.method manual ipv4.addresses 10.0.2.35/24 ipv4.gateway 10.0.2.2 ipv4.dns 10.0.2.3 ipv4.dns-search example.lan; nmcli con up enp0s3",
+    "Arch: [Network] Address=10.0.2.35/24, Gateway=10.0.2.2, DNS=10.0.2.3, Domains=example.lan in /etc/systemd/network/20-wired.network; networkctl reload",
+]
+pitfalls = [
+    "Configuring with ip only — everything is gone after the reboot.",
+    "Leaving dhcp4: true in another file: netplan merges the files and the machine gets both addresses.",
+    "Forgetting nameservers or the search domain.",
+    "netplan apply over SSH without netplan try.",
+]
+next = "Chapter I continues with neighbours and address translation."
+
+[[solution]]
+name = "fix in place, rewrite the main file"
+steps = [
+    { input = ["letslinux"] },
+    "ip addr show enp0s3",
+    ":answer 2",
+    ":answer 1",
+    "sudo netplan generate",
+    "sudo sed -i 's/^\\t/      /' /etc/netplan/60-monitoring.yaml",
+    "sudo chmod 600 /etc/netplan/60-monitoring.yaml",
+    "sudo cp /etc/netplan/50-cloud-init.yaml /root/50-cloud-init.yaml.orig",
+    "printf 'network:\\n  version: 2\\n  ethernets:\\n    enp0s3:\\n      dhcp4: false\\n      addresses: [10.0.2.35/24]\\n      routes:\\n        - to: default\\n          via: 10.0.2.2\\n      nameservers:\\n        addresses: [10.0.2.3]\\n        search: [example.lan]\\n' | sudo tee /etc/netplan/50-cloud-init.yaml >/dev/null",
+    "sudo netplan apply",
+    ":answer 3",
+]
+
+[[solution]]
+name = "one file of my own, colleague's merged in"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    ":answer 1",
+    "sudo rm /etc/netplan/60-monitoring.yaml /etc/netplan/50-cloud-init.yaml",
+    "sudo touch /etc/netplan/01-monitoring-host.yaml",
+    "sudo chmod 600 /etc/netplan/01-monitoring-host.yaml",
+    { edit = "network:\n  version: 2\n  ethernets:\n    enp0s3:\n      dhcp4: no\n      mtu: 1400\n      addresses:\n        - 10.0.2.35/24\n      routes:\n        - to: default\n          via: 10.0.2.2\n      nameservers:\n        search: [example.lan]\n        addresses: [10.0.2.3]\n" },
+    "sudo nano /etc/netplan/01-monitoring-host.yaml",
+    "sudo netplan generate",
+    "sudo netplan apply",
+    ":answer 3",
+]
+
+[[counterexample]]
+name = "ip commands only"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    ":answer 1",
+    "sudo sed -i 's/^\\t/      /' /etc/netplan/60-monitoring.yaml",
+    "sudo chmod 600 /etc/netplan/60-monitoring.yaml",
+    "sudo ip addr flush dev enp0s3",
+    "sudo ip addr add 10.0.2.35/24 dev enp0s3",
+    "sudo ip route add default via 10.0.2.2",
+    ":answer 3",
+]
+
+[[counterexample]]
+name = "static file but DHCP left on and no search domain"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    ":answer 1",
+    "sudo sed -i 's/^\\t/      /' /etc/netplan/60-monitoring.yaml",
+    "sudo chmod 600 /etc/netplan/60-monitoring.yaml",
+    "printf 'network:\\n  ethernets:\\n    enp0s3:\\n      addresses: [10.0.2.35/24]\\n      routes:\\n        - to: default\\n          via: 10.0.2.2\\n      nameservers:\\n        addresses: [10.0.2.3]\\n' | sudo tee /etc/netplan/99-static.yaml >/dev/null",
+    "sudo chmod 600 /etc/netplan/99-static.yaml",
+    "sudo netplan apply",
+    ":answer 3",
+]

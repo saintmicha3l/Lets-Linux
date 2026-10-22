@@ -1,0 +1,1719 @@
+# Let's Linux skill graph.
+#
+# This file is the machine-readable source of truth for the curriculum's
+# knowledge map. `docs/CURRICULUM_MAP.md` is generated from it (plus the
+# missions that train and assess each skill) by
+# `python scripts/gen_curriculum_map.py`.
+#
+# Fields:
+#   id        unique, "<chapter letter>.<slug>"
+#   chapter   chapter id (A–T)
+#   title     short name
+#   summary   what the learner can do once the skill is acquired
+#   requires  prerequisite skill ids (must form a DAG)
+#   review    optional manual review status: "reviewed" or "deferred"
+#
+# Implementation coverage (planned / in progress / implemented / tested) is
+# computed from missions and their tests, never declared here.
+
+schema = 1
+
+# ---------------------------------------------------------------- chapters
+
+[[chapter]]
+id = "A"
+title = "Linux orientation and terminal fundamentals"
+track = "core"
+summary = "What a terminal and a shell are, how commands are shaped, and how to get help."
+
+[[chapter]]
+id = "B"
+title = "Navigation, files, paths, and filesystem structure"
+track = "core"
+summary = "Moving around the tree, creating and managing files, links and archives."
+
+[[chapter]]
+id = "C"
+title = "Text processing, search, and command composition"
+track = "core"
+summary = "Streams, redirection, pipelines and the classic text tools."
+
+[[chapter]]
+id = "D"
+title = "Permissions, ownership, users, and groups"
+track = "core"
+summary = "The Unix permission model, identities, privilege and least privilege."
+
+[[chapter]]
+id = "E"
+title = "Shell behavior, pipelines, and scripting"
+track = "core"
+summary = "How the shell expands and runs commands, and how to write safe scripts."
+
+[[chapter]]
+id = "F"
+title = "Package management and software provenance"
+track = "core"
+summary = "Repositories, dependencies, upgrades and trust across distributions."
+
+[[chapter]]
+id = "G"
+title = "Processes, signals, and resource management"
+track = "core"
+summary = "Processes, their relationships, signals, jobs and resource usage."
+
+[[chapter]]
+id = "H"
+title = "systemd, services, boot, and logging"
+track = "core"
+summary = "Service units, dependencies, failures, the journal and the boot sequence."
+
+[[chapter]]
+id = "I"
+title = "Networking, DNS, routing, and SSH"
+track = "core"
+summary = "Addresses, routes, name resolution, sockets, firewalls and remote access."
+
+[[chapter]]
+id = "J"
+title = "Storage, mounts, filesystems, and backup"
+track = "core"
+summary = "Block devices, filesystems, capacity, persistence of mounts and recovery."
+
+[[chapter]]
+id = "K"
+title = "Scheduling, automation, and operational workflows"
+track = "core"
+summary = "cron, timers and safe, idempotent automation."
+
+[[chapter]]
+id = "L"
+title = "Security, auditing, hardening, and incident response"
+track = "core"
+summary = "Defensive administration: audit, harden, detect and respond."
+
+[[chapter]]
+id = "M"
+title = "Troubleshooting and root-cause analysis"
+track = "core"
+summary = "Hypothesis-driven diagnosis across subsystems with verified remediation."
+
+[[chapter]]
+id = "N"
+title = "Kernel, userspace, system calls, and device concepts"
+track = "advanced"
+summary = "The boundary between kernel and userspace, modules, devices and boot failures."
+
+[[chapter]]
+id = "O"
+title = "Performance, diagnostics, and observability"
+track = "advanced"
+summary = "CPU, memory and I/O analysis and observability practice."
+
+[[chapter]]
+id = "P"
+title = "Containers, virtualization, and isolation"
+track = "advanced"
+summary = "Namespaces, cgroups, containers and virtual machines."
+
+[[chapter]]
+id = "Q"
+title = "Linux development, debugging, and build tooling"
+track = "advanced"
+summary = "Toolchains, libraries, build systems and debugging."
+
+[[chapter]]
+id = "R"
+title = "Distribution differences and advanced administration"
+track = "advanced"
+summary = "Transferring skills between Debian/Ubuntu, Fedora and Arch."
+
+[[chapter]]
+id = "S"
+title = "Specialist learning paths"
+track = "specialist"
+summary = "Deeper paths into web operations, databases, networking, automation and reliability."
+
+[[chapter]]
+id = "T"
+title = "Integrated capstone operations scenarios"
+track = "capstone"
+summary = "Persistent servers with multiple interacting faults."
+
+# ---------------------------------------------------------------- A
+
+[[skill]]
+id = "a.terminal-vs-shell"
+chapter = "A"
+title = "Terminal, shell and prompt"
+summary = "Distinguish the terminal, the shell program and the prompt; read user@host:dir$ prompts."
+requires = []
+
+[[skill]]
+id = "a.command-anatomy"
+chapter = "A"
+title = "Commands, options and operands"
+summary = "Identify the command name, short/long options, option arguments and operands in a command line."
+requires = ["a.terminal-vs-shell"]
+
+[[skill]]
+id = "a.echo-printf"
+chapter = "A"
+title = "Printing text"
+summary = "Use echo and printf to print text and formatted values."
+requires = ["a.command-anatomy"]
+
+[[skill]]
+id = "a.identity-basics"
+chapter = "A"
+title = "Who and where am I"
+summary = "Use whoami, id, hostname and uname to identify the user, host and kernel."
+requires = ["a.command-anatomy"]
+
+[[skill]]
+id = "a.exit-status"
+chapter = "A"
+title = "Exit status"
+summary = "Read $? and explain that 0 means success and non-zero means failure."
+requires = ["a.command-anatomy"]
+
+[[skill]]
+id = "a.help-man"
+chapter = "A"
+title = "Finding help"
+summary = "Use --help, man, help and type to learn about unfamiliar commands."
+requires = ["a.command-anatomy"]
+
+[[skill]]
+id = "a.history"
+chapter = "A"
+title = "Command history"
+summary = "Recall and reuse previous commands with history and arrow keys."
+requires = ["a.terminal-vs-shell"]
+
+[[skill]]
+id = "a.date-time"
+chapter = "A"
+title = "Date and time"
+summary = "Display and format the current date and time."
+requires = ["a.command-anatomy"]
+
+[[skill]]
+id = "a.env-vars-intro"
+chapter = "A"
+title = "Environment variables"
+summary = "Inspect HOME, USER, PATH and other variables with echo, env and printenv."
+requires = ["a.echo-printf"]
+
+[[skill]]
+id = "a.builtin-vs-external"
+chapter = "A"
+title = "Built-ins and executables"
+summary = "Explain the difference between shell built-ins and programs found via PATH using type and which."
+requires = ["a.help-man", "a.env-vars-intro"]
+
+# ---------------------------------------------------------------- B
+
+[[skill]]
+id = "b.pwd-cd"
+chapter = "B"
+title = "Current directory"
+summary = "Show and change the working directory with pwd and cd."
+requires = ["a.command-anatomy"]
+
+[[skill]]
+id = "b.ls-listing"
+chapter = "B"
+title = "Listing directories"
+summary = "List directory contents with ls and interpret -l, -a and -h output."
+requires = ["b.pwd-cd"]
+
+[[skill]]
+id = "b.absolute-relative-paths"
+chapter = "B"
+title = "Absolute and relative paths"
+summary = "Construct absolute and relative paths to reach any location."
+requires = ["b.pwd-cd"]
+
+[[skill]]
+id = "b.special-dirs"
+chapter = "B"
+title = "Special directory names"
+summary = "Use ~, ., .., and cd - correctly."
+requires = ["b.absolute-relative-paths"]
+
+[[skill]]
+id = "b.hidden-files"
+chapter = "B"
+title = "Hidden files"
+summary = "Explain dotfiles and reveal them with ls -a."
+requires = ["b.ls-listing"]
+
+[[skill]]
+id = "b.fhs-layout"
+chapter = "B"
+title = "Filesystem hierarchy"
+summary = "Explain the purpose of /etc, /var, /usr, /home, /tmp, /proc and other FHS directories."
+requires = ["b.ls-listing", "b.absolute-relative-paths"]
+
+[[skill]]
+id = "b.create-files-dirs"
+chapter = "B"
+title = "Creating files and directories"
+summary = "Create files with touch and redirection, and directory trees with mkdir -p."
+requires = ["b.absolute-relative-paths"]
+
+[[skill]]
+id = "b.view-files"
+chapter = "B"
+title = "Viewing files"
+summary = "Read files with cat, less, head and tail."
+requires = ["b.ls-listing"]
+
+[[skill]]
+id = "b.copy-move-rename"
+chapter = "B"
+title = "Copying, moving and renaming"
+summary = "Use cp (including -r and -p) and mv safely."
+requires = ["b.create-files-dirs"]
+
+[[skill]]
+id = "b.remove-safely"
+chapter = "B"
+title = "Removing files safely"
+summary = "Remove files and directories with rm, rm -r and rmdir; understand there is no recycle bin."
+requires = ["b.create-files-dirs"]
+
+[[skill]]
+id = "b.edit-files"
+chapter = "B"
+title = "Editing text files"
+summary = "Open, change and save a file with a terminal text editor."
+requires = ["b.create-files-dirs"]
+
+[[skill]]
+id = "b.path-names"
+chapter = "B"
+title = "Path manipulation"
+summary = "Use basename, dirname and realpath to take paths apart and normalise them."
+requires = ["b.special-dirs"]
+
+[[skill]]
+id = "b.file-types"
+chapter = "B"
+title = "File types and metadata"
+summary = "Identify file types and metadata with ls -l, file and stat."
+requires = ["b.ls-listing"]
+
+[[skill]]
+id = "b.globbing"
+chapter = "B"
+title = "Wildcards"
+summary = "Select files with *, ? and [...] patterns and predict what a glob expands to."
+requires = ["b.ls-listing"]
+
+[[skill]]
+id = "b.links-symbolic"
+chapter = "B"
+title = "Symbolic links"
+summary = "Create and inspect symbolic links; recognise dangling links."
+requires = ["b.copy-move-rename", "b.file-types"]
+
+[[skill]]
+id = "b.links-hard-inodes"
+chapter = "B"
+title = "Hard links and inodes"
+summary = "Explain inodes and link counts and create hard links."
+requires = ["b.links-symbolic"]
+
+[[skill]]
+id = "b.find-files"
+chapter = "B"
+title = "Finding files"
+summary = "Locate files by name, type, size, owner and age with find."
+requires = ["b.globbing", "b.file-types"]
+
+[[skill]]
+id = "b.disk-usage-basics"
+chapter = "B"
+title = "Disk usage basics"
+summary = "Measure space used by files and free space on filesystems with du and df."
+requires = ["b.ls-listing"]
+
+[[skill]]
+id = "b.archives"
+chapter = "B"
+title = "Archives and compression"
+summary = "Create, list and extract tar archives and compress files with gzip."
+requires = ["b.copy-move-rename"]
+
+# ---------------------------------------------------------------- C
+
+[[skill]]
+id = "c.redirect-output"
+chapter = "C"
+title = "Output redirection"
+summary = "Send output to files with > and >>, and predict overwrite vs append."
+requires = ["b.view-files", "b.create-files-dirs"]
+
+[[skill]]
+id = "c.std-streams"
+chapter = "C"
+title = "Standard streams"
+summary = "Separate stdout and stderr, use 2>, 2>&1 and /dev/null."
+requires = ["c.redirect-output", "a.exit-status"]
+
+[[skill]]
+id = "c.redirect-input"
+chapter = "C"
+title = "Input redirection"
+summary = "Feed files, here-documents and here-strings to commands on stdin."
+requires = ["c.std-streams"]
+
+[[skill]]
+id = "c.pipelines"
+chapter = "C"
+title = "Pipelines as data flow"
+summary = "Connect commands with | and reason about the data passing between stages."
+requires = ["c.std-streams"]
+
+[[skill]]
+id = "c.grep-basics"
+chapter = "C"
+title = "Searching text with grep"
+summary = "Search files and streams with grep, -i, -v, -n, -r, -c and -l."
+requires = ["c.pipelines"]
+
+[[skill]]
+id = "c.regex-basics"
+chapter = "C"
+title = "Regular expressions"
+summary = "Write basic and extended regular expressions with anchors, classes and repetition."
+requires = ["c.grep-basics"]
+
+[[skill]]
+id = "c.wc-counting"
+chapter = "C"
+title = "Counting"
+summary = "Count lines, words and bytes with wc."
+requires = ["c.pipelines"]
+
+[[skill]]
+id = "c.sort-uniq"
+chapter = "C"
+title = "Sorting and de-duplicating"
+summary = "Sort text numerically or by key and count duplicates with uniq -c."
+requires = ["c.pipelines"]
+
+[[skill]]
+id = "c.cut-paste-tr"
+chapter = "C"
+title = "Columns and characters"
+summary = "Extract fields with cut, join with paste and translate characters with tr."
+requires = ["c.pipelines"]
+
+[[skill]]
+id = "c.sed-substitution"
+chapter = "C"
+title = "Stream editing with sed"
+summary = "Substitute, delete and print lines with sed, including in-place edits."
+requires = ["c.regex-basics"]
+
+[[skill]]
+id = "c.awk-fields"
+chapter = "C"
+title = "Field processing with awk"
+summary = "Select and compute over fields with awk patterns, $N, NR, NF and -F."
+requires = ["c.cut-paste-tr", "c.regex-basics"]
+
+[[skill]]
+id = "c.diff-compare"
+chapter = "C"
+title = "Comparing files"
+summary = "Compare files with diff and cmp and read unified diffs."
+requires = ["b.view-files"]
+
+[[skill]]
+id = "c.tee-xargs"
+chapter = "C"
+title = "tee and xargs"
+summary = "Split a stream with tee and build argument lists with xargs."
+requires = ["c.pipelines"]
+
+[[skill]]
+id = "c.find-exec"
+chapter = "C"
+title = "Acting on found files"
+summary = "Combine find with -exec, -delete or xargs safely (-print0/-0)."
+requires = ["b.find-files", "c.tee-xargs"]
+
+[[skill]]
+id = "c.log-filtering"
+chapter = "C"
+title = "Log analysis pipelines"
+summary = "Combine grep, cut, sort and uniq to summarise log files."
+requires = ["c.grep-basics", "c.sort-uniq", "c.cut-paste-tr"]
+
+# ---------------------------------------------------------------- D
+
+[[skill]]
+id = "d.users-groups-concepts"
+chapter = "D"
+title = "Users, groups, UIDs and GIDs"
+summary = "Read /etc/passwd and /etc/group and explain UIDs, GIDs and primary vs supplementary groups."
+requires = ["a.identity-basics", "b.view-files"]
+
+[[skill]]
+id = "d.permission-bits"
+chapter = "D"
+title = "Reading permission bits"
+summary = "Interpret rwx triplets for owner, group and other in ls -l output."
+requires = ["b.ls-listing", "d.users-groups-concepts"]
+
+[[skill]]
+id = "d.chmod-symbolic"
+chapter = "D"
+title = "chmod symbolic modes"
+summary = "Change permissions with u/g/o/a and +, -, =."
+requires = ["d.permission-bits"]
+
+[[skill]]
+id = "d.chmod-octal"
+chapter = "D"
+title = "chmod octal modes"
+summary = "Convert between symbolic and octal modes and apply them."
+requires = ["d.chmod-symbolic"]
+
+[[skill]]
+id = "d.directory-permissions"
+chapter = "D"
+title = "Directory permissions"
+summary = "Explain r, w and x on directories, including traversal of parent directories."
+requires = ["d.chmod-octal"]
+
+[[skill]]
+id = "d.chown-chgrp"
+chapter = "D"
+title = "Changing ownership"
+summary = "Change file owner and group with chown and chgrp, recursively when appropriate."
+requires = ["d.permission-bits"]
+
+[[skill]]
+id = "d.umask"
+chapter = "D"
+title = "Default permissions with umask"
+summary = "Predict the mode of new files and directories from the umask."
+requires = ["d.chmod-octal"]
+
+[[skill]]
+id = "d.special-bits"
+chapter = "D"
+title = "setuid, setgid and sticky"
+summary = "Recognise and apply setuid, setgid and the sticky bit and explain their risks."
+requires = ["d.directory-permissions"]
+
+[[skill]]
+id = "d.sudo-least-privilege"
+chapter = "D"
+title = "sudo and least privilege"
+summary = "Run individual commands with elevated privilege and explain why not to work as root."
+requires = ["d.users-groups-concepts"]
+
+[[skill]]
+id = "d.su-switch-user"
+chapter = "D"
+title = "Switching users"
+summary = "Use su and sudo -u to act as another user and understand login vs non-login shells."
+requires = ["d.sudo-least-privilege"]
+
+[[skill]]
+id = "d.user-management"
+chapter = "D"
+title = "Managing user accounts"
+summary = "Create, modify, lock and remove accounts with useradd, usermod, passwd and userdel."
+requires = ["d.sudo-least-privilege"]
+
+[[skill]]
+id = "d.group-management"
+chapter = "D"
+title = "Managing groups"
+summary = "Create groups and manage membership with groupadd, usermod -aG and gpasswd."
+requires = ["d.user-management"]
+
+[[skill]]
+id = "d.acls"
+chapter = "D"
+title = "Access control lists"
+summary = "Grant individual users access with setfacl and inspect ACLs with getfacl."
+requires = ["d.special-bits", "d.group-management"]
+
+[[skill]]
+id = "d.auth-concepts"
+chapter = "D"
+title = "Authentication concepts"
+summary = "Explain /etc/shadow, password hashing, account expiry and PAM at a conceptual level."
+requires = ["d.user-management"]
+
+[[skill]]
+id = "d.credential-hygiene"
+chapter = "D"
+title = "Handling credentials safely"
+summary = "Protect secrets with ownership and modes, and avoid leaking them through history or arguments."
+requires = ["d.chmod-octal"]
+
+# ---------------------------------------------------------------- E
+
+[[skill]]
+id = "e.quoting"
+chapter = "E"
+title = "Quoting and escaping"
+summary = "Predict the effect of single quotes, double quotes and backslashes on expansion and word splitting."
+requires = ["a.echo-printf"]
+
+[[skill]]
+id = "e.variables-expansion"
+chapter = "E"
+title = "Shell variables and expansion"
+summary = "Assign variables and use ${var}, defaults and length expansions."
+requires = ["e.quoting", "a.env-vars-intro"]
+
+[[skill]]
+id = "e.brace-expansion"
+chapter = "E"
+title = "Brace expansion"
+summary = "Generate words with {a,b} and {1..10}."
+requires = ["e.quoting"]
+
+[[skill]]
+id = "e.env-inheritance"
+chapter = "E"
+title = "Environment inheritance"
+summary = "Explain export and why child processes cannot change the parent's variables."
+requires = ["e.variables-expansion"]
+
+[[skill]]
+id = "e.command-substitution"
+chapter = "E"
+title = "Command substitution"
+summary = "Capture command output with $(...) and quote it correctly."
+requires = ["e.variables-expansion"]
+
+[[skill]]
+id = "e.arithmetic"
+chapter = "E"
+title = "Shell arithmetic"
+summary = "Compute integers with $(( )) and (( ))."
+requires = ["e.variables-expansion"]
+
+[[skill]]
+id = "e.sequencing-conditionals"
+chapter = "E"
+title = "Sequencing and conditional execution"
+summary = "Combine commands with ;, && and || based on exit status."
+requires = ["a.exit-status"]
+
+[[skill]]
+id = "e.path-lookup"
+chapter = "E"
+title = "PATH and command lookup"
+summary = "Explain how the shell finds commands and fix 'command not found' caused by PATH."
+requires = ["a.builtin-vs-external", "e.env-inheritance"]
+
+[[skill]]
+id = "e.shell-startup"
+chapter = "E"
+title = "Shell startup files and aliases"
+summary = "Configure aliases and variables persistently in ~/.bashrc and ~/.profile."
+requires = ["e.env-inheritance", "b.edit-files"]
+
+[[skill]]
+id = "e.script-structure"
+chapter = "E"
+title = "Writing and running scripts"
+summary = "Write a script with a shebang, make it executable and run it by path."
+requires = ["e.sequencing-conditionals", "d.chmod-symbolic", "b.edit-files"]
+
+[[skill]]
+id = "e.positional-args"
+chapter = "E"
+title = "Script arguments"
+summary = "Use $1, $#, \"$@\" and shift to process script arguments."
+requires = ["e.script-structure", "e.variables-expansion"]
+
+[[skill]]
+id = "e.test-conditionals"
+chapter = "E"
+title = "Tests and if statements"
+summary = "Branch with if, test, [ ] and [[ ]] on strings, numbers and files."
+requires = ["e.script-structure"]
+
+[[skill]]
+id = "e.loops"
+chapter = "E"
+title = "Loops"
+summary = "Iterate with for and while, including over files and lines."
+requires = ["e.test-conditionals"]
+
+[[skill]]
+id = "e.case"
+chapter = "E"
+title = "case statements"
+summary = "Dispatch on patterns with case."
+requires = ["e.test-conditionals"]
+
+[[skill]]
+id = "e.functions"
+chapter = "E"
+title = "Shell functions"
+summary = "Define functions with local variables and return statuses."
+requires = ["e.loops"]
+
+[[skill]]
+id = "e.read-input"
+chapter = "E"
+title = "Reading input"
+summary = "Read lines and fields safely with while IFS= read -r."
+requires = ["e.loops", "c.redirect-input"]
+
+[[skill]]
+id = "e.error-handling"
+chapter = "E"
+title = "Error handling in scripts"
+summary = "Use exit codes, set -euo pipefail and explicit checks to fail safely."
+requires = ["e.functions"]
+
+[[skill]]
+id = "e.traps-cleanup"
+chapter = "E"
+title = "Traps and temporary files"
+summary = "Create temporary files with mktemp and clean up with trap."
+requires = ["e.error-handling"]
+
+[[skill]]
+id = "e.input-validation"
+chapter = "E"
+title = "Validating input"
+summary = "Validate arguments and refuse dangerous input before acting."
+requires = ["e.error-handling", "e.case"]
+
+[[skill]]
+id = "e.idempotency"
+chapter = "E"
+title = "Idempotent scripts"
+summary = "Write scripts that are safe to run more than once."
+requires = ["e.error-handling"]
+
+[[skill]]
+id = "e.script-debugging"
+chapter = "E"
+title = "Debugging scripts"
+summary = "Trace scripts with bash -x and set -x and isolate failing steps."
+requires = ["e.error-handling"]
+
+[[skill]]
+id = "e.script-logging"
+chapter = "E"
+title = "Logging from scripts"
+summary = "Send diagnostics to stderr and the system log with logger."
+requires = ["e.error-handling", "c.std-streams"]
+
+# ---------------------------------------------------------------- F
+
+[[skill]]
+id = "f.package-concepts"
+chapter = "F"
+title = "Packages and repositories"
+summary = "Explain packages, repositories, metadata and why distributions package software."
+requires = ["b.fhs-layout", "d.sudo-least-privilege"]
+
+[[skill]]
+id = "f.search-info"
+chapter = "F"
+title = "Finding packages"
+summary = "Search repositories and show package details."
+requires = ["f.package-concepts"]
+
+[[skill]]
+id = "f.apt-basics"
+chapter = "F"
+title = "apt and dpkg"
+summary = "Install, remove and query packages on Debian and Ubuntu."
+requires = ["f.package-concepts"]
+
+[[skill]]
+id = "f.dnf-basics"
+chapter = "F"
+title = "dnf and rpm"
+summary = "Install, remove and query packages on Fedora and RPM-based systems."
+requires = ["f.package-concepts"]
+
+[[skill]]
+id = "f.pacman-basics"
+chapter = "F"
+title = "pacman"
+summary = "Install, remove and query packages on Arch Linux."
+requires = ["f.package-concepts"]
+
+[[skill]]
+id = "f.dependencies"
+chapter = "F"
+title = "Dependency resolution"
+summary = "Explain dependencies, reverse dependencies and automatically installed packages."
+requires = ["f.apt-basics"]
+
+[[skill]]
+id = "f.upgrades-versions"
+chapter = "F"
+title = "Upgrades and versions"
+summary = "Refresh metadata, compare versions and apply upgrades; hold packages."
+requires = ["f.dependencies"]
+
+[[skill]]
+id = "f.file-ownership"
+chapter = "F"
+title = "Which package owns a file"
+summary = "Map files to packages and list a package's files."
+requires = ["f.apt-basics"]
+
+[[skill]]
+id = "f.repo-trust"
+chapter = "F"
+title = "Repository trust and signatures"
+summary = "Explain signing keys and diagnose signature failures without disabling verification."
+requires = ["f.upgrades-versions"]
+
+[[skill]]
+id = "f.conflicts-broken"
+chapter = "F"
+title = "Conflicts and broken dependencies"
+summary = "Diagnose and repair conflicting or broken package states."
+requires = ["f.dependencies"]
+
+[[skill]]
+id = "f.local-software"
+chapter = "F"
+title = "Software outside the package manager"
+summary = "Explain /usr/local and /opt and the trade-offs of unpackaged software."
+requires = ["f.package-concepts"]
+
+# ---------------------------------------------------------------- G
+
+[[skill]]
+id = "g.process-concepts"
+chapter = "G"
+title = "Processes and PIDs"
+summary = "Explain processes, PIDs, parent/child relationships and that every command runs as a process."
+requires = ["a.command-anatomy"]
+
+[[skill]]
+id = "g.ps-inspection"
+chapter = "G"
+title = "Inspecting processes"
+summary = "Inspect processes with ps, pgrep and pstree."
+requires = ["g.process-concepts"]
+
+[[skill]]
+id = "g.signals-kill"
+chapter = "G"
+title = "Signals"
+summary = "Send TERM, KILL, HUP and others with kill and pkill and predict their effect."
+requires = ["g.ps-inspection"]
+
+[[skill]]
+id = "g.jobs-control"
+chapter = "G"
+title = "Job control"
+summary = "Run, list, foreground and background jobs with &, jobs, fg and bg."
+requires = ["g.signals-kill"]
+
+[[skill]]
+id = "g.nohup-disown"
+chapter = "G"
+title = "Surviving logout"
+summary = "Keep jobs running after logout with nohup and disown."
+requires = ["g.jobs-control"]
+
+[[skill]]
+id = "g.process-states"
+chapter = "G"
+title = "Process states and zombies"
+summary = "Read process states (R, S, D, T, Z) and resolve zombie processes."
+requires = ["g.signals-kill"]
+
+[[skill]]
+id = "g.resource-monitoring"
+chapter = "G"
+title = "Monitoring resources"
+summary = "Read top, free, uptime and load averages."
+requires = ["g.ps-inspection"]
+
+[[skill]]
+id = "g.nice-priority"
+chapter = "G"
+title = "Scheduling priority"
+summary = "Adjust CPU priority with nice and renice."
+requires = ["g.resource-monitoring"]
+
+[[skill]]
+id = "g.file-descriptors"
+chapter = "G"
+title = "File descriptors"
+summary = "Explain file descriptors and inspect them via /proc/PID/fd and lsof."
+requires = ["g.ps-inspection", "c.std-streams"]
+
+[[skill]]
+id = "g.proc-filesystem"
+chapter = "G"
+title = "The /proc filesystem"
+summary = "Read process and kernel information from /proc."
+requires = ["g.ps-inspection", "b.fhs-layout"]
+
+[[skill]]
+id = "g.resource-exhaustion"
+chapter = "G"
+title = "Resource exhaustion"
+summary = "Identify runaway processes and memory pressure and respond proportionately."
+requires = ["g.resource-monitoring", "g.signals-kill"]
+
+# ---------------------------------------------------------------- H
+
+[[skill]]
+id = "h.service-concepts"
+chapter = "H"
+title = "Services and units"
+summary = "Explain daemons, systemd units and unit types."
+requires = ["g.process-concepts"]
+
+[[skill]]
+id = "h.systemctl-control"
+chapter = "H"
+title = "Controlling services"
+summary = "Start, stop, restart, reload and inspect services with systemctl."
+requires = ["h.service-concepts", "d.sudo-least-privilege"]
+
+[[skill]]
+id = "h.enable-disable"
+chapter = "H"
+title = "Enabling services at boot"
+summary = "Distinguish running from enabled and manage enablement, masking and targets."
+requires = ["h.systemctl-control"]
+
+[[skill]]
+id = "h.journalctl"
+chapter = "H"
+title = "Reading the journal"
+summary = "Filter logs by unit, priority, boot and time with journalctl."
+requires = ["h.systemctl-control"]
+
+[[skill]]
+id = "h.unit-files"
+chapter = "H"
+title = "Unit files"
+summary = "Read and write unit files and drop-ins, and apply changes with daemon-reload."
+requires = ["h.enable-disable", "b.edit-files"]
+
+[[skill]]
+id = "h.service-dependencies"
+chapter = "H"
+title = "Unit dependencies and ordering"
+summary = "Explain Requires, Wants, After and Before and diagnose dependency failures."
+requires = ["h.unit-files"]
+
+[[skill]]
+id = "h.failed-services"
+chapter = "H"
+title = "Diagnosing failed services"
+summary = "Use status, the journal and configuration checks to find why a service fails."
+requires = ["h.journalctl", "h.unit-files"]
+
+[[skill]]
+id = "h.restart-policies"
+chapter = "H"
+title = "Restart behaviour"
+summary = "Configure Restart= and interpret restart loops and start limits."
+requires = ["h.unit-files"]
+
+[[skill]]
+id = "h.targets-boot"
+chapter = "H"
+title = "Targets"
+summary = "Explain targets, the default target and rescue/emergency modes."
+requires = ["h.enable-disable"]
+
+[[skill]]
+id = "h.timers"
+chapter = "H"
+title = "systemd timers"
+summary = "Schedule units with timers and inspect them with list-timers."
+requires = ["h.unit-files"]
+
+[[skill]]
+id = "h.traditional-logs"
+chapter = "H"
+title = "Log files and rotation"
+summary = "Read /var/log files, understand rsyslog vs journald and log rotation."
+requires = ["h.journalctl"]
+
+[[skill]]
+id = "h.boot-process"
+chapter = "H"
+title = "The boot process"
+summary = "Describe firmware, bootloader, kernel, initramfs and systemd stages."
+requires = ["h.targets-boot"]
+
+# ---------------------------------------------------------------- I
+
+[[skill]]
+id = "i.interfaces-addresses"
+chapter = "I"
+title = "Interfaces and addresses"
+summary = "Read interfaces, MAC and IPv4/IPv6 addresses with ip addr and ip link."
+requires = ["a.command-anatomy"]
+
+[[skill]]
+id = "i.cidr-subnetting"
+chapter = "I"
+title = "CIDR and subnetting"
+summary = "Compute network, broadcast and host ranges from CIDR notation."
+requires = ["i.interfaces-addresses"]
+
+[[skill]]
+id = "i.routing-gateways"
+chapter = "I"
+title = "Routing and gateways"
+summary = "Read and change the routing table and default gateway."
+requires = ["i.cidr-subnetting"]
+
+[[skill]]
+id = "i.arp-neighbors"
+chapter = "I"
+title = "ARP and neighbours"
+summary = "Explain ARP/neighbour discovery and read the neighbour table."
+requires = ["i.routing-gateways"]
+
+[[skill]]
+id = "i.ping-reachability"
+chapter = "I"
+title = "Reachability"
+summary = "Test reachability with ping and interpret loss and errors."
+requires = ["i.routing-gateways"]
+
+[[skill]]
+id = "i.dns-resolution"
+chapter = "I"
+title = "Name resolution"
+summary = "Explain /etc/hosts, nsswitch and resolv.conf and query DNS with dig and host."
+requires = ["i.ping-reachability"]
+
+[[skill]]
+id = "i.ports-sockets"
+chapter = "I"
+title = "Ports and sockets"
+summary = "Explain TCP vs UDP and list listening sockets and owning processes with ss."
+requires = ["i.interfaces-addresses", "g.process-concepts"]
+
+[[skill]]
+id = "i.http-curl"
+chapter = "I"
+title = "HTTP with curl"
+summary = "Make HTTP(S) requests with curl and read status codes and headers."
+requires = ["i.ports-sockets", "i.dns-resolution"]
+
+[[skill]]
+id = "i.tls-concepts"
+chapter = "I"
+title = "TLS concepts"
+summary = "Explain certificates, chains, expiry and hostname verification."
+requires = ["i.http-curl"]
+
+[[skill]]
+id = "i.ssh-basics"
+chapter = "I"
+title = "SSH client"
+summary = "Connect with ssh and explain host-key verification."
+requires = ["i.ports-sockets"]
+
+[[skill]]
+id = "i.ssh-keys"
+chapter = "I"
+title = "SSH keys"
+summary = "Generate key pairs, install public keys and fix key-permission problems."
+requires = ["i.ssh-basics", "d.chmod-octal"]
+
+[[skill]]
+id = "i.file-transfer"
+chapter = "I"
+title = "scp and rsync"
+summary = "Copy files between hosts with scp and rsync."
+requires = ["i.ssh-basics"]
+
+[[skill]]
+id = "i.firewalls"
+chapter = "I"
+title = "Firewalls"
+summary = "Allow and deny traffic with ufw, firewalld or nftables and verify the effect."
+requires = ["i.ports-sockets", "d.sudo-least-privilege"]
+
+[[skill]]
+id = "i.nat-concepts"
+chapter = "I"
+title = "NAT"
+summary = "Explain source and destination NAT and port forwarding."
+requires = ["i.firewalls", "i.routing-gateways"]
+
+[[skill]]
+id = "i.packet-capture-concepts"
+chapter = "I"
+title = "Packet capture"
+summary = "Explain what tcpdump shows and when capture is appropriate."
+requires = ["i.ports-sockets"]
+
+[[skill]]
+id = "i.network-config"
+chapter = "I"
+title = "Persistent network configuration"
+summary = "Configure addresses and DNS persistently with the distribution's network tool."
+requires = ["i.routing-gateways", "i.dns-resolution"]
+
+[[skill]]
+id = "i.net-troubleshooting"
+chapter = "I"
+title = "Network troubleshooting"
+summary = "Distinguish NXDOMAIN, no route, timeout and connection refused and find the failing layer."
+requires = ["i.dns-resolution", "i.routing-gateways", "i.http-curl"]
+applied = true
+
+# ---------------------------------------------------------------- J
+
+[[skill]]
+id = "j.block-devices"
+chapter = "J"
+title = "Block devices and partitions"
+summary = "List disks and partitions with lsblk and fdisk -l."
+requires = ["b.fhs-layout"]
+
+[[skill]]
+id = "j.filesystems-mkfs"
+chapter = "J"
+title = "Creating filesystems"
+summary = "Choose and create filesystems with mkfs and inspect them with blkid."
+requires = ["j.block-devices"]
+
+[[skill]]
+id = "j.mount-umount"
+chapter = "J"
+title = "Mounting"
+summary = "Mount and unmount filesystems and diagnose 'target is busy'."
+requires = ["j.filesystems-mkfs"]
+
+[[skill]]
+id = "j.fstab-persistence"
+chapter = "J"
+title = "Persistent mounts"
+summary = "Write fstab entries with UUIDs and options and test them with mount -a."
+requires = ["j.mount-umount", "b.edit-files"]
+
+[[skill]]
+id = "j.mount-options"
+chapter = "J"
+title = "Mount options and permissions"
+summary = "Apply noexec, nosuid, ro and ownership of mount points."
+requires = ["j.mount-umount", "d.special-bits"]
+
+[[skill]]
+id = "j.capacity"
+chapter = "J"
+title = "Filesystem capacity"
+summary = "Find what consumes space with df, du and find."
+requires = ["b.disk-usage-basics", "j.mount-umount"]
+
+[[skill]]
+id = "j.inodes"
+chapter = "J"
+title = "Inode exhaustion"
+summary = "Diagnose 'no space left' with free blocks but no free inodes."
+requires = ["j.capacity", "b.links-hard-inodes"]
+
+[[skill]]
+id = "j.disk-full-incident"
+chapter = "J"
+title = "Disk-full incidents"
+summary = "Restore service after a full filesystem without destroying evidence."
+requires = ["j.capacity", "h.journalctl"]
+applied = true
+
+[[skill]]
+id = "j.deleted-open-files"
+chapter = "J"
+title = "Deleted but open files"
+summary = "Explain why df and du disagree and reclaim space held by open deleted files."
+requires = ["j.disk-full-incident", "g.file-descriptors"]
+
+[[skill]]
+id = "j.swap"
+chapter = "J"
+title = "Swap"
+summary = "Explain swap and enable swap space."
+requires = ["j.block-devices", "g.resource-monitoring"]
+
+[[skill]]
+id = "j.backup-restore"
+chapter = "J"
+title = "Backup and restore"
+summary = "Back up with tar or rsync, verify backups and restore files."
+requires = ["b.archives"]
+
+[[skill]]
+id = "j.fs-integrity"
+chapter = "J"
+title = "Filesystem integrity"
+summary = "Explain journaling and when and how to run fsck."
+requires = ["j.filesystems-mkfs"]
+
+[[skill]]
+id = "j.lvm-concepts"
+chapter = "J"
+title = "Logical volumes"
+summary = "Explain physical volumes, volume groups and logical volumes and extend a volume."
+requires = ["j.filesystems-mkfs"]
+
+[[skill]]
+id = "j.raid-concepts"
+chapter = "J"
+title = "RAID"
+summary = "Explain RAID levels and recognise a degraded array."
+requires = ["j.block-devices"]
+
+[[skill]]
+id = "j.encryption-concepts"
+chapter = "J"
+title = "Disk encryption"
+summary = "Explain LUKS, keys and the trade-offs of encryption at rest."
+requires = ["j.filesystems-mkfs"]
+
+# ---------------------------------------------------------------- K
+
+[[skill]]
+id = "k.cron-basics"
+chapter = "K"
+title = "cron"
+summary = "Schedule jobs with crontab syntax and inspect existing schedules."
+requires = ["e.script-structure"]
+
+[[skill]]
+id = "k.cron-environment"
+chapter = "K"
+title = "cron's environment"
+summary = "Fix jobs that work interactively but fail under cron's minimal environment."
+requires = ["k.cron-basics", "e.path-lookup"]
+
+[[skill]]
+id = "k.systemd-timers"
+chapter = "K"
+title = "Timers for automation"
+summary = "Replace cron jobs with timers and compare the approaches."
+requires = ["h.timers", "k.cron-basics"]
+
+[[skill]]
+id = "k.log-rotation"
+chapter = "K"
+title = "Automating log rotation"
+summary = "Configure logrotate and verify rotation."
+requires = ["h.traditional-logs", "k.cron-basics"]
+
+[[skill]]
+id = "k.safe-automation"
+chapter = "K"
+title = "Safe automation"
+summary = "Add locking, dry runs and logging to automated jobs."
+requires = ["e.idempotency", "k.cron-basics"]
+
+[[skill]]
+id = "k.backup-automation"
+chapter = "K"
+title = "Automated backups"
+summary = "Schedule, rotate and verify backups."
+requires = ["j.backup-restore", "k.safe-automation"]
+
+[[skill]]
+id = "k.config-management-concepts"
+chapter = "K"
+title = "Configuration management"
+summary = "Explain declarative configuration management and drift."
+requires = ["k.safe-automation"]
+
+# ---------------------------------------------------------------- L
+
+[[skill]]
+id = "l.permission-audit"
+chapter = "L"
+title = "Permission auditing"
+summary = "Find setuid binaries, world-writable files and unowned files."
+requires = ["d.special-bits", "b.find-files"]
+
+[[skill]]
+id = "l.account-security"
+chapter = "L"
+title = "Account security"
+summary = "Audit accounts and sudoers, lock unused accounts and enforce password policy."
+requires = ["d.user-management", "d.auth-concepts"]
+
+[[skill]]
+id = "l.ssh-hardening"
+chapter = "L"
+title = "SSH hardening"
+summary = "Disable root and password logins safely and verify access still works."
+requires = ["i.ssh-keys", "h.unit-files"]
+
+[[skill]]
+id = "l.firewall-hardening"
+chapter = "L"
+title = "Default-deny firewalls"
+summary = "Apply a default-deny policy without locking yourself out."
+requires = ["i.firewalls"]
+
+[[skill]]
+id = "l.service-exposure"
+chapter = "L"
+title = "Service exposure"
+summary = "Inventory listening services and remove or restrict unnecessary ones."
+requires = ["i.ports-sockets", "h.enable-disable"]
+
+[[skill]]
+id = "l.patching"
+chapter = "L"
+title = "Vulnerability and patch management"
+summary = "Identify outdated packages and apply security updates with verification."
+requires = ["f.repo-trust", "f.upgrades-versions"]
+
+[[skill]]
+id = "l.file-integrity"
+chapter = "L"
+title = "File integrity"
+summary = "Verify files with checksums and package verification."
+requires = ["f.file-ownership"]
+
+[[skill]]
+id = "l.secrets-management"
+chapter = "L"
+title = "Secrets management"
+summary = "Store and rotate secrets with appropriate permissions and tooling."
+requires = ["d.credential-hygiene"]
+
+[[skill]]
+id = "l.audit-logging"
+chapter = "L"
+title = "Audit logging"
+summary = "Trace logins and privilege use through auth logs, last and the journal."
+requires = ["h.journalctl", "d.sudo-least-privilege"]
+
+[[skill]]
+id = "l.suspicious-processes"
+chapter = "L"
+title = "Suspicious processes"
+summary = "Investigate unexpected processes, their binaries, users and connections."
+requires = ["g.ps-inspection", "i.ports-sockets", "g.proc-filesystem"]
+
+[[skill]]
+id = "l.incident-response"
+chapter = "L"
+title = "Incident response"
+summary = "Triage, contain, preserve evidence and recover from a compromise."
+requires = ["l.suspicious-processes", "l.audit-logging"]
+applied = true
+
+[[skill]]
+id = "l.threat-modeling"
+chapter = "L"
+title = "Threat modelling"
+summary = "Identify assets, threats and mitigations for a server."
+requires = ["l.service-exposure"]
+
+[[skill]]
+id = "l.mac-concepts"
+chapter = "L"
+title = "Mandatory access control"
+summary = "Explain SELinux and AppArmor and recognise denials."
+requires = ["d.special-bits"]
+
+# ---------------------------------------------------------------- M
+
+[[skill]]
+id = "m.hypothesis-method"
+chapter = "M"
+title = "Hypothesis-driven troubleshooting"
+summary = "State a hypothesis, choose a test that distinguishes it, and act on the result."
+requires = ["a.exit-status", "c.grep-basics"]
+
+[[skill]]
+id = "m.verification"
+chapter = "M"
+title = "Verifying a fix"
+summary = "Prove that the symptom is gone and that the fix survives restarts."
+requires = ["m.hypothesis-method"]
+
+[[skill]]
+id = "m.evidence-correlation"
+chapter = "M"
+title = "Correlating evidence"
+summary = "Correlate timestamps across logs, processes and configuration changes."
+requires = ["m.hypothesis-method", "c.log-filtering", "h.journalctl"]
+
+[[skill]]
+id = "m.permission-rca"
+chapter = "M"
+title = "Permission failures"
+summary = "Trace 'Permission denied' to the exact path component and identity."
+requires = ["m.hypothesis-method", "d.directory-permissions"]
+applied = true
+
+[[skill]]
+id = "m.service-rca"
+chapter = "M"
+title = "Service failures"
+summary = "Find the root cause of failing services across configuration, dependencies and resources."
+requires = ["m.hypothesis-method", "h.failed-services"]
+applied = true
+
+[[skill]]
+id = "m.disk-rca"
+chapter = "M"
+title = "Storage failures"
+summary = "Diagnose capacity, inode and mount failures and their effects on services."
+requires = ["m.hypothesis-method", "j.disk-full-incident"]
+applied = true
+
+[[skill]]
+id = "m.network-rca"
+chapter = "M"
+title = "Network failures"
+summary = "Locate the failing layer from DNS to firewall to listener."
+requires = ["m.hypothesis-method", "i.net-troubleshooting", "i.firewalls"]
+applied = true
+
+[[skill]]
+id = "m.multi-fault"
+chapter = "M"
+title = "Multiple interacting faults"
+summary = "Prioritise and resolve several simultaneous faults."
+requires = ["m.service-rca", "m.network-rca", "m.disk-rca"]
+applied = true
+
+# ---------------------------------------------------------------- N
+
+[[skill]]
+id = "n.kernel-userspace"
+chapter = "N"
+title = "Kernel and userspace"
+summary = "Explain the kernel/userspace boundary and the role of system calls."
+requires = ["g.process-concepts", "h.boot-process"]
+
+[[skill]]
+id = "n.syscalls"
+chapter = "N"
+title = "Observing system calls"
+summary = "Read strace output to understand what a program does."
+requires = ["n.kernel-userspace", "g.file-descriptors"]
+
+[[skill]]
+id = "n.kernel-modules"
+chapter = "N"
+title = "Kernel modules"
+summary = "List, load and remove modules and inspect their dependencies."
+requires = ["n.kernel-userspace"]
+
+[[skill]]
+id = "n.device-files"
+chapter = "N"
+title = "Devices"
+summary = "Explain device files, major/minor numbers and udev."
+requires = ["n.kernel-userspace", "b.file-types"]
+
+[[skill]]
+id = "n.sysctl"
+chapter = "N"
+title = "Kernel parameters"
+summary = "Read and set kernel parameters through sysctl and /proc/sys, persistently."
+requires = ["g.proc-filesystem"]
+
+[[skill]]
+id = "n.kernel-logs"
+chapter = "N"
+title = "Kernel logs"
+summary = "Read the kernel ring buffer with dmesg and journalctl -k."
+requires = ["h.journalctl", "n.kernel-modules"]
+
+[[skill]]
+id = "n.initramfs-cmdline"
+chapter = "N"
+title = "initramfs and the kernel command line"
+summary = "Explain the initramfs and kernel parameters."
+requires = ["h.boot-process"]
+
+[[skill]]
+id = "n.boot-failure"
+chapter = "N"
+title = "Boot failure diagnosis"
+summary = "Recover from boot failures such as a bad fstab entry or missing module."
+requires = ["n.kernel-logs", "j.fstab-persistence", "n.initramfs-cmdline"]
+applied = true
+
+# ---------------------------------------------------------------- O
+
+[[skill]]
+id = "o.cpu-analysis"
+chapter = "O"
+title = "CPU analysis"
+summary = "Attribute CPU usage to processes and threads and interpret user/system/iowait."
+requires = ["g.resource-monitoring"]
+
+[[skill]]
+id = "o.load-average"
+chapter = "O"
+title = "Interpreting load"
+summary = "Interpret load averages relative to CPU count and runnable/blocked tasks."
+requires = ["o.cpu-analysis"]
+
+[[skill]]
+id = "o.memory-analysis"
+chapter = "O"
+title = "Memory analysis"
+summary = "Interpret free, available memory, page cache, swap use and OOM events."
+requires = ["g.resource-exhaustion"]
+
+[[skill]]
+id = "o.io-analysis"
+chapter = "O"
+title = "I/O analysis"
+summary = "Identify I/O bottlenecks and the processes causing them."
+requires = ["j.capacity", "o.cpu-analysis"]
+
+[[skill]]
+id = "o.observability"
+chapter = "O"
+title = "Observability"
+summary = "Combine metrics, logs and traces to explain system behaviour."
+requires = ["h.journalctl", "o.cpu-analysis"]
+
+[[skill]]
+id = "o.capacity-planning"
+chapter = "O"
+title = "Capacity planning"
+summary = "Project resource trends and plan capacity."
+requires = ["o.memory-analysis", "o.io-analysis"]
+
+# ---------------------------------------------------------------- P
+
+[[skill]]
+id = "p.namespaces"
+chapter = "P"
+title = "Namespaces"
+summary = "Explain PID, mount, network, UTS, IPC and user namespaces."
+requires = ["n.kernel-userspace"]
+
+[[skill]]
+id = "p.cgroups"
+chapter = "P"
+title = "Control groups"
+summary = "Explain cgroups v2 and how systemd uses them to limit resources."
+requires = ["g.resource-monitoring", "h.service-concepts"]
+
+[[skill]]
+id = "p.chroot"
+chapter = "P"
+title = "chroot"
+summary = "Explain chroot and why it is not a security boundary."
+requires = ["b.fhs-layout", "p.namespaces"]
+
+[[skill]]
+id = "p.container-concepts"
+chapter = "P"
+title = "Containers"
+summary = "Explain images, layers and containers as isolated processes."
+requires = ["p.namespaces", "p.cgroups"]
+
+[[skill]]
+id = "p.container-usage"
+chapter = "P"
+title = "Running containers"
+summary = "Run, inspect and stop containers with podman-style commands."
+requires = ["p.container-concepts"]
+
+[[skill]]
+id = "p.container-security"
+chapter = "P"
+title = "Container security"
+summary = "Explain rootless containers, capabilities and dangerous mounts such as the runtime socket."
+requires = ["p.container-usage", "l.permission-audit"]
+
+[[skill]]
+id = "p.virtualization"
+chapter = "P"
+title = "Virtualization"
+summary = "Explain hypervisors, KVM and the differences from containers."
+requires = ["n.kernel-userspace"]
+
+# ---------------------------------------------------------------- Q
+
+[[skill]]
+id = "q.toolchain"
+chapter = "Q"
+title = "Compilers and toolchains"
+summary = "Explain compiling, linking and the role of gcc/clang."
+requires = ["e.script-structure"]
+
+[[skill]]
+id = "q.shared-libraries"
+chapter = "Q"
+title = "Shared libraries"
+summary = "Diagnose missing libraries with ldd, ldconfig and LD_LIBRARY_PATH."
+requires = ["q.toolchain", "e.path-lookup"]
+
+[[skill]]
+id = "q.abi-environment"
+chapter = "Q"
+title = "ABI and environment"
+summary = "Explain ABI compatibility and environment-dependent program behaviour."
+requires = ["q.shared-libraries"]
+
+[[skill]]
+id = "q.build-systems"
+chapter = "Q"
+title = "Build systems"
+summary = "Read and run Makefiles and explain targets and dependencies."
+requires = ["q.toolchain"]
+
+[[skill]]
+id = "q.debugging-tracing"
+chapter = "Q"
+title = "Debugging and tracing"
+summary = "Choose between gdb, strace and ltrace to investigate a misbehaving program."
+requires = ["q.toolchain", "n.syscalls"]
+
+[[skill]]
+id = "q.version-control"
+chapter = "Q"
+title = "Version control basics"
+summary = "Track configuration and code changes with git."
+requires = ["b.edit-files"]
+
+# ---------------------------------------------------------------- R
+
+[[skill]]
+id = "r.distro-families"
+chapter = "R"
+title = "Distribution families"
+summary = "Identify a distribution from /etc/os-release and know its family's conventions."
+requires = ["f.package-concepts"]
+
+[[skill]]
+id = "r.package-translation"
+chapter = "R"
+title = "Translating package operations"
+summary = "Perform the same package task with apt, dnf and pacman."
+requires = ["f.apt-basics", "f.dnf-basics", "f.pacman-basics"]
+
+[[skill]]
+id = "r.config-paths"
+chapter = "R"
+title = "Configuration path differences"
+summary = "Find the equivalent configuration files and package names across families."
+requires = ["r.distro-families", "h.unit-files"]
+
+[[skill]]
+id = "r.firewall-tools"
+chapter = "R"
+title = "Firewall front-ends"
+summary = "Apply the same policy with ufw, firewall-cmd and nft."
+requires = ["i.firewalls", "r.distro-families"]
+
+[[skill]]
+id = "r.logging-differences"
+chapter = "R"
+title = "Logging differences"
+summary = "Find authentication and system logs on journald-only and rsyslog systems."
+requires = ["h.traditional-logs", "r.distro-families"]
+
+[[skill]]
+id = "r.admin-groups"
+chapter = "R"
+title = "Administrative groups"
+summary = "Grant administrative rights with sudo vs wheel groups."
+requires = ["d.sudo-least-privilege", "r.distro-families"]
+
+# ---------------------------------------------------------------- S
+
+[[skill]]
+id = "s.web-server-ops"
+chapter = "S"
+title = "Web server operations"
+summary = "Configure, troubleshoot and secure a web server."
+requires = ["h.failed-services", "i.http-curl"]
+
+[[skill]]
+id = "s.database-ops"
+chapter = "S"
+title = "Database operations"
+summary = "Operate, back up and restore a database service."
+requires = ["h.systemctl-control", "j.backup-restore"]
+
+[[skill]]
+id = "s.advanced-networking"
+chapter = "S"
+title = "Advanced networking"
+summary = "Explain bridges, VLANs, bonding and policy routing."
+requires = ["i.network-config"]
+
+[[skill]]
+id = "s.infra-automation"
+chapter = "S"
+title = "Infrastructure automation"
+summary = "Describe infrastructure as code and idempotent configuration tools."
+requires = ["k.config-management-concepts"]
+
+[[skill]]
+id = "s.reliability"
+chapter = "S"
+title = "Service reliability"
+summary = "Define SLOs, alerting and incident review practices."
+requires = ["o.observability"]
+
+[[skill]]
+id = "s.disaster-recovery"
+chapter = "S"
+title = "Disaster recovery"
+summary = "Plan and rehearse recovery from total host loss."
+requires = ["j.backup-restore", "n.boot-failure"]
+
+[[skill]]
+id = "s.security-internals"
+chapter = "S"
+title = "Linux security internals"
+summary = "Explain capabilities, seccomp, LSMs and namespaces as security mechanisms."
+requires = ["l.mac-concepts", "n.syscalls"]
+
+# ---------------------------------------------------------------- T
+
+[[skill]]
+id = "t.web-outage"
+chapter = "T"
+title = "Capstone: the web outage"
+summary = "Restore a production web server with several interacting faults and verify the fix."
+requires = ["m.multi-fault", "f.conflicts-broken", "k.cron-environment", "d.chown-chgrp"]
+applied = true
+
+[[skill]]
+id = "t.security-incident"
+chapter = "T"
+title = "Capstone: the intrusion"
+summary = "Investigate and remediate a simulated compromise while preserving evidence."
+requires = ["l.incident-response", "m.evidence-correlation"]
+applied = true
+
+[[skill]]
+id = "t.server-buildout"
+chapter = "T"
+title = "Capstone: the new server"
+summary = "Provision a server to a specification: users, services, storage, firewall and backups."
+requires = ["h.unit-files", "i.firewalls", "d.group-management", "j.fstab-persistence", "k.backup-automation"]
+applied = true

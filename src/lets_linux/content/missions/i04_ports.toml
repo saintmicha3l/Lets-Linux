@@ -1,0 +1,129 @@
+schema = 1
+
+[mission]
+id = "i04-ports"
+title = "Is It the Network or the Service?"
+chapter = "I"
+kind = "lesson"
+order = 4
+difficulty = 3
+requires = ["i01-network-basics", "h01-meet-the-services"]
+skills = ["i.ports-sockets", "i.ping-reachability", "i.net-troubleshooting"]
+xp = 120
+estimated_minutes = 18
+
+[briefing]
+context = """
+Three tickets arrived on this Ubuntu server: "the file server is down", "is the database
+port open for the new app?" and "what is this machine itself listening on?". Each needs a
+different test — and ping alone would mislead you once.
+"""
+concept = """
+A host is reachable when packets get there and back (ping, if ICMP is allowed). A service is
+reachable when its port accepts TCP connections: nc -zv HOST PORT tests exactly that.
+"Connection refused" means the host answered and nothing listens on the port; a timeout
+usually means a firewall drops the packets silently. ss -tlnp shows what this machine listens
+on, and which program owns each port.
+"""
+objectives = ["Tell host reachability from service reachability", "Test ports with nc", "Interpret refused versus timeout", "List local listening ports"]
+
+[environment]
+profile = "ubuntu"
+
+[[environment.setup]]
+action = "run"
+command = "apt-get install -y nginx"
+
+[[task]]
+id = "ping"
+title = "Is the file server down?"
+kind = "guided"
+instructions = "Ping files.example.lan three times."
+skills = { "i.ping-reachability" = 1.0 }
+checks = [{ type = "command_used", command = "ping", args_regex = "files", scope = "history" }]
+hints = ["ping -c COUNT HOST", "-c 3", "Type: ping -c 3 files.example.lan"]
+explanation = "100% packet loss. Before concluding anything, test the service itself."
+
+[[task]]
+id = "ssh"
+title = "Test the service, not the host"
+kind = "independent"
+instructions = "Users reach the file server over SSH (port 22). Test whether that port accepts connections."
+skills = { "i.ports-sockets" = 1.0 }
+question = { prompt = "Is the file server down?", type = "choice", choices = ["Yes: it did not answer ping", "No: SSH accepts connections; it only drops pings (a firewall)", "Cannot be known"], answer = 1 }
+hints = ["nc -zv HOST PORT tests a TCP port.", "nc -zv files.example.lan 22", "The answer is (b)."]
+explanation = "Firewalls that drop ICMP are common. A port test is the real proof that a service is up."
+
+[[task]]
+id = "db"
+title = "Database port"
+kind = "independent"
+instructions = "The new application needs PostgreSQL (port 5432) on db.example.lan. Check it."
+skills = { "i.ports-sockets" = 1.0 }
+checks = [{ type = "output_contains", regex = "5432.*succeeded", command = ["nc", "ncat"] }]
+hints = ["Same test, another host and port.", "nc -zv db.example.lan 5432", "Type: nc -zv db.example.lan 5432"]
+explanation = "Port 5432 accepts connections — authentication and database names are the next questions, for the database team."
+
+[[task]]
+id = "refused"
+title = "Refused or dropped?"
+kind = "independent"
+instructions = "Test port 8080 on intranet.example.lan and on files.example.lan (use -w 3 to limit the wait)."
+skills = { "i.ports-sockets" = 1.0, "i.net-troubleshooting" = 1.0 }
+question = { prompt = "Which host silently drops connections to closed ports (a timeout instead of 'Connection refused')?", type = "exact", accept = ["files", "files.example.lan"] }
+hints = ["nc -zv -w 3 intranet.example.lan 8080; nc -zv -w 3 files.example.lan 8080", "One says 'Connection refused', the other times out.", "files.example.lan"]
+explanation = "Refused = the host is there and said no. Timeout = something swallowed the packets: a firewall, or a host that is not there."
+
+[[task]]
+id = "local"
+title = "What am I listening on?"
+kind = "independent"
+instructions = "List this machine's listening TCP ports with their programs."
+skills = { "i.ports-sockets" = 1.0 }
+question = { prompt = "Which program listens on port 80 on this machine?", type = "exact", accept = ["nginx"] }
+hints = ["ss shows sockets; -t TCP, -l listening, -n numeric, -p programs (needs root).", "sudo ss -tlnp", "nginx"]
+explanation = "Without sudo, ss cannot show other users' processes — root-owned daemons appear without the users:(...) column."
+
+[debrief]
+summary = """
+ping tests hosts (when allowed); nc -zv tests services; refused vs timeout tells a closed
+port from a firewall; ss -tlnp shows local listeners.
+"""
+alternatives = ["curl -v telnet://host:port", "bash: echo > /dev/tcp/host/port (not simulated)", "nmap for many ports (not simulated)"]
+pitfalls = ["Declaring a host down because ping fails.", "Running ss -tlnp without sudo and missing the process names."]
+next = "Next: logging in to other machines with SSH."
+
+[[solution]]
+name = "nc and ss"
+steps = [
+    "ping -c 3 files.example.lan",
+    "nc -zv files.example.lan 22",
+    ":answer b",
+    "nc -zv db.example.lan 5432",
+    "nc -zv -w 3 intranet.example.lan 8080",
+    "nc -zv -w 3 files.example.lan 8080",
+    ":answer files",
+    { input = ["letslinux"] },
+    "sudo ss -tlnp",
+    ":answer nginx",
+]
+
+[[solution]]
+name = "curl and short names"
+steps = [
+    "ping -c 1 files",
+    "nc -v files 22",
+    ":answer No: SSH accepts connections; it only drops pings (a firewall)",
+    "nc -vz db 5432",
+    "curl --connect-timeout 2 http://files:8080/",
+    "curl http://intranet:8080/",
+    ":answer files.example.lan",
+    "ss -tln",
+    { input = ["letslinux"] },
+    "sudo ss -tlp",
+    ":answer nginx",
+]
+
+[[counterexample]]
+name = "trusting ping"
+steps = ["ping -c 3 files.example.lan", ":answer a", ":answer files", ":answer nginx"]

@@ -1,0 +1,1929 @@
+# In-game manual pages. Options are generated from each command's option
+# table; this file adds descriptions, examples and simulator notes.
+#
+# [page.NAME]
+# section = 1
+# description = "..."
+# examples = [["command", "what it does"], ...]
+# notes = "differences from real Linux"
+# see_also = ["other(1)"]
+
+schema = 1
+
+[page.ls]
+description = """
+List information about the FILEs (the current directory by default). Entries are sorted
+alphabetically unless a sort option is given. On a terminal, names are printed in columns;
+when the output is a pipe or file, one name per line.
+
+In the long format (-l) each line shows: file type and permissions, number of hard links,
+owner, group, size in bytes, modification time and name. Symbolic links are shown as
+"name -> target"."""
+examples = [
+    ["ls -l", "long listing of the current directory"],
+    ["ls -la ~", "include hidden (dot) files in your home directory"],
+    ["ls -lh /var/log", "human-readable sizes"],
+    ["ls -lt | head", "the ten most recently modified entries"],
+    ["ls -ld /tmp", "information about the directory itself, not its contents"],
+]
+notes = "Sorting uses the C locale (byte order). Colors follow the Debian default LS_COLORS."
+see_also = ["stat(1)", "find(1)", "dircolors(1)"]
+
+[page.cd]
+section = 1
+description = """
+cd is a shell builtin: it changes the shell's current working directory. With no argument it
+changes to $HOME; "cd -" changes to the previous directory ($OLDPWD) and prints it.
+
+By default cd follows the logical path you typed (-L), so "cd .." after entering a symbolic
+link returns to the link's parent. "cd -P" resolves symbolic links first.
+
+You need execute (search) permission on a directory to cd into it."""
+examples = [["cd /etc", "absolute path"], ["cd ..", "parent directory"], ["cd -", "previous directory"], ["cd ~/projects", "a directory in your home"]]
+see_also = ["pwd(1)", "bash(1)"]
+
+[page.pwd]
+description = "Print the full name of the current working directory. -P prints the physical path with all symbolic links resolved; -L (the shell builtin's default) prints $PWD."
+see_also = ["cd(1)"]
+
+[page.cat]
+description = "Concatenate FILEs (or standard input when FILE is - or absent) to standard output. Commonly used to display a small file."
+examples = [["cat /etc/hostname", "show a file"], ["cat a.txt b.txt > both.txt", "join two files"], ["cat -n script.sh", "show with line numbers"]]
+see_also = ["less(1)", "head(1)", "tail(1)", "tac(1)"]
+
+[page.echo]
+description = "Display the STRINGs, separated by single spaces, followed by a newline. -n omits the newline; -e interprets backslash escapes such as \\n and \\t. echo is also a bash builtin."
+examples = [["echo $HOME", "print a variable"], ["echo -e 'a\\tb'", "print a tab"], ["echo text >> file", "append a line to a file"]]
+see_also = ["printf(1)"]
+
+[page.grep]
+description = """
+Search each FILE (or standard input) for lines matching PATTERNS and print them. PATTERNS are
+basic regular expressions unless -E (extended) or -F (fixed strings) is given.
+
+Exit status: 0 if a line is selected, 1 if no lines were selected, 2 if an error occurred."""
+examples = [
+    ["grep error /var/log/syslog", "lines containing 'error'"],
+    ["grep -i -n warn app.log", "case-insensitive, with line numbers"],
+    ["grep -r TODO ~/project", "search a directory tree"],
+    ["grep -v '^#' config", "lines that are not comments"],
+    ["grep -E 'ERROR|FATAL' app.log", "either word"],
+    ["ps aux | grep sshd", "filter another command's output"],
+]
+notes = "Regular expressions are translated to Python's engine; alternation picks the leftmost-first match rather than POSIX leftmost-longest."
+see_also = ["sed(1)", "awk(1)", "regex(7)"]
+
+[page.chmod]
+description = """
+Change the permission bits of each FILE. MODE is either octal (e.g. 755, 0640, 4755) or a
+comma-separated list of symbolic clauses [ugoa][+-=][rwxXst], e.g. u+x, go-w, a=r, u=rwx,g=rx,o=.
+
+Only the file's owner (or root) may change its mode. On directories, r lists names, w creates and
+removes entries, and x allows access to entries (traversal)."""
+examples = [
+    ["chmod u+x script.sh", "make a script executable for its owner"],
+    ["chmod 640 secrets.txt", "owner read/write, group read, others nothing"],
+    ["chmod -R g+w shared/", "recursively add group write"],
+    ["chmod 1777 /srv/drop", "world-writable directory with the sticky bit"],
+]
+see_also = ["chown(1)", "umask(1)", "stat(1)", "ls(1)"]
+
+[page.chown]
+description = "Change the owner and/or group of each FILE. Only root can change a file's owner; the owner may change the group to any group they belong to."
+examples = [["sudo chown alice report.txt", "give a file to alice"], ["sudo chown -R www-data:www-data /var/www", "recursively change owner and group"]]
+see_also = ["chgrp(1)", "chmod(1)"]
+
+[page.find]
+description = """
+Search the directory tree rooted at each starting-point, evaluating the expression for each file.
+Tests (-name, -type, -size, -mtime, -user, -perm, ...) and actions (-print, -delete, -exec) are
+combined with -a (and, the default), -o (or) and ! (not); parentheses group them."""
+examples = [
+    ["find . -name '*.log'", "files ending in .log below the current directory"],
+    ["find /var -type f -size +100M", "files larger than 100 MiB"],
+    ["find ~ -mtime -1", "modified in the last 24 hours"],
+    ["find / -perm -4000 -type f 2>/dev/null", "setuid programs (permission audit)"],
+    ["find /tmp -name '*.tmp' -delete", "delete matching files"],
+    ["find . -name '*.sh' -exec chmod +x {} \\;", "run a command on each match"],
+]
+see_also = ["xargs(1)", "locate(1)"]
+
+[page.sed]
+description = """
+sed is a stream editor: it reads input line by line, applies a script, and prints the result.
+The most common command is s/REGEX/REPLACEMENT/FLAGS. Use -n to suppress automatic printing,
+-E for extended regular expressions and -i to edit files in place."""
+examples = [
+    ["sed 's/old/new/' file", "replace the first match on each line"],
+    ["sed 's/old/new/g' file", "replace every match"],
+    ["sed -n '10,20p' file", "print lines 10 to 20"],
+    ["sed '/^#/d' config", "delete comment lines"],
+    ["sed -i.bak 's/80/8080/' app.conf", "edit in place, keeping a backup"],
+]
+notes = "The e, F, W and v commands are not supported. sed -i replaces the file with a new one (new inode), as GNU sed does."
+see_also = ["awk(1)", "grep(1)", "tr(1)"]
+
+[page.awk]
+description = """
+awk scans input as records (lines) split into fields ($1, $2, ... with $0 the whole line) and runs
+pattern { action } rules. BEGIN rules run before input and END rules after. -F sets the field
+separator and -v assigns variables."""
+examples = [
+    ["awk '{print $1}' file", "first field of each line"],
+    ["awk -F: '$3 >= 1000 {print $1}' /etc/passwd", "regular (non-system) user accounts"],
+    ["awk '{sum += $2} END {print sum}' data", "total of column two"],
+    ["awk '/ERROR/ {n++} END {print n}' log", "count matching lines"],
+]
+notes = "A POSIX awk with common gawk conveniences; system() and pipes run inside the simulator."
+see_also = ["sed(1)", "cut(1)"]
+
+[page.sudo]
+section = 8
+description = """
+Run COMMAND as another user (root by default) if the security policy in /etc/sudoers allows it.
+Membership of the administrative group (sudo on Debian/Ubuntu, wheel on Fedora/Arch) usually
+grants this. Use sudo for individual commands rather than working as root."""
+examples = [["sudo apt update", "run one command as root"], ["sudo -u www-data id", "run as another user"], ["sudo -l", "list what you may run"], ["sudo -i", "start a root login shell (use sparingly)"]]
+notes = "Simulated: sudo changes only simulated credentials. Password prompts are simulated; credentials are cached for the session."
+see_also = ["su(1)", "sudoers(5)", "visudo(8)"]
+
+[page.passwd]
+section = 5
+file = true
+description = """
+/etc/passwd contains one line per account with seven colon-separated fields:
+
+    name:password:UID:GID:GECOS:home:shell
+
+The password field is normally "x", meaning the hash is stored in /etc/shadow (readable only by
+root and, on Debian, the shadow group). UIDs below 1000 are system accounts."""
+see_also = ["shadow(5)", "group(5)", "useradd(8)", "getent(1)"]
+
+[page.group]
+section = 5
+file = true
+description = "/etc/group contains one line per group: name:password:GID:member1,member2. Members listed here have the group as a supplementary group; a user's primary group is the GID in /etc/passwd."
+see_also = ["passwd(5)", "groupadd(8)", "usermod(8)", "id(1)"]
+
+[page.hier]
+section = 7
+file = true
+description = """
+The Linux filesystem hierarchy (FHS):
+
+  /bin, /sbin   essential programs (symbolic links into /usr on modern systems)
+  /boot         kernel and boot loader files
+  /dev          device files
+  /etc          host-specific configuration
+  /home         users' home directories
+  /lib          shared libraries (into /usr)
+  /media, /mnt  mount points for removable media and temporary mounts
+  /opt          add-on software packages
+  /proc, /sys   virtual filesystems exposing kernel and process information
+  /root         the root user's home directory
+  /run          runtime data since boot (tmpfs)
+  /srv          data served by this system
+  /tmp          temporary files (world-writable, sticky)
+  /usr          installed software: bin, sbin, lib, share, local
+  /var          variable data: logs, caches, spools, databases"""
+see_also = ["file-hierarchy(7)"]
+
+[page.bash]
+description = """
+The shell reads commands, expands them (variables, globs, substitutions) and runs them. Let's Linux
+implements a documented subset of Bash: quoting, parameter and arithmetic expansion, command
+substitution, globbing, brace expansion, pipelines, redirections, here-documents, if/for/while/
+until/case, functions, local variables, traps, set -euxo pipefail and job control basics."""
+notes = "Not supported: arrays, process substitution, coproc, select, extglob. Unsupported syntax is reported, never silently misinterpreted."
+see_also = ["sh(1)", "help(1)"]
+
+[page.man]
+description = "Display the manual page for a command or file. Use the arrow keys or PageUp/PageDown in the pager and q to quit. man -k KEYWORD searches page descriptions (like apropos)."
+examples = [["man ls", "manual for ls"], ["man 5 passwd", "the passwd file format"], ["man -k permission", "pages mentioning permission"]]
+see_also = ["help(1)", "whatis(1)", "apropos(1)"]
+
+[page.nano]
+description = "A simple text editor. In Let's Linux the editor opens full screen: edit the text, press Ctrl+S to save and Ctrl+Q (or Esc) to close. Saving is permission-checked like any other write."
+notes = "vi and vim open the same simple editor; modal vi editing is not emulated."
+see_also = ["vi(1)"]
+
+[page.ps]
+description = "Report a snapshot of processes. Common forms: ps (your terminal's processes), ps aux (all processes, BSD style), ps -ef (all processes, full format), ps -o pid,ppid,cmd (choose columns)."
+examples = [["ps aux", "every process with CPU and memory use"], ["ps -ef --forest", "process tree"], ["ps -o pid,stat,cmd -p 1", "chosen columns for PID 1"]]
+see_also = ["top(1)", "pgrep(1)", "kill(1)"]
+
+[page.kill]
+description = "Send a signal (TERM by default) to processes by PID or job (%1). TERM asks a program to exit; KILL (9) cannot be caught or ignored; HUP often asks daemons to reload."
+examples = [["kill 1234", "ask process 1234 to terminate"], ["kill -9 1234", "force it"], ["kill %1", "terminate background job 1"], ["kill -l", "list signals"]]
+see_also = ["ps(1)", "pkill(1)", "signal(7)"]
+
+[page.journalctl]
+description = """
+Query the systemd journal: the structured log collected by systemd-journald from the kernel,
+services and programs. Without options it shows every entry the caller may read, oldest first.
+Filters combine: -u UNIT, -t IDENTIFIER, -p PRIORITY (a level such as err, or a range such as
+warning..err), -b [BOOT] (0 is the current boot, -1 the previous one), -k (kernel messages of
+this boot), --since/--until (times such as "2026-03-02 08:00", "yesterday", "1 hour ago"),
+-g PATTERN (regular expression; case-insensitive unless the pattern contains capitals) and
+FIELD=VALUE matches such as _PID=1 or SYSLOG_IDENTIFIER=sudo.
+
+Members of the adm and systemd-journal groups (and wheel on Fedora/Arch) can read the whole
+system journal; other users only see their own entries.
+
+The journal survives reboots only when /var/log/journal exists (persistent storage). Debian 12
+keeps it in /run/log/journal and loses it at reboot; its classic text logs in /var/log are
+written by rsyslog."""
+examples = [
+    ["journalctl -p err -b", "errors and worse since this boot"],
+    ["journalctl -u ssh --since today", "today's entries for ssh.service"],
+    ["journalctl -t sudo -n 20", "the last 20 sudo log entries"],
+    ["journalctl -b -1 -e", "the end of the previous boot's log"],
+    ["journalctl -k", "kernel messages (like dmesg)"],
+    ["journalctl --list-boots", "boots recorded in the journal"],
+    ["journalctl -o verbose -n 1", "every field of the newest entry"],
+]
+notes = "Simulated: --follow shows the latest entries instead of waiting; -x adds no catalog text; cursors are not supported. Output longer than 40 lines opens the pager unless --no-pager is given."
+see_also = ["systemctl(1)", "logger(1)", "dmesg(1)", "journald.conf(5)", "rsyslog.conf(5)"]
+
+[page.logger]
+description = """
+Write a message to the system log. The default tag is your user name and the default priority
+user.notice; -p FACILITY.LEVEL changes both (for example -p local3.err). Without a message,
+logger logs each line of standard input (or of -f FILE). Scripts use logger to leave a record
+that administrators can find with journalctl -t TAG or in /var/log/syslog."""
+examples = [
+    ["logger 'backup finished'", "log a message as yourself"],
+    ["logger -t backup -p user.err 'disk full'", "with a tag and priority"],
+    ["some-command 2>&1 | logger -t job", "log a command's output"],
+]
+notes = "Simulated: remote logging (-n) is not supported."
+see_also = ["journalctl(1)", "rsyslog.conf(5)"]
+
+[page.dmesg]
+description = """
+Print the kernel ring buffer: messages from the kernel and drivers since boot, with timestamps
+in seconds since boot (-T shows wall-clock times). -l LEVELS filters by level, for example
+-l err,warn. Reading the buffer requires root when the kernel.dmesg_restrict parameter is 1,
+as on Debian and Ubuntu. -C (root) clears the buffer; the journal keeps its own copy."""
+examples = [["sudo dmesg | tail", "the latest kernel messages"], ["sudo dmesg -T -l err,warn", "problems, with readable times"]]
+notes = "Simulated: --follow is not supported. The ring buffer holds only messages from the current boot."
+see_also = ["journalctl(1)"]
+
+[page."rsyslog.conf"]
+section = 5
+file = true
+summary = "rsyslogd configuration file"
+description = """
+Configuration of rsyslogd, which writes classic text logs such as /var/log/syslog and
+/var/log/auth.log on Debian and Ubuntu. Each rule line has a selector and an action:
+
+    auth,authpriv.*          /var/log/auth.log
+    *.*;auth,authpriv.none   -/var/log/syslog
+
+A selector is FACILITY.PRIORITY: the priority means 'this level or more severe', =LEVEL means
+exactly that level, !LEVEL means only less severe levels, and none excludes the facility.
+Several selectors are separated by semicolons; facilities by commas. Files in /etc/rsyslog.d
+are included. Changes take effect when rsyslog restarts."""
+examples = [["local3.*   /var/log/myapp.log", "send facility local3 to its own file"]]
+notes = "Simulated subset: selector lines with file actions, $FileOwner/$FileGroup/$FileCreateMode, $IncludeConfig and the traditional timestamp template. Modules, RainerScript and remote actions are ignored."
+see_also = ["journalctl(1)", "logger(1)"]
+
+[page.systemctl]
+description = """
+Control systemd, the service manager. A unit is something systemd manages: a service (a
+program, usually a daemon), a target (a group of units, like multi-user.target), a timer, a
+socket or a mount. Unit files describe units; systemd reads them when it starts or when you
+run systemctl daemon-reload.
+
+Running is not the same as enabled: start/stop change what runs now; enable/disable create or
+remove the links that make a unit start at boot. Use status to see a unit's state, its
+processes and its latest log lines, and journalctl -u UNIT for the full log.
+
+Resource limits: set-property UNIT CPUQuota=50% MemoryMax=512M applies limits to the unit's
+control group at once and keeps them in /etc/systemd/system.control/UNIT.d/ (--runtime: in
+/run, until reboot); show -p MemoryMax,MemoryCurrent,CPUQuotaPerSecUSec reads them back.
+
+Changing state requires root (or authentication through polkit); looking does not."""
+examples = [
+    ["systemctl status ssh", "state, processes and recent logs of ssh.service"],
+    ["sudo systemctl restart nginx", "stop and start a service"],
+    ["sudo systemctl enable --now cron", "start now and at every boot"],
+    ["systemctl --failed", "units that failed"],
+    ["systemctl list-unit-files --state=enabled", "what starts at boot"],
+    ["systemctl cat rsyslog", "show the unit file and its drop-ins"],
+    ["sudo systemctl edit myapp", "add a drop-in override"],
+    ["sudo systemctl daemon-reload", "reload unit files after editing them"],
+]
+notes = "Simulated subset: see docs/LINUX_SIMULATION_SPEC.md §6. Long-running shell scripts stop executing when they first wait (sleep); user managers, timers firing, sockets and reboot are not simulated yet."
+see_also = ["journalctl(1)", "systemd.unit(5)", "systemd.service(5)"]
+
+[page."systemd.unit"]
+section = 5
+file = true
+summary = "unit configuration"
+description = """
+A unit file is an INI-style text file. The [Unit] section describes the unit and its
+relationships: Description=, Documentation=, Requires= (must be running; failure propagates),
+Wants= (nice to have), After=/Before= (start order only), Conflicts=. The [Install] section is
+used by systemctl enable: WantedBy=multi-user.target makes the unit start at boot.
+
+Files in /etc/systemd/system override the packaged ones in /usr/lib/systemd/system (or
+/lib/systemd/system). Drop-in files NAME.service.d/*.conf change single settings; an empty
+assignment such as ExecStart= clears a list before a new value is given. Run
+systemctl daemon-reload after any change."""
+examples = [["systemctl cat ssh.service", "see the files making up a unit"]]
+see_also = ["systemd.service(5)", "systemctl(1)"]
+
+[page."systemd.service"]
+section = 5
+file = true
+summary = "service unit configuration"
+description = """
+The [Service] section of a service unit says how to run it: ExecStart= (the program, with an
+absolute path), Type= (simple, exec, forking, oneshot, notify), User= and Group=,
+WorkingDirectory=, Environment= and EnvironmentFile=, ExecStartPre=/ExecStartPost=,
+ExecReload=, ExecStop=, Restart= (no, on-failure, always, ...) with RestartSec=, and
+RemainAfterExit= for oneshot services.
+
+Exit statuses 200-243 come from systemd itself before your program ran: 203/EXEC means the
+program could not be executed, 217/USER that the User= does not exist, 200/CHDIR that the
+working directory is missing."""
+examples = [["ExecStart=/usr/local/bin/backup.sh", "the command to run"], ["Restart=on-failure", "restart after crashes"]]
+see_also = ["systemd.unit(5)", "systemctl(1)"]
+
+[page.free]
+description = """
+Show how memory is used. total is the RAM installed; used is taken by programs and the kernel;
+buff/cache is file data the kernel keeps in memory and gives back when programs need it; free
+is unused; available estimates how much programs could still get without swapping. Linux
+uses spare memory as cache on purpose, so a small 'free' number alone is not a problem —
+look at 'available' and at swap use."""
+examples = [["free -h", "human-readable sizes"], ["free -m", "in MiB"], ["watch free -h", "repeat every 2 s (watch is not simulated)"]]
+see_also = ["top(1)", "vmstat(8)", "proc(5)"]
+
+[page.uptime]
+description = """
+Print the current time, how long the system has been running, the number of logged-in users
+and the load averages over 1, 5 and 15 minutes. The load average counts processes running or
+waiting to run (and those in uninterruptible I/O); compare it with the number of CPUs (nproc)."""
+examples = [["uptime -p", "uptime in words"], ["uptime -s", "when the system booted"]]
+see_also = ["top(1)", "w(1)"]
+
+[page.top]
+description = """
+Show a summary of the system (uptime, load, tasks, CPU and memory) followed by the processes
+using the most CPU. Columns: PID, USER, PR/NI (priority and niceness), VIRT/RES/SHR (memory),
+S (state), %CPU, %MEM, TIME+ (CPU time used) and COMMAND. -o %MEM sorts by memory, -u USER
+filters, -b gives plain output for files and scripts."""
+examples = [["top -b -n 1 | head -15", "one snapshot of the busiest processes"], ["top -o %MEM", "sort by memory"], ["top -u www-data", "one user's processes"]]
+notes = "Simulated: the interactive full-screen display is not available; top prints one snapshot, as top -b -n 1 would."
+see_also = ["ps(1)", "free(1)", "uptime(1)"]
+
+[page.nice]
+description = """
+Run a command with a different niceness (-20 to 19): higher values are nicer to other
+processes and get less CPU when the CPU is busy. Ordinary users may only increase niceness;
+root may also decrease it. nice without a command prints the current niceness."""
+examples = [["nice -n 10 tar czf backup.tgz /srv", "run a heavy job politely"], ["nice", "show the current niceness"]]
+see_also = ["renice(1)", "ps(1)"]
+
+[page.renice]
+description = """
+Change the niceness of running processes: renice -n N -p PID (or -u USER for all of a user's
+processes). Users may raise the niceness of their own processes; lowering it, or changing other
+users' processes, requires root."""
+examples = [["renice -n 15 -p 4321", "deprioritise a process"], ["sudo renice -n -5 -p 4321", "give it more CPU (root only)"]]
+see_also = ["nice(1)", "top(1)"]
+
+[page.proc]
+section = 5
+file = true
+summary = "process information pseudo-filesystem"
+description = """
+/proc is generated by the kernel on the fly: nothing in it is stored on disk. Each process has
+a directory /proc/PID with status (state, owner, memory), cmdline (arguments separated by NUL
+bytes), environ (environment, readable by the owner only), cwd and exe (links) and fd/ (open
+files). /proc/self is the process reading it. System-wide files include meminfo, cpuinfo,
+loadavg, uptime, mounts and version; /proc/sys holds kernel parameters that root can change
+(the sysctl command writes the same files)."""
+examples = [["cat /proc/meminfo", "detailed memory figures"], ["tr '\\0' ' ' < /proc/1/cmdline", "a process's command line"], ["cat /proc/sys/net/ipv4/ip_forward", "is IP forwarding on?"]]
+see_also = ["ps(1)", "free(1)", "sysctl(8)"]
+
+[page.apt]
+section = 8
+description = """
+Install, remove and upgrade software on Debian and Ubuntu. apt update refreshes the list of
+available packages; apt install NAME installs a package and the packages it depends on;
+apt remove keeps its configuration files (apt purge deletes them too); apt upgrade installs
+newer versions; apt autoremove removes dependencies nothing needs any more. apt search,
+apt show and apt list --installed find and describe packages. Changing the system requires
+root (sudo); looking does not. apt-get and apt-cache are the older, script-friendly tools."""
+examples = [
+    ["sudo apt update && sudo apt upgrade", "refresh the lists and install updates"],
+    ["sudo apt install nginx", "install a package with its dependencies"],
+    ["apt list --upgradable", "what can be upgraded"],
+    ["apt show tree", "details of a package"],
+    ["sudo apt-mark hold nginx", "keep a package at its current version"],
+]
+notes = "Simulated: the repository is the game's package catalogue; nothing is downloaded."
+see_also = ["dpkg(1)", "apt-get(8)", "apt-cache(8)", "apt-mark(8)"]
+
+[page.dpkg]
+description = """
+The low-level Debian package tool. apt calls it to unpack and configure packages. Use it to
+query what is installed: dpkg -l lists packages (ii = installed, rc = removed but configuration
+kept), dpkg -L PACKAGE lists a package's files, dpkg -S FILE finds the package that owns a
+file, dpkg -s PACKAGE shows its status. dpkg -V [PACKAGE] verifies installed files against the
+checksums the packages shipped: each line is a problem — ??5?????? means the content changed,
+"missing" that the file is gone, c marks configuration files (changes there are often
+intended). No output means nothing differs."""
+examples = [["sudo dpkg -V", "which packaged files were modified?"], ["dpkg -S /usr/bin/ls", "which package installed ls"], ["dpkg -L nginx", "files of nginx"], ["dpkg -l | grep '^rc'", "removed packages with leftover configuration"]]
+see_also = ["apt(8)", "dpkg-query(1)"]
+
+[page.dnf]
+section = 8
+description = """
+Fedora's package manager (dnf5). dnf install, remove, upgrade and autoremove change the
+system (as root); dnf list --installed, dnf info, dnf search and dnf provides FILE look things
+up; dnf check-upgrade lists available updates and exits with status 100 when there are some.
+dnf asks for confirmation with [y/N]: the default is no; -y answers yes. Services installed by
+packages are not enabled or started automatically on Fedora."""
+examples = [["sudo dnf install nginx", "install a package"], ["dnf provides /usr/bin/tree", "which package provides a file"], ["sudo dnf upgrade", "install updates"]]
+see_also = ["rpm(8)"]
+
+[page.rpm]
+section = 8
+description = """
+The RPM package manager's query tool: rpm -qa lists installed packages, rpm -qi NAME shows
+information, rpm -ql NAME lists files, rpm -qc NAME lists configuration files and rpm -qf FILE
+finds the owning package. rpm -V NAME (or -Va for everything) verifies files: S size, M mode,
+5 checksum, T modification time differ; c marks configuration files. Install software with dnf."""
+examples = [["sudo rpm -Va", "verify every installed package"], ["rpm -qf /usr/sbin/nginx", "who owns this file?"], ["rpm -qa | sort", "everything installed"]]
+see_also = ["dnf(8)"]
+
+[page.pacman]
+section = 8
+description = """
+Arch Linux's package manager. -S installs (-Syu refreshes the databases and upgrades
+everything — the usual way to update Arch), -R removes (-Rns also removes unneeded
+dependencies and configuration), -Q queries installed packages (-Qi info, -Ql files, -Qo FILE
+owner, -Qu upgradable), -Ss searches the repositories."""
+examples = [["sudo pacman -Syu", "update the whole system"], ["sudo pacman -S nginx", "install a package"], ["pacman -Qo /usr/bin/ls", "which package owns a file"]]
+see_also = ["makepkg(8)"]
+
+[page.nginx]
+section = 8
+description = """
+A web server and reverse proxy. Configuration lives in /etc/nginx/nginx.conf and the files it
+includes (on Debian, sites-enabled/ links to sites-available/). Always test before applying:
+nginx -t checks the syntax and reports the file and line of the first error. systemctl reload
+nginx (or nginx -s reload) applies a new configuration without dropping connections; if the
+new configuration is invalid nginx keeps running with the old one. Logs: /var/log/nginx."""
+examples = [["sudo nginx -t", "test the configuration"], ["sudo systemctl reload nginx", "apply configuration changes"], ["sudo ss -tlnp | grep nginx", "which ports nginx listens on"]]
+notes = "Simulated subset: configuration parsing and checks, ports, workers, reload and stop. Serving HTTP requests arrives with the networking milestone."
+see_also = ["systemctl(1)", "ss(8)"]
+
+[page.ss]
+section = 8
+description = """
+Show sockets. ss -tlnp lists listening TCP sockets with numeric ports and the processes
+using them (process details of other users' sockets need root). -u selects UDP, -l listening
+sockets, -a all, -n numeric addresses and ports, -p processes. Use it to answer "is anything
+listening on port 80, and what?"."""
+examples = [["sudo ss -tlnp", "listening TCP ports and their programs"], ["ss -tln | grep ':22 '", "is SSH listening?"]]
+notes = "Simulated: listening sockets and established connections that scenarios create; no UDP connection state or timers."
+see_also = ["ip(8)", "lsof(8)"]
+
+[page.ip]
+section = 8
+description = """
+Show and change network configuration. ip addr (ip a) lists interfaces with their addresses;
+ip link shows link state; ip route (ip r) shows the routing table — the default route says
+where packets for other networks go; ip route get ADDRESS shows which route a packet would
+take; ip neigh shows the neighbour (ARP) table. Changes need root and do not survive a reboot:
+the distribution's network configuration does that. -br gives brief output.
+
+Policy routing: there are several routing tables (main is the one ip route shows; others by
+number or by the names in /etc/iproute2/rt_tables). ip rule lists the rules that choose a
+table — by source (from), destination (to) or incoming interface (iif), in order of priority.
+ip route add … table N puts a route into table N; ip rule add from ADDRESS table N sends
+traffic from ADDRESS there; ip route get DEST from SRC shows the decision."""
+examples = [
+    ["ip -br a", "interfaces and addresses, one line each"],
+    ["ip route", "the routing table"],
+    ["ip route get 93.184.215.14", "which way a packet would go"],
+    ["sudo ip link set enp0s3 up", "bring an interface up"],
+    ["sudo ip route add default via 10.0.2.2", "restore a default route"],
+    ["ip rule", "the routing policy: which table for which traffic"],
+    ["sudo ip route add default via 192.0.2.1 dev enp0s8 table 100", "a default route in a second table"],
+    ["sudo ip rule add from 192.0.2.10 table 100", "answers from that address use table 100"],
+    ["ip route get 203.0.113.9 from 192.0.2.10", "the route for a given source address"],
+]
+see_also = ["ss(8)", "ping(8)", "hostnamectl(1)"]
+
+[page.ping]
+section = 8
+description = """
+Send ICMP echo requests and report replies. A reply proves the route to the host and back
+works and the host is up; no reply does not prove the opposite — many firewalls drop pings
+while still offering services. "Destination Host Unreachable" means nothing on the local
+network answered for that address; "Network is unreachable" means there is no route. A real
+ping runs until you press Ctrl+C; use -c COUNT."""
+examples = [["ping -c 3 10.0.2.2", "is the gateway reachable?"], ["ping -c 2 example.com", "name resolution plus Internet reachability"]]
+notes = "Simulated: without -c, ping stops after four packets."
+see_also = ["ip(8)", "traceroute(8)"]
+
+[page.dig]
+description = """
+Query DNS servers directly. dig NAME asks the servers in /etc/resolv.conf for an A record;
+dig NAME MX (AAAA, TXT, NS, ...) asks for other types; dig @SERVER NAME asks a specific
+server; dig -x ADDRESS does a reverse lookup; +short prints only the answers. Because dig talks
+to DNS servers, it ignores /etc/hosts — unlike ping or curl, which use the system resolver."""
+examples = [["dig +short example.com", "just the address"], ["dig @198.51.100.53 example.com", "ask another server"], ["dig -x 10.0.2.30 +short", "reverse lookup"]]
+see_also = ["host(1)", "nslookup(1)", "resolv.conf(5)"]
+
+[page.host]
+description = "Simple DNS lookups: host NAME shows addresses and mail servers; host ADDRESS does a reverse lookup. Like dig, it ignores /etc/hosts."
+examples = [["host example.com", "addresses and MX"], ["host 10.0.2.20", "reverse lookup"]]
+see_also = ["dig(1)"]
+
+[page.nslookup]
+description = "Query a DNS server (the first nameserver in /etc/resolv.conf unless one is given). Mainly kept for compatibility; dig shows more detail."
+examples = [["nslookup intranet.example.lan", "look up a name"]]
+see_also = ["dig(1)"]
+
+[page.curl]
+description = """
+Transfer data with URLs, mostly HTTP(S). curl URL prints the response body; -I shows only the
+headers, -i includes them, -v shows the whole conversation, -L follows redirects, -o FILE
+saves the body, -s silences progress and errors, -f fails on HTTP errors, -w '%{http_code}'
+prints the status code. Exit codes tell what went wrong: 6 could not resolve the host,
+7 could not connect (refused or no route), 28 timeout, 22 HTTP error with -f."""
+examples = [
+    ["curl -I http://localhost/", "status line and headers"],
+    ["curl -s -o /dev/null -w '%{http_code}\\n' http://intranet/", "just the status code"],
+    ["curl -v http://example.com/", "see the request and response"],
+]
+notes = "Simulated: requests go to the simulated world or the local nginx; TLS is not modelled in detail."
+see_also = ["wget(1)", "nc(1)"]
+
+[page.wget]
+description = "Download files from the web: wget URL saves to a file named after the URL; -O FILE chooses the name (-O - prints); -q is quiet."
+examples = [["wget http://intranet/status", "download to ./status"]]
+see_also = ["curl(1)"]
+
+[page.nc]
+description = """
+netcat: open TCP connections. nc -zv HOST PORT tests whether a port accepts connections
+(succeeded / Connection refused / timed out); nc HOST PORT shows what a service says first
+(for example an SSH or SMTP banner)."""
+examples = [["nc -zv db.example.lan 5432", "is the database port open?"], ["nc intranet 22", "read the SSH banner"]]
+notes = "Simulated: listening mode (-l) and sending data are not supported."
+see_also = ["ss(8)", "curl(1)"]
+
+[page.hostnamectl]
+description = "Show system identity (hostname, operating system, kernel, virtualisation) or set the static hostname, which is stored in /etc/hostname. Remember /etc/hosts if other programs expect the old name."
+examples = [["hostnamectl", "system overview"], ["sudo hostnamectl set-hostname web01", "rename the machine"]]
+see_also = ["hostname(1)"]
+
+[page.crontab]
+description = """
+Install, list, edit or remove your personal table of scheduled jobs. crontab -e opens it in an
+editor and checks it before installing; crontab -l prints it; crontab -r deletes it; crontab
+FILE installs FILE. Each line is MINUTE HOUR DAY-OF-MONTH MONTH DAY-OF-WEEK COMMAND, for
+example "30 2 * * 1-5 /home/me/backup.sh" (02:30 on weekdays). */15 means every 15, a-b is a
+range, a,b a list. Jobs run with a minimal environment (PATH=/usr/bin:/bin, SHELL=/bin/sh):
+use full paths, and redirect output to a log file — cron would otherwise try to mail it."""
+examples = [
+    ["crontab -l", "show your jobs"],
+    ["crontab -e", "edit your jobs"],
+    ["*/10 * * * * /usr/local/bin/check >> $HOME/check.log 2>&1", "a line that runs every 10 minutes and keeps its output"],
+]
+notes = "Simulated: jobs run when simulated time passes (commands, sleep); sleep inside a job returns at once."
+see_also = ["cron(8)", "crontab(5)", "systemd.timer(5)"]
+
+[page.cron]
+section = 8
+description = """
+The cron daemon runs scheduled commands: users' crontabs (crontab -e), /etc/crontab and files
+in /etc/cron.d (those have a user field after the schedule), and through run-parts the
+scripts in /etc/cron.hourly, cron.daily, cron.weekly and cron.monthly. It logs each job
+(grep CRON /var/log/syslog, or journalctl -u cron)."""
+examples = [["systemctl status cron", "is cron running?"], ["grep CRON /var/log/syslog | tail", "recent jobs"]]
+see_also = ["crontab(1)", "run-parts(8)"]
+
+[page."systemd.timer"]
+section = 5
+file = true
+summary = "timer unit configuration"
+description = """
+A timer unit starts another unit (by default the .service with the same name) at given times.
+OnCalendar= takes calendar expressions such as daily, hourly, Mon..Fri 08:30 or *:0/15;
+OnBootSec= and OnUnitActiveSec= take time spans after boot or after the last run.
+Persistent=true runs a missed job at the next start. Enable the timer, not the service:
+systemctl enable --now NAME.timer; list them with systemctl list-timers. Check expressions with
+systemd-analyze calendar."""
+examples = [["systemctl list-timers", "when timers fire next"], ["systemd-analyze calendar 'Mon..Fri 08:30'", "test a calendar expression"]]
+see_also = ["systemctl(1)", "systemd-analyze(1)", "crontab(5)"]
+
+[page.systemd-analyze]
+description = "Analyse the service manager. Simulated verbs: calendar (normalise a calendar expression and show its next elapse), timespan (parse a time span), verify (check unit files for errors) and security (score how exposed a service is: one line per sandboxing setting, ✗ for the ones that leave it open, and an overall exposure from 0.0 to 10.0 — without a unit, a table of the running services)."
+examples = [["systemd-analyze calendar daily", "when is 'daily'?"], ["systemd-analyze verify /etc/systemd/system/app.service", "check a unit file"], ["systemd-analyze security nginx.service", "what could nginx do if it were compromised?"]]
+notes = "Simulated: security scores a subset of systemd's checks with its own weights, so the numbers differ from a real system. User=, AmbientCapabilities=, CapabilityBoundingSet=, NoNewPrivileges=, ProtectSystem=, ProtectHome=, PrivateTmp=, Read*Paths=, InaccessiblePaths= and StateDirectory= & co. are enforced; the other scored directives are not simulated."
+see_also = ["systemd.timer(5)", "systemctl(1)"]
+
+[page.lsblk]
+section = 8
+description = """
+List block devices: disks, their partitions, sizes and where each is mounted ([SWAP] for active
+swap). -f shows filesystems instead: type, label, UUID and free space; -p prints full /dev
+paths; -d lists disks only; -n drops the header. A partition with no MOUNTPOINT is not in use —
+or not yet formatted (no FSTYPE in lsblk -f)."""
+examples = [["lsblk", "disks, partitions and mount points"], ["lsblk -f", "filesystem types, labels and UUIDs"]]
+see_also = ["blkid(8)", "findmnt(8)", "df(1)"]
+
+[page.blkid]
+section = 8
+description = """
+Print the attributes of block devices: TYPE (filesystem), UUID, LABEL and PARTUUID. These are
+the names /etc/fstab should use, because /dev/sdX names can change between boots. -s TAG
+shows one attribute and -o value prints only the values."""
+examples = [["blkid", "every device"], ["blkid -s UUID -o value /dev/sdb1", "only the UUID, for scripts or fstab"]]
+see_also = ["lsblk(8)", "fstab(5)"]
+
+[page.fdisk]
+section = 8
+description = "Partition table manipulator. fdisk -l lists disks with their size, partition table type (gpt or dos) and partitions."
+examples = [["sudo fdisk -l", "every disk and partition"], ["sudo fdisk -l /dev/sdb", "one disk"]]
+notes = "Simulated: only listing (-l). Use parted in script mode (parted -s) to change partition tables."
+see_also = ["parted(8)", "lsblk(8)"]
+
+[page.parted]
+section = 8
+description = """
+Create and change partition tables. Script mode (-s) takes the commands on the command line:
+mklabel gpt|msdos writes a new, empty table (destroying the old partitions), mkpart [NAME]
+[FSTYPE] START END adds a partition (positions like 1MiB, 50%, 100%), rm N deletes one and print
+shows the table. The FSTYPE given to mkpart is only a hint; the filesystem is created later
+with mkfs. Partitions in use (mounted, active swap) cannot be removed."""
+examples = [
+    ["sudo parted -s /dev/sdb mklabel gpt", "a new GPT partition table"],
+    ["sudo parted -s /dev/sdb mkpart data ext4 1MiB 100%", "one partition over the whole disk"],
+    ["sudo parted -s /dev/sdb print", "show the table"],
+]
+notes = "Simulated: script mode with mklabel, mkpart, rm, print and unit; no resize, flags or interactive mode."
+see_also = ["fdisk(8)", "mkfs(8)", "lsblk(8)"]
+
+[page.mkfs]
+section = 8
+description = """
+Create a filesystem on a device: mkfs -t TYPE DEVICE or directly mkfs.ext4, mkfs.xfs,
+mkfs.vfat. -L sets a label. Making a filesystem destroys what was on the device; the tools
+refuse a mounted device and ask before overwriting an existing filesystem (-F / -f to force).
+mkfs.ext4 reserves 5% of the blocks for root (tune2fs -m changes that)."""
+examples = [["sudo mkfs.ext4 -L data /dev/sdb1", "an ext4 filesystem labelled data"], ["sudo mkfs -t xfs /dev/sdb2", "an XFS filesystem (needs xfsprogs)"]]
+see_also = ["mke2fs(8)", "mount(8)", "tune2fs(8)", "blkid(8)"]
+
+[page."mkfs.ext4"]
+section = 8
+description = "Create an ext4 filesystem (mke2fs -t ext4). -L LABEL names it, -F forces overwriting an existing filesystem."
+examples = [["sudo mkfs.ext4 -L backup /dev/sdb1", "format a partition"]]
+see_also = ["mkfs(8)", "e2fsck(8)", "tune2fs(8)"]
+
+[page.mount]
+section = 8
+description = """
+Attach a filesystem to a directory (the mount point); its contents then appear there, and
+whatever the directory contained before is hidden until umount. mount alone lists mounts.
+mount DEVICE DIR, mount UUID=... DIR or LABEL=...; -t TYPE names the filesystem type; -o gives
+options (ro, noexec, nosuid, nodev, noatime, remount,...). mount DIR (or DEVICE) looks the rest
+up in /etc/fstab and mount -a mounts everything listed there — test fstab changes with
+mount -a or findmnt --verify before rebooting. Errors exit with status 32 and dmesg often says
+more."""
+examples = [
+    ["sudo mount /dev/sdb1 /srv/data", "mount a partition"],
+    ["sudo mount -o remount,ro /srv/data", "make a mounted filesystem read-only"],
+    ["sudo mount -t tmpfs -o size=100M tmpfs /mnt/scratch", "a filesystem in memory"],
+    ["sudo mount -a", "mount everything in /etc/fstab"],
+]
+notes = "Simulated: block devices, tmpfs and fstab. No bind mounts, loop devices, network filesystems or btrfs subvolumes."
+see_also = ["umount(8)", "fstab(5)", "findmnt(8)", "lsblk(8)"]
+
+[page.umount]
+section = 8
+description = """
+Detach a filesystem, given its mount point or device. "target is busy" means a process still
+uses it: a shell whose working directory is inside it, an open file, or an active swap file.
+Find the user with lsof or fuser, leave the directory, then try again. -l (lazy) detaches
+anyway."""
+examples = [["sudo umount /srv/data", "unmount"], ["cd / && sudo umount /srv/data", "leave the mount point first"]]
+see_also = ["mount(8)", "lsof(8)"]
+
+[page.findmnt]
+section = 8
+description = """
+Show mounted filesystems as a tree (or one, given a mount point or device). findmnt --verify
+checks /etc/fstab without mounting anything: devices that cannot be found, missing mount
+points and filesystem types that do not match what is on disk."""
+examples = [["findmnt", "the mount tree"], ["findmnt /srv/data", "one mount"], ["sudo findmnt --verify", "check /etc/fstab"]]
+see_also = ["mount(8)", "fstab(5)"]
+
+[page.fstab]
+section = 5
+file = true
+summary = "static information about the filesystems"
+description = """
+/etc/fstab lists the filesystems to mount at boot, one per line:
+SPEC MOUNTPOINT TYPE OPTIONS DUMP PASS, for example
+"UUID=0a1b... /srv/data ext4 defaults,noatime 0 2". SPEC is best a UUID= or LABEL= (from
+blkid), because device names can change. OPTIONS defaults means rw with standard settings;
+nofail lets the boot continue if the device is missing. PASS is the fsck order: 1 for /, 2
+for others, 0 for none. A broken line can stop the next boot: check every change with
+findmnt --verify and mount -a."""
+examples = [["sudo findmnt --verify", "check the file"], ["sudo mount -a", "mount everything it lists"]]
+notes = "Simulated: read by mount -a, swapon -a, findmnt --verify and at every boot (reboot): a failing entry without nofail ends in emergency mode, filesystems with errors and a PASS above 0 stop the boot until fsck repairs them."
+see_also = ["mount(8)", "findmnt(8)", "blkid(8)"]
+
+[page.swapon]
+section = 8
+description = """
+Enable swap space (a partition or a file prepared with mkswap); swapon --show lists active
+swap. swapoff disables it. Swap files must be owned by root with mode 0600. Add a line with
+TYPE swap to /etc/fstab to enable it at boot (swapon -a does that by hand)."""
+examples = [["swapon --show", "active swap"], ["sudo swapon /swapfile", "enable a swap file"], ["sudo swapoff -a", "disable all swap"]]
+see_also = ["mkswap(8)", "free(1)", "fstab(5)"]
+
+[page.swapoff]
+section = 8
+description = "Disable swap on a device or file (swapoff -a: all of it). Pages in swap are moved back into memory first."
+examples = [["sudo swapoff /swapfile", "stop using a swap file"]]
+see_also = ["swapon(8)"]
+
+[page.mkswap]
+section = 8
+description = "Prepare a partition or file as swap space. Create a file first (fallocate -l 1G /swapfile; chmod 600 /swapfile), then mkswap and swapon it."
+examples = [["sudo mkswap /dev/sdb2", "a swap partition"], ["sudo mkswap /swapfile", "a swap file"]]
+see_also = ["swapon(8)", "fallocate(1)"]
+
+[page.e2fsck]
+section = 8
+description = """
+Check and repair an ext2/3/4 filesystem. The filesystem must not be mounted. Without -f only a
+filesystem marked as having errors is checked; -n answers no to every repair (a read-only
+check), -y answers yes. Exit status: 0 clean, 1 errors corrected, 4 errors left uncorrected, 8
+operational error (for example: it is mounted)."""
+examples = [["sudo umount /srv/data && sudo e2fsck -f /dev/sdb1", "a full check"], ["sudo e2fsck -n /dev/sdb1", "look, but change nothing"]]
+notes = "Simulated: a filesystem either has (simulated) errors or not; individual inconsistencies are not modelled."
+see_also = ["fsck(8)", "tune2fs(8)"]
+
+[page.fsck]
+section = 8
+description = "Front-end for the filesystem checkers: fsck DEVICE runs fsck.TYPE (e2fsck for ext4). Never run it on a mounted filesystem."
+examples = [["sudo fsck -f /dev/sdb1", "check an unmounted filesystem"]]
+see_also = ["e2fsck(8)"]
+
+[page.tune2fs]
+section = 8
+description = "Show (-l) or change ext2/3/4 settings: -L LABEL renames, -m PERCENT changes the blocks reserved for root (5% by default; 0 or 1% is common on data-only filesystems)."
+examples = [["sudo tune2fs -l /dev/sdb1", "show the superblock"], ["sudo tune2fs -m 1 /dev/sdb1", "reserve only 1% for root"]]
+see_also = ["e2label(8)", "mkfs.ext4(8)"]
+
+[page.dd]
+description = """
+Copy data block by block: if= input file (default stdin), of= output (default stdout), bs= block
+size, count= number of blocks, skip=/seek= offsets, status=none|progress. dd if=/dev/zero
+of=FILE bs=1M count=100 creates a 100 MiB file. Pointed at a device, dd overwrites it without
+asking — the classic way to destroy a filesystem by mistake: check of= twice."""
+examples = [["dd if=/dev/zero of=big.img bs=1M count=100", "a 100 MiB file"], ["sudo dd if=/dev/zero of=/dev/sdb1 bs=1M count=1", "wipe the start of a partition (destroys its filesystem)"]]
+notes = "Simulated: large writes are stored as an apparent size; reading from disks yields zeros."
+see_also = ["fallocate(1)", "truncate(1)"]
+
+[page.fallocate]
+description = "Reserve space for a file immediately: fallocate -l 1G FILE. Fails with No space left on device if the filesystem cannot hold it."
+examples = [["sudo fallocate -l 1G /swapfile", "space for a swap file"]]
+see_also = ["dd(1)", "mkswap(8)"]
+
+[page.lsof]
+section = 8
+description = """
+List open files and the processes that hold them: working directories (cwd), open files (FD
+numbers such as 3w) and network sockets. lsof FILE shows who has FILE open; lsof MOUNTPOINT
+everything open on that filesystem; +D DIR everything below DIR; -p PID one process; -u USER
+one user's processes; -i [:PORT] network sockets. lsof +L1 lists files that were deleted
+while still open: their space is only freed when the process closes them (restart or stop it,
+or truncate the file through /proc/PID/fd/N)."""
+examples = [
+    ["sudo lsof +L1", "deleted files still holding disk space"],
+    ["sudo lsof /srv/data", "why umount says 'target is busy'"],
+    ["sudo lsof -i :80", "who listens on port 80"],
+]
+notes = "Simulated: without root, only your own processes are listed. Memory-mapped files and libraries (mem, txt) are not shown."
+see_also = ["fuser(1)", "proc(5)", "df(1)", "du(1)"]
+
+[page.fuser]
+description = "Show the PIDs of processes using a file, or with -m any file on the filesystem containing it. -v adds user, access type (c: working directory, F: open file) and command; -k kills those processes (careful)."
+examples = [["sudo fuser -vm /srv/data", "who keeps the filesystem busy"], ["sudo fuser -km /srv/data", "kill them all (last resort)"]]
+see_also = ["lsof(8)", "umount(8)"]
+
+[page.reboot]
+section = 8
+description = """
+Restart the machine (the same as systemctl reboot). Every process ends, filesystems are
+unmounted, and the system boots again: /etc/fstab is mounted, enabled services start, runtime
+changes (ip addr add, sysctl -w, hostname NAME, started-but-not-enabled services, /run and
+/tmp contents) are gone. If a filesystem from fstab cannot be mounted the boot stops in
+emergency mode: fix the cause from the root shell, then run systemctl default (or exit)."""
+examples = [["sudo reboot", "restart now"], ["journalctl -b -1 -p err", "errors of the previous boot (persistent journal)"]]
+notes = "Simulated: the reboot is immediate; poweroff and halt power-cycle the machine (it comes back up)."
+see_also = ["shutdown(8)", "systemctl(1)", "fstab(5)", "journalctl(1)"]
+
+[page.shutdown]
+section = 8
+description = "Halt, power off (-h, -P) or reboot (-r) the machine: shutdown -r now. A time (+MINUTES or HH:MM) schedules it and warns logged-in users; shutdown -c cancels."
+examples = [["sudo shutdown -r now", "reboot now"], ["sudo shutdown -h now", "power off now"]]
+notes = "Simulated: only 'now' (+0); scheduled shutdowns are refused."
+see_also = ["reboot(8)", "systemctl(1)"]
+
+[page.sysctl]
+section = 8
+description = """
+Read and change kernel parameters (the files below /proc/sys): sysctl KEY shows one,
+sysctl -a all, sysctl -w KEY=VALUE changes one until the next boot. To make a value
+permanent, put "KEY = VALUE" into a file in /etc/sysctl.d/ (ending in .conf); sysctl --system
+applies all of them now, sysctl -p FILE one file."""
+examples = [
+    ["sysctl vm.swappiness", "show a parameter"],
+    ["sudo sysctl -w net.ipv4.ip_forward=1", "change it until the next boot"],
+    ["echo 'net.ipv4.ip_forward = 1' | sudo tee /etc/sysctl.d/60-router.conf", "make it permanent"],
+]
+notes = "Simulated: a small set of parameters (sysctl -a lists them)."
+see_also = ["sysctl.conf(5)", "proc(5)"]
+
+[page.logrotate]
+section = 8
+description = """
+Rotate log files: rename (or copy and empty) them, keep a number of old copies, compress them
+and run scripts around the rotation. logrotate CONFIG reads the configuration (normally
+/etc/logrotate.conf, which includes /etc/logrotate.d/*); -d shows what would happen without
+changing anything, -f forces rotation now, -v explains each decision. It remembers the last
+rotation of every log in /var/lib/logrotate/status. On Debian, logrotate.timer runs it daily."""
+examples = [
+    ["sudo logrotate -d /etc/logrotate.d/app", "test a configuration"],
+    ["sudo logrotate -f /etc/logrotate.d/app", "rotate now"],
+    ["systemctl list-timers logrotate.timer", "when it runs next"],
+]
+notes = "Simulated: the common directives (see logrotate.conf(5)); olddir, mail and su are accepted but have no effect."
+see_also = ["logrotate.conf(5)", "journalctl(1)"]
+
+[page."logrotate.conf"]
+section = 5
+file = true
+summary = "logrotate configuration"
+description = """
+Global defaults, include DIR, and blocks 'PATH [PATH…] { directives }' (paths may use
+wildcards). Directives: daily/weekly/monthly/yearly or size N[kMG]; minsize, maxsize; rotate N
+(old copies kept); compress, delaycompress; missingok; notifempty; create MODE OWNER GROUP;
+copytruncate (copy then empty — for programs that keep the log open and cannot reopen it);
+dateext; sharedscripts; prerotate/postrotate … endscript (run with sh, $1 = the log)."""
+examples = [["/var/log/app/*.log {\n    daily\n    rotate 7\n    compress\n    delaycompress\n    missingok\n    notifempty\n    copytruncate\n}", "a typical application block"]]
+see_also = ["logrotate(8)"]
+
+[page.ssh]
+description = """
+Log in to another machine, or run a command there: ssh [user@]host [command]. The first time,
+ssh shows the server's host-key fingerprint and asks whether to trust it; the answer is stored
+in ~/.ssh/known_hosts and checked on every later connection (a changed key aborts with a loud
+warning). Authentication tries your keys (~/.ssh/id_ed25519 …, or -i FILE) and then the
+password. -p PORT chooses the port; -o Option=value sets an option (for example
+StrictHostKeyChecking=accept-new or BatchMode=yes). Exit status 255 means ssh itself failed."""
+examples = [
+    ["ssh admin@files", "an interactive session (exit to come back)"],
+    ["ssh admin@files 'df -h /'", "run one command remotely"],
+    ["echo hi | ssh admin@files 'cat > note.txt'", "standard input travels along"],
+]
+notes = "Simulated: hosts of the simulated network become complete machines on first contact; port forwarding (-L/-R/-D), agents and jump hosts are not simulated. known_hosts entries are not hashed."
+see_also = ["ssh-keygen(1)", "ssh-copy-id(1)", "scp(1)", "sshd(8)", "rsync(1)"]
+
+[page.ssh-keygen]
+description = """
+Create key pairs and manage known hosts. ssh-keygen -t ed25519 creates ~/.ssh/id_ed25519
+(private: keep it 600 and secret) and id_ed25519.pub (public: copy it to servers). -N sets the
+passphrase ('' for none), -f the file, -C the comment. -l -f FILE shows a fingerprint, -y -f
+FILE prints the public key of a private one, -R HOST removes a host from known_hosts."""
+examples = [["ssh-keygen -t ed25519", "a new key pair (asks for file and passphrase)"], ["ssh-keygen -R web01", "forget web01's host key"]]
+see_also = ["ssh(1)", "ssh-copy-id(1)"]
+
+[page.ssh-copy-id]
+description = "Append your public key to ~/.ssh/authorized_keys on a server (logging in with the password once), setting safe permissions. Afterwards ssh logs in with the key."
+examples = [["ssh-copy-id admin@files", "install ~/.ssh/id_*.pub on files"]]
+see_also = ["ssh-keygen(1)", "sshd(8)"]
+
+[page.scp]
+description = "Copy files over SSH: scp FILE user@host:PATH, scp user@host:PATH LOCAL, -r for directories, -P PORT. Remote relative paths start in the user's home directory."
+examples = [["scp report.txt admin@files:/tmp/", "upload"], ["scp -r admin@files:logs .", "download a directory"]]
+see_also = ["ssh(1)", "rsync(1)"]
+
+[page.rsync]
+description = """
+Synchronise files locally or over SSH, transferring only what changed (compared by size and,
+with -t or -a, modification time). -a (archive: recursive, keeps permissions and times), -v
+(list files), -n (dry run), --delete (remove files that are gone from the source), --exclude=
+PATTERN. A trailing slash on the source copies its contents: rsync -a docs/ backup/ fills backup
+with what is in docs; rsync -a docs backup/ creates backup/docs."""
+examples = [
+    ["rsync -av --delete ~/docs/ /backup/docs/", "a mirror of ~/docs"],
+    ["rsync -avn docs/ admin@files:docs/", "show what would be copied"],
+]
+notes = "Simulated: no delta transfer or checksums; ownership is kept only for root."
+see_also = ["scp(1)", "ssh(1)", "tar(1)"]
+
+[page.sshd]
+section = 8
+description = """
+The SSH server. It reads /etc/ssh/sshd_config (and files included from
+/etc/ssh/sshd_config.d/) — for each option the FIRST value found wins. sshd -t checks the
+configuration and exits; sshd -T prints the effective configuration. Always run sshd -t before
+systemctl reload ssh (Debian's unit does it for you): a broken configuration could leave the
+server unreachable. Logins are logged to the journal (and /var/log/auth.log on Debian)."""
+examples = [["sudo sshd -t", "check the configuration"], ["sudo sshd -T | grep -i permitrootlogin", "the effective value"], ["sudo systemctl reload ssh", "apply changes"]]
+see_also = ["sshd_config(5)", "ssh(1)", "journalctl(1)"]
+
+[page.sshd_config]
+section = 5
+file = true
+summary = "OpenSSH daemon configuration file"
+description = """
+Keyword-value lines; the first value found wins, so put local settings into
+/etc/ssh/sshd_config.d/*.conf (included at the top). Important keywords: Port;
+PermitRootLogin yes|prohibit-password|no; PasswordAuthentication yes|no;
+PubkeyAuthentication; AllowUsers / AllowGroups / DenyUsers (lists); MaxAuthTries;
+AuthorizedKeysFile; StrictModes (refuse keys in files or directories writable by others)."""
+examples = [["PermitRootLogin no\nPasswordAuthentication no\nAllowUsers admin deploy", "a typical hardening drop-in"]]
+notes = "Simulated: Match blocks are recognised but not evaluated."
+see_also = ["sshd(8)"]
+
+[page.nft]
+section = 8
+description = """
+Manage the kernel's packet filter (nftables). The ruleset consists of tables (family inet
+for IPv4 and IPv6) with chains; a base chain hooks into input, output or forward with a policy
+(accept or drop), and its rules are checked in order: the first rule whose matches all fit
+decides. nft list ruleset shows everything; nft add rule inet filter input tcp dport 22
+accept appends a rule; nft -a list ruleset shows handles for nft delete rule … handle N;
+nft -f FILE loads a whole file atomically, nft -c -f FILE only checks it. The ruleset lives in
+memory: put it in /etc/nftables.conf and enable nftables.service to load it at boot.
+Address translation uses chains of type nat: in a postrouting chain (priority srcnat)
+masquerade or snat to ADDR rewrite the source of connections leaving a router; in a
+prerouting chain (priority dstnat) dnat to ADDR[:PORT] forwards a port to another host and
+redirect to :PORT to another local port. Only a connection's first packet is matched; the
+rest — and the answers — are translated by connection tracking."""
+examples = [
+    ["sudo nft list ruleset", "the current rules"],
+    ["sudo nft add rule inet filter input tcp dport { 80, 443 } accept", "allow web traffic"],
+    ["sudo nft -c -f /etc/nftables.conf && sudo systemctl reload nftables", "check, then load the saved ruleset"],
+    ["sudo nft add rule ip nat postrouting oifname enp0s3 masquerade", "hide a private network behind this router"],
+    ["sudo nft add rule ip nat prerouting tcp dport 8080 dnat to 192.168.50.10:80", "forward a port"],
+]
+notes = "Simulated: filter chains (input, output, forward) and nat chains (prerouting, postrouting); matches iif/oif, ct state, ip saddr/daddr, tcp/udp dport, icmp; verdicts accept/drop/reject/jump; masquerade, snat, dnat, redirect. No named sets, maps, IPv6 NAT or per-byte counters; conntrack itself is not shown."
+see_also = ["ufw(8)", "firewall-cmd(1)", "ss(8)"]
+
+[page.ufw]
+section = 8
+description = """
+Uncomplicated Firewall (Ubuntu): ufw allow 22/tcp, ufw allow OpenSSH, ufw allow from
+10.0.2.0/24 to any port 80 proto tcp, ufw deny 23, ufw default deny incoming, ufw enable
+(asks first: you might cut your own SSH connection), ufw status verbose / numbered, ufw delete
+N. Rules are saved in /etc/ufw and loaded at boot when ufw is enabled."""
+examples = [["sudo ufw allow OpenSSH && sudo ufw enable", "a firewall that keeps SSH open"], ["sudo ufw status numbered", "rules with numbers for ufw delete"]]
+notes = "Simulated: a rule and its (v6) twin are one rule internally."
+see_also = ["nft(8)"]
+
+[page.firewall-cmd]
+description = """
+Client for firewalld (Fedora, RHEL): zones group rules; the default zone (public) applies to
+the network interface. --list-all shows a zone; --add-service=http or --add-port=8080/tcp
+open something, --remove-… closes it. Changes affect the running firewall only, unless
+--permanent is given — then they affect only the saved configuration until --reload. Use
+both (or --runtime-to-permanent) to make a change now and for later."""
+examples = [
+    ["sudo firewall-cmd --list-all", "the default zone"],
+    ["sudo firewall-cmd --permanent --add-service=http && sudo firewall-cmd --reload", "open HTTP permanently"],
+]
+notes = "Simulated: zones with services, ports and sources; no rich rules, masquerading or forwarding."
+see_also = ["nft(8)", "ss(8)"]
+
+[page.last]
+description = """
+List logins and boots from /var/log/wtmp, newest first: user, terminal (pts/N for remote and
+terminal sessions), remote address, login time, logout time and duration — "still logged in",
+"down" (the system went down) or "crash" (it went down without a clean shutdown). last USER
+or last pts/1 filters; last reboot lists boots; -x adds shutdowns; -F shows full times; -n N
+limits the output. lastb lists failed logins from /var/log/btmp (root only)."""
+examples = [["last -n 10", "the ten most recent logins"], ["last reboot", "when the system was booted"], ["sudo lastb | head", "recent failed login attempts"]]
+notes = "Simulated: records are real 384-byte utmp entries; non-interactive ssh commands are not recorded, as with OpenSSH. An empty or missing wtmp is a classic sign of tampering."
+see_also = ["lastb(1)", "who(1)", "w(1)", "lastlog(8)"]
+
+[page.lastb]
+description = """
+List failed login attempts recorded in /var/log/btmp (readable by root only): user name tried,
+ssh:notty for SSH, source address and time. Many failures from one address for many user
+names is a password-guessing attack; check auth.log (or journalctl -u ssh) for whether one
+of them was followed by "Accepted"."""
+examples = [["sudo lastb | awk '{print $3}' | sort | uniq -c | sort -rn", "failures per source address"]]
+see_also = ["last(1)"]
+
+[page.who]
+description = """
+Show who is logged in now (from /run/utmp): user, terminal, login time and, for remote
+logins, the source address. who -b shows the last boot, who -q only names and a count."""
+examples = [["who", "current logins"], ["who -b", "time of the last boot"]]
+see_also = ["w(1)", "last(1)", "users(1)"]
+
+[page.w]
+description = """
+Show who is logged in and what they are doing: a header like uptime's, then user, terminal,
+source, login time, idle time and the current command."""
+examples = [["w", "who is on, from where, idle for how long"]]
+notes = "Simulated: JCPU/PCPU are not measured; other sessions show their login shell."
+see_also = ["who(1)", "uptime(1)"]
+
+[page.users]
+description = "Print the names of the users currently logged in (one per session), sorted."
+examples = [["users", "who is logged in"]]
+see_also = ["who(1)"]
+
+[page.lastlog]
+section = 8
+description = """
+Show the most recent login of every account (Debian and Ubuntu): accounts that should never
+log in — system accounts — should all say **Never logged in**. -u USER shows one account."""
+examples = [["lastlog | grep -v Never", "accounts that have logged in"], ["lastlog -u deploy", "one account"]]
+notes = "Simulated: derived from wtmp instead of the separate /var/log/lastlog database. Fedora and Arch replaced lastlog with lastlog2, which is not simulated."
+see_also = ["last(1)"]
+
+[page.lsmod]
+section = 8
+description = """
+List loaded kernel modules (from /proc/modules): name, size and the modules that use each
+one. A module listed under 'Used by' cannot be removed while its users are loaded."""
+examples = [["lsmod | grep br_netfilter", "is the module loaded?"]]
+see_also = ["modprobe(8)", "modinfo(8)"]
+
+[page.modprobe]
+section = 8
+description = """
+Load a kernel module together with its dependencies (sudo modprobe NAME [param=value]),
+or remove it and dependencies nobody uses (sudo modprobe -r NAME). -v shows each insmod,
+--show-depends prints the plan. Configuration: /etc/modprobe.d/*.conf ('blacklist NAME'
+stops automatic loading, 'install NAME /bin/false' blocks every attempt, 'options NAME
+k=v' sets parameters). Modules to load at boot: /etc/modules-load.d/*.conf."""
+examples = [["sudo modprobe br_netfilter", "load a module and its dependencies"], ["sudo modprobe -r pcspkr", "unload it"], ["echo 'blacklist pcspkr' | sudo tee /etc/modprobe.d/no-beep.conf", "never load it automatically"]]
+notes = "Simulated: a catalogue of common modules with dependencies and parameters; effects on the system are limited to sysctl keys, kernel messages, the network card's driver and 'in use' rules."
+see_also = ["lsmod(8)", "modinfo(8)", "modprobe.d(5)"]
+
+[page.modinfo]
+section = 8
+description = "Show a module's file, description, license, dependencies and parameters (parm:). -F FIELD prints one field."
+examples = [["modinfo br_netfilter", "what is this module?"], ["modinfo -F parm bonding", "its parameters"]]
+see_also = ["modprobe(8)"]
+
+[page.rmmod]
+section = 8
+description = "Remove a loaded module (no dependency handling; modprobe -r is usually better). Fails while the module is in use."
+examples = [["sudo rmmod dummy", "unload a module"]]
+see_also = ["modprobe(8)"]
+
+[page.insmod]
+section = 8
+description = "Insert one module file without resolving dependencies — 'Unknown symbol in module' means a dependency is missing; use modprobe."
+examples = [["sudo insmod /lib/modules/$(uname -r)/kernel/drivers/net/dummy.ko", "insert a module file"]]
+see_also = ["modprobe(8)"]
+
+[page.update-grub]
+section = 8
+description = """
+Debian and Ubuntu: regenerate /boot/grub/grub.cfg from /etc/default/grub (it runs
+grub-mkconfig -o /boot/grub/grub.cfg). GRUB reads only the generated file: after changing
+GRUB_CMDLINE_LINUX or GRUB_CMDLINE_LINUX_DEFAULT run update-grub, then reboot."""
+examples = [["sudo update-grub", "apply /etc/default/grub to the boot menu"], ["cat /proc/cmdline", "the command line of the running kernel"]]
+see_also = ["grub-mkconfig(8)", "grubby(8)"]
+
+[page.grub-mkconfig]
+section = 8
+description = "Generate a GRUB configuration from /etc/default/grub and /etc/grub.d: -o /boot/grub/grub.cfg (grub2-mkconfig -o /boot/grub2/grub.cfg on Fedora). Without -o the result is printed."
+examples = [["sudo grub-mkconfig -o /boot/grub/grub.cfg", "Arch: regenerate the boot menu"]]
+see_also = ["update-grub(8)"]
+
+[page.grubby]
+section = 8
+description = """
+Fedora and RHEL: change the kernel arguments of the boot loader entries
+(/boot/loader/entries/*.conf). --info=ALL shows them; --update-kernel=ALL --args="a=b"
+adds, --remove-args="a" removes. Takes effect at the next boot."""
+examples = [["sudo grubby --update-kernel=ALL --args='audit=1'", "add a kernel argument"], ["sudo grubby --info=ALL", "show entries and their arguments"]]
+see_also = ["grub2-mkconfig(8)"]
+
+[page.update-initramfs]
+section = 8
+description = """
+Debian and Ubuntu: rebuild the initramfs (-u, for the newest kernel; -k all for every
+kernel). Extra modules are listed in /etc/initramfs-tools/modules; lsinitramfs FILE shows
+the contents. On Fedora the tool is dracut -f, on Arch mkinitcpio -P."""
+examples = [["sudo update-initramfs -u", "rebuild after changing its configuration"], ["lsinitramfs /boot/initrd.img-$(uname -r) | grep xfs", "is the xfs driver inside?"]]
+notes = "Simulated: the image is a manifest of contents; it does not take part in the simulated boot."
+see_also = ["dracut(8)", "mkinitcpio(8)"]
+
+[page.dracut]
+section = 8
+description = "Fedora: build the initramfs; -f overwrites the existing image. Extra drivers: add_drivers+=\" NAME \" in /etc/dracut.conf.d/*.conf. lsinitrd lists the contents."
+examples = [["sudo dracut -f", "rebuild the initramfs of the running kernel"]]
+see_also = ["update-initramfs(8)"]
+
+[page.mkinitcpio]
+section = 8
+description = "Arch: build initramfs images from the presets (-P). Modules to include: MODULES=(…) in /etc/mkinitcpio.conf. lsinitcpio lists the contents."
+examples = [["sudo mkinitcpio -P", "rebuild all images"]]
+see_also = ["update-initramfs(8)"]
+
+[page.gpg]
+description = """
+GnuPG. For package repositories: gpg --show-keys FILE prints a key's fingerprint and
+owner (compare it with the vendor's published fingerprint); gpg --dearmor turns an
+ASCII-armoured key (-----BEGIN PGP PUBLIC KEY BLOCK-----) into the binary keyring format apt
+expects in /etc/apt/keyrings/NAME.gpg."""
+examples = [["curl -fsSL URL | sudo gpg --dearmor -o /etc/apt/keyrings/vendor.gpg", "install a repository key"], ["gpg --show-keys /etc/apt/keyrings/vendor.gpg", "check its fingerprint"]]
+notes = "Simulated subset: --dearmor, --show-keys, --version; keys are modelled, no real cryptography."
+see_also = ["apt-secure(8)", "apt(8)"]
+
+[page.apt-key]
+section = 8
+description = "Deprecated. apt-key add put keys into /etc/apt/trusted.gpg, trusted for every repository. Use keyrings in /etc/apt/keyrings with [signed-by=…] instead."
+examples = [["apt-key list", "see what the legacy keyring trusts"]]
+see_also = ["gpg(1)"]
+
+[page.getenforce]
+section = 8
+description = "Print SELinux's current mode: Enforcing, Permissive or Disabled. setenforce 0/1 changes it until the next boot; the boot mode is SELINUX= in /etc/selinux/config. sestatus shows both."
+examples = [["getenforce", "the current mode"], ["sudo setenforce 1", "enforce again (until reboot)"]]
+notes = "Simulated: modes only; the policy itself is not evaluated."
+see_also = ["sestatus(8)", "setenforce(8)"]
+
+[page.aa-status]
+section = 8
+description = "AppArmor (Debian, Ubuntu): list loaded profiles, their mode (enforce/complain) and confined processes. Profiles live in /etc/apparmor.d."
+examples = [["sudo aa-status", "what is confined?"]]
+notes = "Simulated: profile listing only; profiles are not enforced."
+see_also = ["getenforce(8)"]
+
+[page.strace]
+description = """
+Run a program and print every system call it makes — the requests it sends to the kernel —
+with arguments and results: openat(…) = 3, or = -1 EACCES (Permission denied). It answers
+"which file is it looking for?", "why does it fail?" when the program's own message is
+vague. -f follows child processes (needed for scripts: the work happens in the commands
+they start), -e trace=openat,execve (or file, network) filters, -o FILE writes the trace
+to a file, -s N shows longer strings, -c counts calls instead of listing them."""
+examples = [["strace -e trace=openat,stat cat notes.txt", "which files does it open?"], ["strace -f -o /tmp/trace.log ./script.sh", "trace a script and its children into a file"], ["strace -c ls", "a summary of system calls"]]
+notes = "Simulated: file, process and network operations of simulated programs are shown as the system calls a C program would make; the dynamic loader's start-up calls are fixed. Attaching to running processes (-p) is not simulated."
+see_also = ["ltrace(1)", "gdb(1)"]
+
+[page.vmstat]
+section = 8
+description = """
+A compact view of the whole system, one line per sample: vmstat 1 5 prints five lines one
+second apart (the first averages since boot). procs r = runnable, b = blocked in
+uninterruptible sleep (usually waiting for disk I/O); memory swpd/free/buff/cache in KiB;
+swap si/so = swapped in/out per second (sustained non-zero values mean memory pressure);
+io bi/bo = blocks read/written per second; cpu us/sy/id/wa/st = user, system, idle,
+waiting for I/O, stolen by the hypervisor."""
+examples = [["vmstat 1 5", "five samples, one second apart"], ["vmstat -S M 2", "in MiB, every two seconds"]]
+see_also = ["iostat(1)", "mpstat(1)", "free(1)"]
+
+[page.iostat]
+description = """
+CPU and per-disk statistics (package sysstat). The first report covers the time since boot;
+give an interval (iostat -x 1 3) to see the present. -x adds extended columns: r/s and w/s
+(operations), rkB/s and wkB/s (throughput), r_await/w_await (milliseconds per request,
+including queueing), aqu-sz (queue length) and %util (how much of the time the device was
+busy). -z hides idle devices, -d shows only disks, -c only the CPU."""
+examples = [["iostat -xz 1 3", "which disk is busy, and how badly?"]]
+notes = "Simulated: activity comes from the processes doing I/O; devices are modelled with fixed capacity."
+see_also = ["vmstat(8)", "pidstat(1)", "iotop(8)"]
+
+[page.mpstat]
+description = "Per-processor statistics (sysstat): mpstat -P ALL 1 3 shows each CPU — one CPU at 100 % while the other idles means a single-threaded program is the limit."
+examples = [["mpstat -P ALL 1 3", "every CPU, three samples"]]
+see_also = ["vmstat(8)", "top(1)"]
+
+[page.pidstat]
+description = "Per-process statistics (sysstat): -u CPU (default), -d disk I/O (kB_rd/s, kB_wr/s, iodelay), -r memory; -p PID or -p ALL selects processes; an interval and count sample over time."
+examples = [["pidstat -d 1 3", "who reads and writes?"], ["pidstat -u -p ALL", "CPU of every process"]]
+see_also = ["iostat(1)", "top(1)"]
+
+[page.iotop]
+section = 8
+description = "Show processes by disk I/O (root only). In batch mode: sudo iotop -b -o -n 1 (-o only processes doing I/O)."
+examples = [["sudo iotop -b -o -n 1", "one snapshot of I/O users"]]
+notes = "Simulated: batch mode only."
+see_also = ["pidstat(1)"]
+
+[page.sar]
+description = """
+System activity reporter (sysstat). sar shows today's history collected every 10 minutes by
+sa1 (systemd timer sysstat-collect): -u CPU (default), -r memory, -q run queue and load
+averages, -d disks. -f /var/log/sysstat/saDD (Debian, Ubuntu; /var/log/sa/saDD on Fedora)
+reads another day; -s and -e choose a time window. With an interval (sar 1 5) it samples
+live. On Debian collection only starts after ENABLED="true" in /etc/default/sysstat."""
+examples = [["sar -q", "today's load history"], ["sar -r -f /var/log/sysstat/sa15 -s 09:00 -e 12:00", "memory on the 15th, 9 to 12"]]
+notes = "Simulated: data files are text, not sadc's binary format."
+see_also = ["sadf(1)", "iostat(1)"]
+
+[page.ionice]
+description = "Get or set a process's I/O scheduling class: ionice -p PID shows it; ionice -c3 -p PID (idle: disk only when nobody else needs it), -c2 -n 0-7 (best-effort with priority); ionice -c3 COMMAND starts a program that way. Root is needed for other users' processes and for realtime."
+examples = [["sudo ionice -c3 -p $(pgrep -x rsync)", "let a backup use the disk only when it is idle"]]
+notes = "Simulated: the class is recorded; its effect on scheduling is not modelled."
+see_also = ["renice(1)", "nice(1)"]
+
+[page.lscpu]
+description = "Describe the CPUs: count, model, cores and threads per core, caches, NUMA layout, virtualization."
+examples = [["lscpu", "how many CPUs, which kind?"]]
+see_also = ["nproc(1)"]
+
+[page.podman]
+description = """
+Manage containers and images without a daemon. A container is a process tree started from
+an image's root filesystem in its own namespaces (PID, UTS, network, mount) and cgroup,
+supervised by conmon. Run as root, containers and images live in /var/lib/containers;
+run as a normal user (rootless), in ~/.local/share/containers — root inside the container
+is then your user outside.
+
+Images: pull NAME[:TAG] (fully qualified names such as docker.io/library/nginx:1.27; short
+names resolve only through /etc/containers/registries.conf), images, rmi, build -t NAME
+CONTEXT (Containerfile/Dockerfile: FROM, RUN, COPY, ENV, WORKDIR, CMD, ENTRYPOINT, EXPOSE).
+Containers: run [-d] [-it] [--rm] [--name N] [-p HOST:CTR] [-v SRC:DST[:ro]] [-e K=V]
+[--memory SIZE] [--cpus N] IMAGE [COMMAND], create, start, stop, restart, kill, rm [-f],
+ps [-a] [-q], logs, exec [-it] N COMMAND, top, stats, port, inspect [-f '{{.Path}}'],
+volume create|ls|inspect|rm, info, version."""
+examples = [["podman pull docker.io/library/alpine:3.20", "fetch an image"], ["podman run -d --name web -p 8080:80 -v ~/site:/usr/share/nginx/html:ro docker.io/library/nginx:1.27", "a detached web server serving a host directory"], ["podman exec -it web bash", "a shell inside a running container"], ["podman inspect -f '{{.State.Pid}}' web", "the container's main process on the host"], ["podman logs web", "what the container printed"]]
+notes = "Simulated: images come from a small built-in catalogue (alpine, debian, nginx, registry.example.lan/shop/api) and are built from simulated packages; layers are approximated by copying. One default bridge network (10.88.0.0/16). Not simulated: pods, custom networks, registry login, healthchecks, podman logs -f, user namespaces beyond the rootless UID mapping, capabilities and seccomp."
+see_also = ["buildah(1)", "conmon(8)", "crun(8)", "containers-registries.conf(5)", "unshare(1)", "systemd-cgls(1)"]
+
+[page.chroot]
+section = 8
+description = """
+Run a command (default: $SHELL -i, i.e. /bin/bash) with NEWROOT as its root directory:
+every absolute path the process uses is resolved inside NEWROOT, and .. at NEWROOT stays
+there. The new root must contain the programs the process runs (and on real systems their
+shared libraries, see ldd). chroot changes only the filesystem view: processes, network,
+host name and users are shared with the host, and root inside can escape — it is not a
+security boundary. Requires root."""
+examples = [["sudo chroot /srv/jail /bin/bash", "a shell inside a prepared tree"], ["sudo chroot /mnt/sysimage", "repair an installed system from a rescue environment"]]
+notes = "Simulated: shared libraries are not modelled, so a program file alone is enough inside the new root."
+see_also = ["unshare(1)", "nsenter(1)", "systemd-nspawn(1)"]
+
+[page.unshare]
+description = """
+Run a program (default: a shell) in new namespaces: -u/--uts (host name), -n/--net (an
+empty network namespace with a down loopback), -p/--pid with -f/--fork (the forked child is
+PID 1 of the new namespace; add --mount-proc so ps reads it), -m/--mount. Short options
+cluster (-pf). Creating namespaces requires root (user namespaces are not simulated)."""
+examples = [["sudo unshare -u", "a shell whose host name changes stay inside"], ["sudo unshare -pf --mount-proc", "a shell as PID 1 that sees only its descendants"], ["sudo unshare -n ip link", "a new network namespace has only lo, and it is down"]]
+notes = "Simulated: UTS, PID, network and mount namespaces; IPC, cgroup, time and user namespaces are not separated."
+see_also = ["nsenter(1)", "lsns(8)", "namespaces(7)"]
+
+[page.nsenter]
+description = """
+Run a program in the namespaces of a running process: -t/--target PID plus the namespaces
+to join (-u/--uts, -n/--net, -p/--pid, -m/--mount, -a/--all). This is how container
+engines run podman exec. Requires root."""
+examples = [["sudo nsenter -t 1234 -u hostname", "the host name that process sees"], ["sudo nsenter -t 1234 -n ss -tln", "the sockets in its network namespace"]]
+see_also = ["unshare(1)", "lsns(8)"]
+
+[page.lsns]
+section = 8
+description = """
+List namespaces: their inode number (as in /proc/PID/ns/TYPE), type, number of processes,
+the lowest PID in each and its command. -t TYPE limits the list to one type (uts, net, pid,
+mnt, …). Without root only namespaces of your own processes are listed."""
+examples = [["sudo lsns -t uts", "which host-name namespaces exist?"], ["readlink /proc/$$/ns/net", "the network namespace of this shell"]]
+see_also = ["unshare(1)", "nsenter(1)"]
+
+[page.systemd-cgls]
+description = """
+Show the control-group tree: slices (system.slice for services, user.slice for login
+sessions, machine.slice for containers), the units and scopes in them, and their processes.
+An argument limits the output to one group (a path such as /system.slice/ssh.service, or a
+unit name). -k includes kernel threads."""
+examples = [["systemd-cgls", "the whole tree"], ["systemd-cgls /system.slice/nginx.service", "one service's processes"]]
+see_also = ["systemd-cgtop(1)", "systemctl(1)", "cgroups(7)"]
+
+[page.systemd-cgtop]
+description = """
+Show control groups ordered by resource use: tasks, %CPU (100% = one CPU), memory. -m sorts
+by memory, -t by tasks, -p by path; --depth=N limits how deep the tree is shown."""
+examples = [["systemd-cgtop", "which group uses the CPU?"], ["systemd-cgtop -m", "which group uses the memory?"]]
+notes = "Simulated: one snapshot is printed; I/O columns are not filled."
+see_also = ["systemd-cgls(1)", "top(1)"]
+
+[page.systemd-run]
+description = """
+Run a command as a transient unit, optionally with resource limits: as a service (in the
+background, managed like any service; --unit=NAME) or with --scope in the foreground in a
+scope unit. -p PROPERTY=VALUE sets unit properties such as MemoryMax=512M, CPUQuota=50%,
+CPUWeight=, TasksMax=; --slice= places it in a slice. The unit file is written to
+/run/systemd/transient/. Requires root (or authentication as an administrator)."""
+examples = [["sudo systemd-run --scope -p MemoryMax=100M -p CPUQuota=50% ./batch-job", "a command fenced in by limits"], ["sudo systemd-run --unit=reindex -p CPUQuota=30% /usr/local/bin/reindex", "a background service with a CPU cap"]]
+notes = "Simulated: the system manager only (--user is not simulated); a subset of properties."
+see_also = ["systemctl(1)", "systemd.resource-control(5)"]
+
+[page.systemd-detect-virt]
+description = """
+Detect whether the system runs in a virtual machine or container and print its type (kvm,
+qemu, vmware, microsoft, podman, docker, …) or none. -v/--vm checks only for VMs,
+-c/--container only for containers, -r/--chroot whether this process is chrooted (exit
+status only), -q prints nothing. Exit status 0 when something was detected."""
+examples = [["systemd-detect-virt", "VM or container?"], ["systemd-detect-virt -c", "inside a container?"]]
+see_also = ["lscpu(1)", "virt-what(8)"]
+
+[page.stress-ng]
+description = """
+Load the system on purpose: --cpu N starts N CPU-burning workers (0 = one per CPU),
+--vm N workers that each allocate --vm-bytes SIZE of memory, --timeout T ends the run
+(e.g. 30s, 5m). --metrics-brief prints how much work was done — under a CPU quota the
+bogo-ops per second drop accordingly. Used to test limits, monitoring and alerting."""
+examples = [["stress-ng --cpu 2 --timeout 30s", "two busy CPUs for half a minute"], ["sudo systemd-run --scope -p MemoryMax=100M stress-ng --vm 1 --vm-bytes 200M --timeout 10s", "watch the memory-cgroup OOM killer"]]
+notes = "Simulated: only cpu and vm stressors; in the foreground a --timeout is required (the run advances simulated time)."
+see_also = ["systemd-run(1)", "top(1)"]
+
+[page.gcc]
+description = """
+Compile and link C programs. gcc FILE.c -o PROG preprocesses (#include, #define), compiles,
+assembles and links in one go; -c stops after compiling (FILE.o), objects are linked with
+gcc a.o b.o -o PROG. -Wall enables the useful warnings, -Werror turns them into errors,
+-g adds debugging information (for gdb), -O2 optimises, -I DIR adds a header directory,
+-L DIR a library directory, -lNAME links libNAME.so (or .a); -lm for the maths library.
+-shared -fPIC builds a shared library (-Wl,-soname,libNAME.so.1 sets its soname),
+-Wl,-rpath,DIR records a library search path in the program, -static links statically.
+Compiler errors name FILE:LINE:COLUMN; "undefined reference" and "cannot find -lX" come
+from the linker."""
+examples = [["gcc -Wall -g -o hello hello.c", "build a program with warnings and debug info"], ["gcc -c util.c && gcc -o app main.c util.o -lm", "separate compilation, maths library"], ["gcc -shared -fPIC -Wl,-soname,libgreet.so.1 -o libgreet.so.1.0 greet.c", "a shared library"]]
+notes = "Simulated: a documented subset of C (functions, int/long/char/double, pointers to strings and buffers, arrays, control flow, the common parts of stdio/stdlib/string/math/assert); no structs, function pointers or function-like macros. Programs are interpreted from their syntax tree, never executed on the host. See LINUX_SIMULATION_SPEC §11b."
+see_also = ["make(1)", "ld(1)", "ldd(1)", "gdb(1)"]
+
+[page.make]
+description = """
+Build targets described in a Makefile, rebuilding only what is out of date: a target is
+rebuilt when it does not exist or a prerequisite is newer. Rules are TARGET: PREREQUISITES
+followed by recipe lines that begin with a TAB. Variables (CC = gcc, PREFIX ?= /usr/local)
+can be overridden on the command line (make PREFIX=/opt). Automatic variables: $@ target,
+$< first prerequisite, $^ all prerequisites. .PHONY marks targets that are not files.
+-n shows the commands without running them, -B rebuilds everything, -C DIR runs in DIR,
+-f FILE uses another makefile, -k keeps going after errors."""
+examples = [["make", "build the first target"], ["make -n install PREFIX=/tmp/stage", "what would install do?"], ["make -C src clean", "run make in another directory"]]
+notes = "Simulated: GNU make subset — no conditionals (ifeq/ifdef), define/endef, target-specific variables or parallel builds (-j is accepted, builds run sequentially)."
+see_also = ["gcc(1)"]
+
+[page.gdb]
+description = """
+Debug programs: gdb PROGRAM, then run [ARGS]; when it stops (breakpoint or crash) bt shows
+the call stack, frame N / up / down select a frame, print VAR and info locals / info args
+show variables, list shows source, break FUNCTION sets a breakpoint, continue resumes, quit
+leaves. gdb PROGRAM CORE examines a core dump post mortem. Source lines and variables need a
+program built with -g; stripped programs show only addresses. -batch -ex CMD runs commands
+non-interactively."""
+examples = [["gdb -q ./app", "debug interactively"], ["gdb ./app core", "examine a core dump"], ["gdb -batch -ex run -ex bt --args ./app input.txt", "a backtrace in one command"]]
+notes = "Simulated: run, continue, break FUNCTION, bt, frame/up/down, print VAR (and *ptr, ptr[i]), info locals/args/breakpoints, list, kill. Not simulated: stepping (next/step), watchpoints, attaching to processes (-p), general expressions. The program runs once; continue replays its recording."
+see_also = ["coredumpctl(1)", "strace(1)", "ltrace(1)"]
+
+[page.ltrace]
+description = """
+Run a program and print the calls it makes into shared libraries — printf, strcmp, getenv,
+the functions of its own libraries — with arguments and return values (on standard error,
+or -o FILE). Where strace shows the conversation with the kernel, ltrace shows the one with
+libraries."""
+examples = [["ltrace ./app", "library calls of a program"], ["ltrace -o calls.txt ./app input", "into a file"]]
+notes = "Simulated: works for programs built with the simulated gcc."
+see_also = ["strace(1)", "gdb(1)"]
+
+[page.ldd]
+description = """
+Print the shared libraries a program needs and where the dynamic loader finds each one
+("=> not found" when it does not), resolved exactly as starting the program would:
+RUNPATH, LD_LIBRARY_PATH, /etc/ld.so.cache, the system directories. ldd --version shows
+the installed glibc."""
+examples = [["ldd /bin/ls", "what does ls need?"], ["ldd ./app | grep 'not found'", "the missing libraries"]]
+see_also = ["ldconfig(8)", "ld.so(8)", "readelf(1)"]
+
+[page.ldconfig]
+section = 8
+description = """
+Rebuild the dynamic loader's cache, /etc/ld.so.cache, from the directories listed in
+/etc/ld.so.conf (and the files it includes, /etc/ld.so.conf.d/*.conf) plus the trusted
+system directories, creating each library's soname link (libz.so.1 -> libz.so.1.2.13) on
+the way. Run it after installing libraries outside the package manager. -p prints the
+cache, -v lists what it processes. Requires root."""
+examples = [["echo /opt/acme/lib | sudo tee /etc/ld.so.conf.d/acme.conf && sudo ldconfig", "register a library directory"], ["ldconfig -p | grep libz", "is a library in the cache?"]]
+notes = "Simulated: the cache is a text rendering of the binary file."
+see_also = ["ldd(1)", "ld.so(8)"]
+
+[page.readelf]
+description = """
+Show the structure of ELF files: -h the file header, -d the dynamic section (NEEDED
+libraries, SONAME, RPATH/RUNPATH), -s / --dyn-syms the symbols, -V symbol versions, -l the
+program headers (the requested interpreter)."""
+examples = [["readelf -d ./app | grep NEEDED", "which libraries does it ask for?"], ["readelf -d libz.so.1 | grep SONAME", "a library's soname"]]
+see_also = ["objdump(1)", "nm(1)", "ldd(1)"]
+
+[page.objdump]
+description = """
+Display information from object files: -p the private headers (dynamic section and
+"Version References" — the glibc versions a program needs), -T the dynamic symbol table,
+-f the file header."""
+examples = [["objdump -p ./app | grep GLIBC", "which glibc versions does it need?"], ["objdump -T ./app", "dynamic symbols"]]
+notes = "Simulated programs contain no machine code: -d (disassembly) is not available."
+see_also = ["readelf(1)", "nm(1)"]
+
+[page.nm]
+description = "List symbols: T for functions an object defines, U for those it needs from elsewhere. -D the dynamic symbols, -u only undefined ones. Stripped files have no symbols."
+examples = [["nm util.o", "what does this object define and need?"], ["nm -D /lib/x86_64-linux-gnu/libz.so.1", "what a library exports"]]
+see_also = ["readelf(1)", "objdump(1)"]
+
+[page.strip]
+description = "Remove symbols and debugging information from programs and objects: smaller files, but gdb can no longer show function names, source lines or variables."
+examples = [["strip app", "remove symbols"]]
+see_also = ["gcc(1)", "gdb(1)"]
+
+[page.git]
+description = """
+Track changes to files. git init creates a repository; git add stages changes, git commit
+-m "why" records them (git config --global user.name / user.email first). git status and
+git diff [--staged] show what changed; git log [--oneline] [-p] [-- FILE], git show COMMIT
+and git blame FILE show history. Branches: git switch -c NAME, git merge NAME (conflicts are
+marked <<<<<<< ======= >>>>>>> in the file; fix, git add, git commit). Undoing: git restore
+FILE (discard work-tree changes), git restore --staged FILE (unstage), git revert COMMIT (a
+new commit reversing an old one), git reset --hard COMMIT (move back, discarding commits).
+Revisions: HEAD, HEAD~2, branch names, tags, abbreviated ids. .gitignore lists files to
+ignore."""
+examples = [["git init && git add . && git commit -m 'Initial import'", "start tracking a directory"], ["git log -p -- nginx.conf", "every change to one file"], ["git revert --no-edit HEAD", "undo the last commit, on the record"]]
+notes = "Simulated: local repositories only (clone from a path; no push, pull or fetch), no rebase or cherry-pick. Blobs have git's real object ids; trees and commits are stored in a simulator format."
+see_also = ["diff(1)", "etckeeper(8)"]
+
+[page.coredumpctl]
+description = """
+List and examine the core dumps systemd-coredump has stored: coredumpctl list shows each
+crash (time, PID, user, signal, program), info [PID|NAME] the details with a stack trace,
+debug [PID|NAME] opens the core in gdb, dump -o FILE writes it out."""
+examples = [["coredumpctl list", "recent crashes"], ["coredumpctl debug logsum", "post-mortem debugging of the latest logsum crash"]]
+notes = "Fedora and Arch install systemd-coredump by default; on Debian install the systemd-coredump package (otherwise a crash writes ./core when ulimit -c allows)."
+see_also = ["gdb(1)", "systemd-coredump(8)"]
+
+[page.getfacl]
+description = """
+Show a file's access control list: the owner/group/other permissions as user::, group::,
+other:: entries, named users and groups (user:NAME:, group:NAME:), the mask (the limit for
+all named entries and the owning group; "#effective:" marks what it cuts off) and, for
+directories, the default ACL new entries inherit (default:…). -c omits the header, -d shows
+only the default ACL, -R recurses."""
+examples = [["getfacl report.txt", "who may do what"], ["getfacl -d /srv/team/shared", "what new files will inherit"]]
+see_also = ["setfacl(1)", "chmod(1)", "acl(5)"]
+
+[page.setfacl]
+description = """
+Change a file's ACL: -m SPEC adds or modifies entries (u:NAME:rwx, g:NAME:rx, m::rx for the
+mask, o::r), -x SPEC removes them (u:NAME), -b removes all ACL entries, -k the default ACL,
+-d applies the following -m/-x to the default ACL (or write d:u:NAME:rw), -R recurses, -n
+leaves the mask alone. Several entries are separated by commas. X in permissions means x
+only for directories (and files already executable by someone). Only the owner and root
+may change a file's ACL."""
+examples = [["setfacl -m u:carol:r report.txt", "one more reader"], ["setfacl -d -m g:team:rwX /srv/team/shared", "new files there are team-editable"], ["setfacl -x u:carol report.txt", "revoke"]]
+notes = "Simulated: --set-file/-M/-X (ACLs from files) and --restore are not supported; mkdir -p's intermediate directories do not inherit default ACLs."
+see_also = ["getfacl(1)", "chmod(1)", "umask(1)"]
+
+[page.faillock]
+section = 8
+description = """
+Show or reset the records pam_faillock keeps of failed authentication attempts (one file
+per user in /var/run/faillock): faillock --user NAME lists them (time, type, source, and
+whether they still count), faillock --user NAME --reset clears them and unlocks the
+account early. How many failures lock an account, and for how long, is set in
+/etc/security/faillock.conf (deny, unlock_time, fail_interval) or as pam_faillock
+arguments in /etc/pam.d. Only root may read other users' records or reset them."""
+examples = [["sudo faillock --user dave", "why can dave not log in?"], ["sudo faillock --user dave --reset", "unlock dave now"]]
+see_also = ["pam_faillock(8)", "faillock.conf(5)", "pam(8)"]
+
+[page.ifup]
+section = 8
+description = """
+ifupdown's tools (Debian): ifup IFACE configures an interface as its stanza in
+/etc/network/interfaces says (inet dhcp: ask the LAN's DHCP server; inet static: address,
+netmask or /prefix, gateway; dns-nameservers needs resolvconf), ifdown IFACE removes its
+addresses and routes and takes it down. -a acts on every interface marked auto. ifup records
+what it configured in /run/network/ifstate.*, so ifup on an interface that is already up
+does nothing: to apply a changed stanza run ifdown then ifup (or systemctl restart
+networking). ifquery IFACE prints the parsed stanza; ifquery --state lists the configured
+interfaces. Changes made with ip addr are lost at reboot; the interfaces file is not."""
+examples = [["sudo ifdown enp0s3 && sudo ifup enp0s3", "apply a changed stanza"], ["ifquery enp0s3", "what the file says"], ["sudo systemctl restart networking", "re-raise everything"]]
+notes = "Simulated: inet only (no inet6 stanzas), no pre-up/post-up hooks, mappings or bridges/bonds/VLANs."
+see_also = ["interfaces(5)", "ifdown(8)", "ifquery(8)", "ip(8)"]
+
+[page.ifdown]
+section = 8
+description = "Take an interface configured by ifup down (see ifup(8)): its addresses and routes are removed. -a takes every configured interface down except lo."
+examples = [["sudo ifdown enp0s3", "down"]]
+see_also = ["ifup(8)", "interfaces(5)"]
+
+[page.ifquery]
+section = 8
+description = "Print the configuration ifupdown would apply to an interface (address, gateway, dns-nameservers); --state lists the interfaces ifup has configured. See ifup(8)."
+examples = [["ifquery enp0s3", "the parsed stanza"], ["ifquery --state", "what is up"]]
+see_also = ["ifup(8)", "interfaces(5)"]
+
+[page.netplan]
+section = 8
+description = """
+Ubuntu's network configuration: YAML files in /etc/netplan (and /lib/netplan, /run/netplan),
+merged in file-name order, describe the network under network: ethernets: NAME: with
+dhcp4: true, or addresses: [10.0.2.35/24], routes: [{to: default, via: 10.0.2.2}] and
+nameservers: {addresses: [...], search: [...]}. Indentation is significant and tabs are
+not allowed. netplan generate checks the files (and warns when they are readable by
+others: they should be mode 600), netplan apply makes the running system match them,
+netplan try applies and rolls back after 120 seconds unless you press ENTER — the safe
+way to change the network of a machine you are logged into remotely. netplan get KEY
+prints a merged setting (ethernets.enp0s3.addresses)."""
+examples = [["sudo netplan try", "apply with automatic rollback"], ["sudo netplan apply", "apply"], ["netplan get ethernets", "the merged configuration"]]
+notes = "Simulated: ethernets only (no bridges, bonds, vlans, wifis), IPv4 only; the YAML parser accepts the subset netplan files use; systemd-networkd is the (only) renderer."
+see_also = ["netplan(5)", "systemd-networkd(8)", "ip(8)"]
+
+[page.nmcli]
+section = 1
+description = """
+NetworkManager's command line (Fedora). Connection profiles are keyfiles in
+/etc/NetworkManager/system-connections (mode 600). nmcli device status lists the devices and
+the profile active on each; nmcli connection show [NAME] lists or details profiles;
+nmcli connection modify NAME ipv4.method manual ipv4.addresses 10.0.2.35/24
+ipv4.gateway 10.0.2.2 ipv4.dns 10.0.2.3 edits a profile (prefix a property with + or - to
+add or remove list items) — the change is saved but applies only when the connection is
+activated again with nmcli connection up NAME. connection add type ethernet con-name N
+ifname IF creates a profile, connection down and delete deactivate and remove one.
+Objects and verbs may be abbreviated (nmcli c mod, nmcli d)."""
+examples = [["nmcli con show", "profiles"], ["sudo nmcli con mod enp0s3 ipv4.method manual ipv4.addresses 10.0.2.35/24 ipv4.gateway 10.0.2.2 ipv4.dns 10.0.2.3", "make it static"], ["sudo nmcli con up enp0s3", "apply it"]]
+notes = "Simulated: ethernet profiles and IPv4 only; no wifi, VPN, bonds or nmtui; general shows a fixed state."
+see_also = ["NetworkManager(8)", "nm-settings-keyfile(5)", "ip(8)"]
+
+[page.networkctl]
+section = 1
+description = """
+Inspect systemd-networkd (Arch, and the backend of netplan on Ubuntu). networkctl list
+shows each link's operational state (routable, no-carrier, off) and setup state
+(configured, unmanaged, failed); networkctl status LINK shows the .network file that
+matched it, its addresses (DHCP-assigned ones are marked), gateway and DNS. .network files
+live in /etc/systemd/network (overriding /run and /usr/lib); the first one by name whose
+[Match] Name= matches a link configures it ([Network] DHCP=yes, or Address=, Gateway=, DNS=).
+networkctl reload re-reads them and reconfigures; reconfigure LINK applies to one link."""
+examples = [["networkctl", "links and their state"], ["networkctl status enp0s3", "which file, which address"], ["sudo networkctl reload", "apply edited .network files"]]
+notes = "Simulated: .network files only (no .netdev or .link processing), IPv4."
+see_also = ["systemd.network(5)", "systemd-networkd(8)", "resolvectl(1)"]
+
+[page.arping]
+section = 8
+description = """
+Ask the local network who has an IPv4 address: arping sends ARP requests and prints every
+answer with the MAC address it came from. Only hosts on the same link answer, so arping
+checks the layer below IP — it works even when a host's firewall drops ping. Two different
+MACs answering for one address mean an address conflict. -D (duplicate address
+detection) probes from 0.0.0.0 and exits 1 if anyone already uses the address, 0 if it is
+free — check before you assign an address by hand. -c N sends N requests, -I picks the
+interface, -f stops at the first reply, -q prints nothing (use the exit status)."""
+examples = [["arping -c 3 10.0.2.2", "who answers for the gateway?"], ["arping -D -c 2 10.0.2.35 && echo free", "is the address unused?"]]
+notes = "Simulated: IPv4 only; replies come from the hosts of the simulated LAN. Debian packages it as iputils-arping; Fedora and Arch include it in iputils."
+see_also = ["ip-neighbour(8)", "arp(8)", "ping(8)"]
+
+[page.arp]
+section = 8
+description = """
+Show and change the kernel's ARP (neighbour) cache — the MAC address learnt for each IP on
+the local link (net-tools; ip neigh is the modern equivalent). arp -n lists it numerically
+(Flags C: complete, M: permanent; '(incomplete)': nobody answered), arp -a in BSD style
+with names. arp -d IP deletes an entry (the next packet triggers a new ARP request);
+arp -s IP MAC adds a permanent entry, which is used without asking the network — if the
+MAC is wrong, traffic to that address silently disappears."""
+examples = [["arp -n", "the cache"], ["sudo arp -d 10.0.2.2", "forget an entry"]]
+notes = "Simulated: -i IFACE filters; publishing (pub), -f files and other hardware types are not supported."
+see_also = ["ip-neighbour(8)", "arping(8)"]
+
+[page.ifconfig]
+section = 8
+description = """
+The traditional interface tool from net-tools (replaced by ip addr / ip link, and not
+installed by default on current distributions). ifconfig lists the interfaces that are up
+(-a: all) with their IPv4 address, netmask, broadcast, IPv6 addresses, MAC address and
+counters. ifconfig IF ADDR [netmask MASK] replaces the interface's IPv4 address, ifconfig IF
+up|down changes the link state, ifconfig IF mtu N the MTU. Like ip, it changes only the
+running system — nothing survives a reboot. It shows only one IPv4 address per interface
+(ip addr shows them all)."""
+examples = [["ifconfig -a", "all interfaces"], ["sudo ifconfig enp0s3 mtu 1400", "change the MTU now"]]
+notes = "Simulated: the packet and byte counters are synthesised from the uptime; aliases (eth0:1) are not supported."
+see_also = ["ip(8)", "route(8)", "netstat(8)"]
+
+[page.route]
+section = 8
+description = """
+Show or change the IPv4 routing table (net-tools; see ip route). route -n prints it
+numerically: Destination and Genmask describe the network (0.0.0.0/0.0.0.0 is the default
+route), Gateway the next hop (0.0.0.0: directly connected), Flags U (up), G (via a
+gateway), H (a host route). route add default gw 10.0.2.2, route add -net 192.168.5.0
+netmask 255.255.255.0 gw 10.0.2.9 and route del ... change it — until the next reboot."""
+examples = [["route -n", "the table"], ["sudo route add default gw 10.0.2.2", "a default route"]]
+see_also = ["ip-route(8)", "netstat(8)"]
+
+[page.netstat]
+section = 8
+description = """
+The net-tools predecessor of ss. netstat -tlnp lists listening TCP sockets with the process
+behind each (as root; others see '-'), -u UDP, -a also established connections, -n numeric
+addresses and ports, -r the routing table (like route -n), -i per-interface counters."""
+examples = [["sudo netstat -tlnp", "who listens on which port"], ["netstat -rn", "routes"]]
+notes = "Simulated: -s statistics, -c continuous mode and UNIX sockets are not supported; counters are synthesised."
+see_also = ["ss(8)", "ip(8)", "lsof(8)"]
+
+[page.openssl]
+section = 1
+description = """
+The OpenSSL toolkit. Keys: openssl genrsa -out key.pem 2048 or openssl genpkey -algorithm
+RSA|EC|ED25519 -out key.pem (private keys are written mode 600; -aes256 encrypts them with
+a passphrase). Requests and self-signed certificates: openssl req -new -key key.pem -out
+x.csr -subj '/CN=host' -addext 'subjectAltName=DNS:host' (or -newkey rsa:2048 -nodes
+-keyout key.pem to create the key too; -x509 -days N makes a self-signed certificate
+instead). Signing: openssl x509 -req -in x.csr -CA ca.crt -CAkey ca.key -days 365 -out x.crt
+— the request's subjectAltName is copied only with -copy_extensions copy or an -extfile.
+Reading: openssl x509 -in x.crt -noout -text | -subject | -issuer | -dates | -fingerprint
+-sha256 | -ext subjectAltName, -checkend SECONDS (exit 1 if it expires by then). Checking:
+openssl verify -CAfile ca.crt x.crt; openssl s_client -connect host:443 [-servername
+name] [-showcerts] </dev/null shows the chain a server sends and the verification result.
+Also openssl dgst -sha256 FILE and openssl rand -hex N."""
+examples = [
+    ["openssl s_client -connect example.com:443 </dev/null 2>/dev/null | openssl x509 -noout -subject -issuer -dates", "who is this server, who vouches for it, until when"],
+    ["openssl req -new -newkey rsa:2048 -nodes -keyout web.key -out web.csr -subj /CN=web.example.lan -addext subjectAltName=DNS:web.example.lan", "key and signing request"],
+    ["openssl x509 -req -in web.csr -CA ca.crt -CAkey ca.key -days 365 -copy_extensions copy -out web.crt", "sign it"],
+    ["openssl x509 -in web.crt -noout -checkend 2592000", "does it expire within 30 days?"],
+]
+notes = "Simulated: certificates and keys are simulated PEM objects (no real cryptography); a subset of the subcommands and options; s_client reads no input (it ends as if given </dev/null)."
+see_also = ["update-ca-certificates(8)", "curl(1)", "nginx(8)"]
+
+[page.update-ca-certificates]
+section = 8
+description = """
+Debian's tool to build the system trust store: it reads the CAs selected in
+/etc/ca-certificates.conf (from /usr/share/ca-certificates) plus every *.crt file under
+/usr/local/share/ca-certificates, writes the bundle /etc/ssl/certs/ca-certificates.crt
+(used by curl, wget, apt, OpenSSL…) and links each CA into /etc/ssl/certs. To trust an
+internal CA: copy its certificate there with a .crt extension (other extensions are
+ignored) and run update-ca-certificates. Editing the bundle by hand does not last: the
+next run rebuilds it."""
+examples = [["sudo cp corp-root.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates", "trust an internal CA"]]
+see_also = ["update-ca-trust(8)", "openssl(1)"]
+
+[page.update-ca-trust]
+section = 8
+description = """
+Fedora's and Arch's tool to build the system trust store (p11-kit). Put a CA certificate
+(PEM, any extension) into /etc/pki/ca-trust/source/anchors (Fedora) or
+/etc/ca-certificates/trust-source/anchors (Arch) and run update-ca-trust (extract); the
+bundle /etc/pki/tls/certs/ca-bundle.crt (Fedora) or /etc/ssl/certs/ca-certificates.crt
+(Arch) is regenerated."""
+examples = [["sudo cp corp-root.crt /etc/pki/ca-trust/source/anchors/ && sudo update-ca-trust", "trust an internal CA (Fedora)"]]
+notes = "Simulated: the trust command of p11-kit is not available."
+see_also = ["update-ca-certificates(8)", "openssl(1)"]
+
+[page.install]
+section = 1
+description = """
+Copy files and set their mode and owner in one step — the tool of Makefiles and deployment
+scripts. install -m 644 SRC DEST copies with mode 644 (default 755), -o and -g set owner and
+group (root only), -D creates the missing parent directories of DEST, -t DIR copies several
+files into DIR, -v reports each file. install -d [-m MODE] DIR… creates directories (with
+their parents) and sets their attributes. Unlike cp, an existing DEST is replaced rather
+than written into, so a running program keeps its old file."""
+examples = [["sudo install -m 755 build/tool /usr/local/bin/", "deploy a program"], ["sudo install -d -m 750 -o app -g app /srv/app/data", "a private data directory"]]
+notes = "Simulated: -C, -s and -p are accepted and ignored; SELinux contexts (-Z) are not supported."
+see_also = ["cp(1)", "chmod(1)", "chown(1)"]
+
+[page.tcpdump]
+section = 8
+description = """
+Show the packets on an interface (root only): -i IFACE (any: all), -n no host names, -nn
+neither host nor port names, -c N stop after N packets, -A print payloads as text, -e the
+interface, -w FILE save the capture, -r FILE read it back, -D list interfaces. A filter
+expression selects packets: host H, src/dst host H, port P, src/dst port P, portrange A-B,
+net 10.0.2.0/24, tcp, udp, icmp, arp — combined with and, or, not and parentheses (quote
+them for the shell): tcpdump -nn -i enp0s3 'tcp port 5432 and host 10.0.2.30'. Read TCP
+flags: [S] a connection attempt, [S.] the answer, [.] an acknowledgement, [P.] data, [F.]
+closing, [R]/[R.] reset — a SYN answered by R. means "nothing listens there", repeated SYNs
+without answer mean packets are dropped. Plain HTTP (and anything else unencrypted, passwords
+included) is readable with -A; TLS is not. Capturing other people's traffic needs
+authorisation: it can contain personal data and secrets."""
+examples = [
+    ["sudo tcpdump -nn -c 10 port 53", "watch DNS queries and answers"],
+    ["sudo tcpdump -nn -A -c 6 'tcp port 80 and host intranet.example.lan'", "read an HTTP exchange"],
+    ["sudo tcpdump -nn -w /tmp/web.pcap port 443 &  … ;  kill %1;  tcpdump -nn -r /tmp/web.pcap", "capture what your own commands do"],
+]
+notes = """Simulated: packets are described by the simulator for the exchanges it performs (ARP, TCP handshakes, resets and retransmissions, ICMP, DNS, HTTP, TLS); there are no checksums, MTU effects or real pcap files (capture files are readable only by this tcpdump). In the foreground tcpdump waits for -c packets (or 60 simulated seconds) while traffic that happens by itself arrives; forwarded packets are seen only at the ends."""
+see_also = ["ss(8)", "ip(8)", "nft(8)"]
+
+[page.pvcreate]
+section = 8
+description = """
+Make a disk or partition an LVM physical volume (PV). pvs lists PVs with their volume group
+and free space; pvdisplay in detail; pvremove wipes the label of a PV that is in no VG. A
+device with a filesystem on it is only overwritten after you confirm."""
+examples = [["sudo pvcreate /dev/sdb", "a new PV"], ["sudo pvs", "PVs, VGs, sizes"]]
+notes = "Simulated LVM: linear allocation in 4 MiB extents; no thin pools, mirrors, pvmove or snapshots."
+see_also = ["vgcreate(8)", "lvcreate(8)", "lvm(8)"]
+
+[page.vgcreate]
+section = 8
+description = """
+Pool physical volumes into a volume group: vgcreate VG PV… (devices that are not PVs yet are
+initialised). vgextend VG PV adds disks, vgreduce VG PV removes an unused one, vgremove VG
+deletes the group, vgchange -a y|n VG activates or deactivates its logical volumes, vgs and
+vgdisplay report sizes and free space."""
+examples = [["sudo vgcreate appvg /dev/sdb", "a volume group"], ["sudo vgextend appvg /dev/sdc", "more space in the pool"]]
+see_also = ["pvcreate(8)", "lvcreate(8)"]
+
+[page.lvcreate]
+section = 8
+description = """
+Cut a logical volume from a volume group: lvcreate -L 4G -n NAME VG (or -l 100%FREE, -l 50%VG,
+-l EXTENTS). The volume appears as /dev/VG/NAME and /dev/mapper/VG-NAME and is used like a
+partition: mkfs, mount, fstab. lvs lists volumes (attribute a = active, o = open/mounted),
+lvdisplay shows details, lvrename and lvremove rename and delete."""
+examples = [["sudo lvcreate -L 4G -n data appvg", "a 4 GiB volume"], ["sudo lvs", "the volumes"]]
+see_also = ["lvextend(8)", "vgcreate(8)", "mkfs(8)"]
+
+[page.lvextend]
+section = 8
+description = """
+Grow a logical volume: lvextend -L +2G VG/LV, -L 10G (to that size), -l +100%FREE (all free
+space). The filesystem on it keeps its size until it is grown too — resize2fs for ext4 (also
+while mounted), xfs_growfs for XFS — or use lvextend -r, which grows both. lvreduce shrinks a
+volume: without -r it cuts the end off the filesystem (and warns that this may destroy your
+data); shrink the filesystem first (ext4: unmounted, after e2fsck -f) — XFS cannot shrink."""
+examples = [["sudo lvextend -r -L +3G appvg/data", "3 GiB more, filesystem included"], ["sudo lvextend -r -l +100%FREE appvg/data", "everything the VG has left"]]
+see_also = ["resize2fs(8)", "xfs_growfs(8)", "lvcreate(8)"]
+
+[page.resize2fs]
+section = 8
+description = """
+Change the size of an ext2/3/4 filesystem: resize2fs DEVICE grows it to fill the device
+(possible while mounted), resize2fs DEVICE SIZE sets a size. Shrinking needs the filesystem
+unmounted and checked first (e2fsck -f) and cannot go below the space in use."""
+examples = [["sudo resize2fs /dev/appvg/data", "use the whole (grown) volume"]]
+see_also = ["lvextend(8)", "e2fsck(8)", "xfs_growfs(8)"]
+
+[page.xfs_growfs]
+section = 8
+description = "Grow a mounted XFS filesystem to fill its device: xfs_growfs MOUNTPOINT. XFS filesystems can never shrink."
+examples = [["sudo xfs_growfs /srv/data", "after lvextend"]]
+see_also = ["lvextend(8)", "resize2fs(8)"]
+
+[page.mdadm]
+section = 8
+description = """
+Manage Linux software RAID. Create: mdadm --create /dev/md0 --level=1 --raid-devices=2
+/dev/sdb /dev/sdc (levels 0, 1, 5, 10; "missing" for an absent member). Inspect:
+cat /proc/mdstat ([UU] healthy, [U_] degraded, (F) failed, recovery progress),
+mdadm --detail /dev/md0, mdadm --examine MEMBER. Replace a disk: mdadm /dev/md0 --fail DISK
+--remove DISK, then --add NEWDISK (the array rebuilds while in use; on a healthy array a new
+disk becomes a spare). Stop and assemble: --stop, --assemble --scan. Keep
+/etc/mdadm/mdadm.conf (Debian; /etc/mdadm.conf elsewhere) current with
+mdadm --detail --scan — arrays not listed there come up as /dev/md127."""
+examples = [["cat /proc/mdstat", "array health"], ["sudo mdadm /dev/md0 --remove /dev/sdc --add /dev/sdd", "replace a failed disk"], ["sudo mdadm --detail --scan | sudo tee -a /etc/mdadm/mdadm.conf", "remember the array"]]
+notes = "Simulated: metadata 1.2 only; recovery runs at about 100 MB/s of simulated time; no --grow, bitmaps or RAID 6."
+see_also = ["lsblk(8)", "mkfs(8)"]
+
+[page.cryptsetup]
+section = 8
+description = """
+Manage LUKS-encrypted block devices. cryptsetup luksFormat DEVICE creates a container
+(destroying what was on the device; confirm with YES), cryptsetup open DEVICE NAME unlocks it
+as /dev/mapper/NAME (make the filesystem there, not on DEVICE), cryptsetup close NAME locks it
+again (unmount first). Key slots: luksAddKey DEVICE [KEYFILE] adds a passphrase or key file,
+luksRemoveKey and luksKillSlot remove one, luksDump shows the header and slots; open
+--test-passphrase checks a key without unlocking. status NAME shows an open mapping. At boot
+/etc/crypttab (NAME DEVICE KEYFILE|none OPTIONS) opens containers."""
+examples = [["sudo cryptsetup luksFormat /dev/sdb && sudo cryptsetup open /dev/sdb secure", "encrypt and unlock"], ["sudo umount /mnt/secure && sudo cryptsetup close secure", "lock it again"], ["sudo cryptsetup luksAddKey /dev/sdb /root/recovery.key", "a second key"]]
+notes = "Simulated: no real cryptography; LUKS2 headers with up to 32 key slots; passphrases are checked against stored hashes; crypttab entries with 'none' are not unlocked at boot (no console input)."
+see_also = ["crypttab(5)", "lsblk(8)"]
+
+[page.flock]
+section = 1
+description = """
+Advisory locks for scripts. flock [-n] FILE COMMAND runs COMMAND while holding a lock on FILE
+(created if needed); -n fails at once (exit 1, or -E CODE) instead of waiting, -w SECONDS
+waits at most that long, -s takes a shared lock. In scripts, lock a descriptor: exec
+9>/run/lock/NAME.lock; flock -n 9 || exit 1 — the lock belongs to the script and is released
+when it ends, even if it crashes (a lock file that is merely tested for existence stays behind
+after a crash). flock -u FD unlocks early."""
+examples = [["flock -n /run/lock/backup.lock /usr/local/bin/backup", "never two backups at once (in a crontab line)"], ["exec 9>/run/lock/job.lock; flock -n 9 || exit 1", "the same inside a script"]]
+notes = "Simulated: locks are kept per file in the simulation; waiting lets simulated time pass (a blocking flock without -w gives up after 60 simulated seconds)."
+see_also = ["timeout(1)", "cron(8)"]
+
+[page.timeout]
+section = 1
+description = """
+Run a command with a time limit: timeout 30 COMMAND… sends SIGTERM (or -s SIGNAL) after 30
+seconds (suffixes s, m, h, d). Exit status 124 means the time ran out; with
+--preserve-status the command's own status (128 + signal) is returned. Useful in cron jobs
+and scripts so that a hanging network call cannot block the next run."""
+examples = [["timeout 10 curl -s https://example.com/", "give up after 10 seconds"]]
+notes = "Simulated: the deadline interrupts waiting (sleep) and the processes the command started."
+see_also = ["flock(1)", "kill(1)"]
+
+[page.ansible-playbook]
+section = 1
+description = """
+Apply an Ansible playbook: YAML plays (hosts, become, vars, tasks, handlers) whose tasks
+describe a desired state with modules — apt/dnf/package, copy, template, file, lineinfile,
+user, group, service, cron, sysctl, command/shell, debug, set_fact. Each task reports ok
+(already so) or changed; handlers (notify) run once at the end if something changed.
+--check --diff previews without changing anything; -K asks for the sudo password become:
+true needs; -e VAR=VALUE sets variables; --syntax-check validates the file. Run a playbook
+twice: the second run should report changed=0 (idempotency)."""
+examples = [["ansible-playbook -K --check --diff site.yml", "what would change?"], ["ansible-playbook -K site.yml", "make it so"], ["ansible-playbook --syntax-check site.yml", "YAML and module names OK?"]]
+notes = "Simulated: a subset of Ansible core — local connections only (other hosts are reported UNREACHABLE), Jinja-like templating with a few filters, no roles, collections, vault, facts caching or async; YAML without anchors."
+see_also = ["ansible(1)"]
+
+[page.ansible]
+section = 1
+description = "Run one Ansible module ad hoc: ansible localhost -m ping, ansible localhost -b -K -m apt -a 'name=tree'. See ansible-playbook(1) for the modules."
+examples = [["ansible localhost -m ping", "is Ansible working?"]]
+see_also = ["ansible-playbook(1)"]
+
+[page.sqlite3]
+section = 1
+description = """
+The SQLite shell. sqlite3 FILE 'SQL' runs statements and exits; sqlite3 FILE < script.sql
+runs a script; without SQL it reads statements interactively (end them with ;). Output
+modes: -header, -column, -csv, -json, -line (or .mode, .headers). Dot commands: .tables,
+.schema, .dump (the database as SQL), .backup FILE (a consistent copy — the right way to
+back up a database that is in use), .restore FILE, .read FILE, .import FILE TABLE, .output
+FILE, .quit. PRAGMA integrity_check verifies a database file. Opening a database needs read
+permission; changing it needs write permission on the file."""
+examples = [["sqlite3 -header -column orders.db 'SELECT * FROM orders LIMIT 5'", "look inside"], ["sqlite3 orders.db \".backup /var/backups/orders.db\"", "a consistent backup"], ["sqlite3 orders.db 'PRAGMA integrity_check'", "is the file healthy?"]]
+notes = "Simulated: the real SQLite engine works on an in-memory copy of the file; statements that would reach outside the database (ATTACH, VACUUM INTO, extension loading, unlisted PRAGMAs) are refused, and very long queries are stopped. .shell, .system and .load are not available."
+see_also = ["python3(1)"]
+
+[page.python3]
+section = 1
+description = """
+In this simulation python3 runs exactly one thing: python3 -m http.server [PORT] [--bind
+ADDRESS] [--directory DIR], a small static web server (default port 8000, the current
+directory). It serves files with the permissions of the user it runs as, lists directories
+without an index.html and logs each request. Run it in the background (… &) or as a systemd
+service; behind nginx it is a typical upstream for proxy_pass."""
+examples = [["python3 -m http.server 8000 --bind 127.0.0.1 &", "share the current directory locally"]]
+notes = "Simulated: no Python interpreter — any other use reports that Python programs are not run."
+see_also = ["nginx(8)", "curl(1)"]
+
+[page.setcap]
+section = 8
+description = """
+Set file capabilities: setcap CAPS FILE gives a program privileges whenever it runs, the
+way a setuid bit does — but only the listed capabilities. CAPS is a list and flags:
+cap_net_bind_service=ep (e: effective at once, p: permitted). setcap -r FILE removes
+them; -v checks instead of setting. Needs CAP_SETFCAP (root). Writing to the file or
+changing its owner drops its capabilities."""
+examples = [["sudo setcap cap_net_bind_service=ep /usr/local/bin/server", "let a program listen on ports below 1024"], ["sudo setcap -r /usr/local/bin/server", "take the capability away"]]
+notes = "Simulated: the effective and permitted sets are modelled, the inheritable set and namespaced root ids (-n) are not."
+see_also = ["getcap(8)", "capsh(1)", "capabilities(7)"]
+
+[page.getcap]
+section = 8
+description = """
+Show file capabilities: getcap FILE prints FILE and its capabilities (nothing if it has
+none); getcap -r DIR searches a whole tree — getcap -r / 2>/dev/null lists every program with
+capabilities, an essential step of a security audit."""
+examples = [["getcap -r / 2>/dev/null", "every program with file capabilities"]]
+notes = "Simulated: -r skips /proc, /sys, /dev and /run below the starting directory."
+see_also = ["setcap(8)", "find(1)"]
+
+[page.capsh]
+section = 1
+description = """
+Capability shell wrapper. capsh --print shows the current process's capabilities (Current:
+=ep means all of them, = none), its bounding and ambient sets and its user and groups.
+capsh --decode=MASK names the capabilities in a hexadecimal mask such as the CapEff: line of
+/proc/PID/status; --has-p=CAP succeeds if the capability is held, --supports=CAP if the kernel
+knows it."""
+examples = [["capsh --decode=0000000000000400", "-> cap_net_bind_service"], ["grep Cap /proc/$(pidof nginx | cut -d' ' -f1)/status", "a process's capability masks"]]
+notes = "Simulated: only --print, --decode, --has-p, --has-a and --supports; capsh does not start shells."
+see_also = ["setcap(8)", "getcap(8)", "proc(5)"]
+
+[page.unlink]
+section = 1
+description = """
+Remove one file (or symbolic link) with the unlink() system call: exactly one operand, no
+options, no prompting and no directories. Removing a symlink never touches its target —
+unlink /etc/nginx/sites-enabled/default disables a site and keeps sites-available intact."""
+examples = [["sudo unlink /etc/nginx/sites-enabled/default", "remove a symbolic link"]]
+see_also = ["rm(1)", "ln(1)"]

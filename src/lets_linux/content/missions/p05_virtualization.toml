@@ -1,0 +1,125 @@
+schema = 1
+
+[mission]
+id = "p05-virtualization"
+title = "Machines Inside Machines"
+chapter = "P"
+kind = "lesson"
+order = 7
+difficulty = 4
+requires = ["p03-containers"]
+skills = ["p.virtualization", "p.container-concepts"]
+review_for = ["n.kernel-userspace", "n.kernel-logs"]
+xp = 180
+estimated_minutes = 20
+
+[briefing]
+context = """
+A colleague asks two things: whether this server is "real hardware or a VM", and whether
+they can test a driver for a newer kernel in a container on it. Collect the evidence on
+the machine itself, then answer.
+"""
+concept = """
+A virtual machine runs a complete operating system, with its own kernel, on virtual
+hardware. A hypervisor provides it: on Linux, KVM (a kernel module using the CPU's
+virtualization extensions, vmx on Intel, svm on AMD) with QEMU emulating the devices — or
+VMware, Hyper-V, Xen. The guest notices: the kernel logs "Hypervisor detected: KVM", the
+CPU flags include "hypervisor", lscpu shows the hypervisor vendor, and
+systemd-detect-virt names it. A container is not a machine: its processes run on the host's
+kernel, isolated by namespaces and limited by cgroups — so uname -r inside shows the host's
+kernel, and nothing in a container can load another kernel or a module the host kernel
+does not accept. To run VMs yourself (nested virtualization), the CPU this machine sees
+must offer vmx or svm, and the kvm modules must load.
+"""
+objectives = ["Recognise a virtual machine from inside", "Compare kernels in a container and on the host", "Check whether a machine can host VMs", "Choose between a container and a VM"]
+
+[environment]
+profile = "debian"
+packages = ["podman"]
+
+[[task]]
+id = "hypervisor"
+title = "Real or virtual?"
+kind = "guided"
+instructions = "Find evidence whether this server runs on a hypervisor, and which."
+skills = { "p.virtualization" = 1.0, "n.kernel-logs" = 0.5 }
+question = { prompt = "Which hypervisor runs this server?", type = "exact", accept = ["kvm", "KVM"] }
+hints = ["systemd-detect-virt answers directly.", "Evidence elsewhere: lscpu (Hypervisor vendor), journalctl -k | grep -i hypervisor (dmesg needs sudo on Debian), the hypervisor flag in /proc/cpuinfo.", "kvm"]
+explanation = "Several independent sources agree: systemd-detect-virt, lscpu, the kernel's boot messages and the CPU flags. Inside a VM the CPU deliberately tells the guest that it is virtualized."
+
+[[task]]
+id = "kernel"
+title = "Whose kernel?"
+kind = "guided"
+instructions = "Run uname -r in a container (for example docker.io/library/alpine:3.20, as yourself with podman run --rm) and on the host."
+skills = { "p.container-concepts" = 1.0, "n.kernel-userspace" = 0.5 }
+question = { prompt = "Which kernel release does uname -r print inside the container?", type = "state", state = { command = "uname -r" } }
+hints = ["podman run --rm docker.io/library/alpine:3.20 uname -r", "Compare with uname -r on the host.", "The same as the host's."]
+explanation = "Alpine's files, Debian's kernel: the container has its own root filesystem but no kernel of its own. /etc/os-release inside says Alpine; uname -r tells the truth about what runs underneath."
+
+[[task]]
+id = "nested"
+title = "Room for VMs?"
+kind = "troubleshooting"
+instructions = "Could this server run KVM virtual machines itself? Check the CPU's virtualization extensions."
+skills = { "p.virtualization" = 1.0 }
+question = { prompt = "How many lines of /proc/cpuinfo mention vmx or svm?", type = "state", state = { command = "grep -cE 'vmx|svm' /proc/cpuinfo" } }
+hints = ["The flags line lists the CPU's features.", "grep -cE 'vmx|svm' /proc/cpuinfo — and lsmod | grep kvm.", "0: the hypervisor does not pass the extensions through (no nested virtualization)."]
+explanation = "No vmx/svm flag, no kvm module: this guest cannot run KVM guests of its own. Nested virtualization has to be enabled on the host's hypervisor first; containers, on the other hand, need nothing from the CPU."
+
+[[task]]
+id = "choice"
+title = "Container or VM?"
+kind = "explanation"
+instructions = "Answer your colleague."
+skills = { "p.virtualization" = 1.0, "p.container-concepts" = 1.0 }
+question = { prompt = "They want to test a driver (kernel module) built for a newer kernel. Container or VM?", type = "choice", choices = ["A container: it is lighter and starts faster", "A VM: a container runs on the host's kernel and cannot boot a different one or load modules the host kernel rejects", "Either: both have their own kernel"], answer = 1 }
+hints = ["What did uname -r show in the container?", "Modules are loaded into the running kernel — which is the host's.", "(b)"]
+explanation = "Containers isolate processes on one kernel; VMs isolate whole operating systems, kernels included. Kernel work, other operating systems and strong isolation boundaries call for VMs; packaging and running applications call for containers."
+
+[debrief]
+summary = """
+systemd-detect-virt (-v VM, -c container), lscpu, journalctl -k | grep -i hypervisor and the
+hypervisor CPU flag reveal a VM. uname -r in a container shows the host's kernel. Hosting
+VMs needs vmx/svm and the kvm modules (lsmod | grep kvm). Same kernel → container; own
+kernel → VM.
+"""
+alternatives = ["virt-what (another detector)", "cat /sys/class/dmi/id/product_name and sys_vendor — the virtual hardware's names (not simulated)", "virsh / virt-install / qemu-system-x86_64 manage VMs on a KVM host (not simulated)"]
+pitfalls = ["Reading /etc/os-release in a container as the machine's OS.", "Assuming every VM can host VMs.", "Using containers as a security boundary equal to VMs."]
+next = "Chapter P is complete."
+
+[[solution]]
+name = "detectors"
+steps = [
+    "systemd-detect-virt",
+    ":answer kvm",
+    "podman run --rm docker.io/library/alpine:3.20 uname -r",
+    "uname -r",
+    { answer_with = "uname -r" },
+    "grep -cE 'vmx|svm' /proc/cpuinfo",
+    { answer_with = "grep -cE 'vmx|svm' /proc/cpuinfo" },
+    ":answer b",
+]
+
+[[solution]]
+name = "evidence by hand"
+steps = [
+    "lscpu",
+    "journalctl -k | grep -i hypervisor",
+    ":answer KVM",
+    "podman run --rm docker.io/library/debian:12 uname -r",
+    { answer_with = "uname -r" },
+    "grep flags /proc/cpuinfo | head -1",
+    "lsmod | grep kvm",
+    ":answer 0",
+    ":answer A VM: a container runs on the host's kernel and cannot boot a different one or load modules the host kernel rejects",
+]
+
+[[counterexample]]
+name = "container for kernel work"
+steps = [
+    ":answer kvm",
+    { answer_with = "uname -r" },
+    ":answer 0",
+    ":answer a",
+]

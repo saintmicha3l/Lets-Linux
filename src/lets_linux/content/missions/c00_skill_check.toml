@@ -1,0 +1,227 @@
+schema = 1
+
+[mission]
+id = "c00-skill-check"
+title = "Skill Check C: Text and Pipelines"
+chapter = "C"
+placement = "C"
+kind = "assessment"
+order = 0
+difficulty = 3
+requires = []
+skills = ["c.grep-basics", "c.wc-counting", "c.log-filtering", "c.sort-uniq", "c.awk-fields", "c.pipelines", "c.redirect-output", "c.regex-basics", "c.cut-paste-tr", "c.sed-substitution", "c.diff-compare", "c.std-streams", "c.find-exec", "c.tee-xargs"]
+xp = 70
+estimated_minutes = 15
+sequential = false
+
+[briefing]
+context = """
+This skill check covers chapter C: searching, counting, sorting, fields, regular
+expressions, sed, diff, redirection, standard error and find with actions. Tasks in any
+order, any commands. Solve them all (one slip allowed) to test out of chapter C. Anything
+you cannot do is simply not counted — :submit ends the check.
+"""
+concept = "No hints: show what you can do on your own."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "debian"
+
+[environment.vars]
+top = { choices = ["10.0.2.88", "192.0.2.14", "198.51.100.61"] }
+team = { choices = ["ops", "sales", "dev"] }
+setting = { choices = ["max_clients", "keepalive", "log_level"] }
+
+[[environment.setup]]
+action = "weblog"
+path = "/srv/logs/web.log"
+hours = 8
+per_hour = 60
+clients = ["10.0.2.31", "{{top}}", "10.0.2.47", "{{top}}", "203.0.113.77", "{{top}}", "10.0.2.52"]
+incidents = [{ start = 2, hours = 1, share = 0.3, status = 404 }, { start = 5, hours = 0.5, share = 0.5, status = 503 }]
+error_every = 70
+mode = "0644"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/data/staff.csv"
+mode = "0644"
+content = """name,team,phone
+Rosa,ops,555-0101
+Ahmed,sales,555-0102
+Lin,dev,555-0103
+Zoe,ops,555-0104
+Bruno,dev,555-0105
+Aiko,sales,555-0106
+Karl,ops,555-0107
+Mona,dev,555-0108
+Ivan,sales,555-0109
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/srv/data/app.conf"
+mode = "0644"
+content = """# application endpoints
+api = http://api.example.lan/v2
+auth = http://auth.example.lan/login
+docs = http://docs.example.lan/
+timeout = 30
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/srv/data/v1.conf"
+mode = "0644"
+content = "workers = 4\nmax_clients = 200\nkeepalive = on\nlog_level = info\nport = 8080\n"
+
+[[environment.setup]]
+action = "run"
+command = "sed 's/^{{setting}} = .*/{{setting}} = CHANGED/' /srv/data/v1.conf | sed 's/CHANGED/{{setting}}-new/' > /srv/data/v2.conf && chmod 644 /srv/data/v2.conf"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/noisy"
+mode = "0755"
+content = """#!/bin/sh
+# noisy: results on standard output, warnings on standard error
+echo "result 1"
+echo "warning: disk almost full" >&2
+echo "result 2"
+echo "warning: certificate expires soon" >&2
+"""
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "mkdir -p ~/cache/a/b ~/cache/c && touch ~/cache/x.tmp ~/cache/a/y.tmp ~/cache/a/b/z.tmp ~/cache/c/keep.dat ~/cache/a/keep.txt"
+
+[[task]]
+id = "count"
+title = "Not found"
+kind = "assessment"
+instructions = "/srv/logs/web.log is a web server access log (status code in field 9)."
+skills = { "c.grep-basics" = 1.0, "c.wc-counting" = 1.0, "c.log-filtering" = 1.0 }
+question = { prompt = "How many requests ended with status 404?", type = "state", state = { command = "awk '$9 == 404' /srv/logs/web.log | wc -l" } }
+explanation = "awk '$9 == 404' /srv/logs/web.log | wc -l — grep ' 404 ' works too, if nothing else contains it."
+
+[[task]]
+id = "top"
+title = "The busiest client"
+kind = "assessment"
+instructions = "Find the client (field 1) that made the most requests in /srv/logs/web.log."
+skills = { "c.sort-uniq" = 1.0, "c.awk-fields" = 1.0, "c.pipelines" = 1.0 }
+question = { prompt = "Its address?", type = "exact", accept = ["{{top}}"] }
+explanation = "awk '{print $1}' web.log | sort | uniq -c | sort -rn | head -1"
+
+[[task]]
+id = "errors"
+title = "Server errors only"
+kind = "assessment"
+instructions = "Write every line of /srv/logs/web.log with a 5xx status into ~/errors.txt — in their original order, and nothing else."
+skills = { "c.redirect-output" = 1.0, "c.regex-basics" = 1.0, "c.log-filtering" = 1.0 }
+checks = [{ type = "file_equals_command", path = "~/errors.txt", command = "awk '$9 ~ /^5[0-9][0-9]$/' /srv/logs/web.log" }]
+explanation = "awk '$9 ~ /^5/' /srv/logs/web.log > ~/errors.txt — or grep -E '\" 5[0-9]{2} ' …"
+
+[[task]]
+id = "team"
+title = "Who is in the team"
+kind = "assessment"
+instructions = "/srv/data/staff.csv lists name,team,phone. Write the names of everyone in team {{team}} into ~/team.txt, alphabetically, one per line."
+skills = { "c.cut-paste-tr" = 1.0, "c.sort-uniq" = 0.5 }
+checks = [{ type = "file_equals_command", path = "~/team.txt", command = "awk -F, '$2 == \"{{team}}\" {print $1}' /srv/data/staff.csv | sort" }]
+explanation = "grep ',{{team}},' staff.csv | cut -d, -f1 | sort > ~/team.txt"
+
+[[task]]
+id = "sed"
+title = "Encrypt the endpoints"
+kind = "assessment"
+instructions = "Create ~/app.conf: a copy of /srv/data/app.conf with every http:// replaced by https:// — the original stays as it is."
+skills = { "c.sed-substitution" = 1.0 }
+checks = [
+    { type = "file_equals_command", path = "~/app.conf", command = "sed 's|http://|https://|g' /srv/data/app.conf" },
+    { type = "file_contains", path = "/srv/data/app.conf", text = "http://api" },
+]
+explanation = "sed 's|http://|https://|g' /srv/data/app.conf > ~/app.conf — another delimiter saves escaping the slashes."
+
+[[task]]
+id = "diff"
+title = "What changed"
+kind = "assessment"
+instructions = "/srv/data/v1.conf and /srv/data/v2.conf differ in one setting."
+skills = { "c.diff-compare" = 1.0 }
+question = { prompt = "Which setting's name?", type = "exact", accept = ["{{setting}}"] }
+explanation = "diff /srv/data/v1.conf /srv/data/v2.conf"
+
+[[task]]
+id = "stderr"
+title = "Just the warnings"
+kind = "assessment"
+instructions = "The program noisy prints results on standard output and warnings on standard error. Save only the warnings into ~/warnings.txt."
+skills = { "c.std-streams" = 1.0, "c.redirect-output" = 0.5 }
+checks = [{ type = "file_equals", path = "~/warnings.txt", content = "warning: disk almost full\nwarning: certificate expires soon\n" }]
+explanation = "noisy 2> ~/warnings.txt >/dev/null — 2> redirects file descriptor 2."
+
+[[task]]
+id = "clean"
+title = "Clear the cache"
+kind = "assessment"
+instructions = "Delete every .tmp file anywhere below ~/cache. Other files and the directories stay."
+skills = { "c.find-exec" = 1.0, "c.tee-xargs" = 0.5 }
+checks = [
+    { type = "tree_count", path = "~/cache", glob = "*.tmp", count = 0 },
+    { type = "path_exists", path = "~/cache/c/keep.dat" },
+    { type = "path_exists", path = "~/cache/a/keep.txt" },
+    { type = "path_exists", path = "~/cache/a/b", kind = "dir" },
+]
+explanation = "find ~/cache -name '*.tmp' -delete (or -exec rm {} +, or find … -print0 | xargs -0 rm)."
+
+[debrief]
+summary = """
+The check covered chapter C. Solved tasks are evidence for their skills; chapter C's missions
+stay open to replay.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "awk and friends"
+steps = [
+    { answer_with = "awk '$9 == 404' /srv/logs/web.log | wc -l" },
+    "awk '{print $1}' /srv/logs/web.log | sort | uniq -c | sort -rn | head -1",
+    ":answer {{top}}",
+    "awk '$9 ~ /^5/' /srv/logs/web.log > ~/errors.txt",
+    "awk -F, '$2 == \"{{team}}\" {print $1}' /srv/data/staff.csv | sort > ~/team.txt",
+    "sed 's|http://|https://|g' /srv/data/app.conf > ~/app.conf",
+    "diff /srv/data/v1.conf /srv/data/v2.conf",
+    ":answer {{setting}}",
+    "noisy 2> ~/warnings.txt > /dev/null",
+    "find ~/cache -name '*.tmp' -delete",
+]
+
+[[solution]]
+name = "grep, cut and xargs"
+steps = [
+    "find ~/cache -type f -name '*.tmp' -print0 | xargs -0 rm",
+    "noisy 2>&1 >/dev/null | tee ~/warnings.txt",
+    "grep ',{{team}},' /srv/data/staff.csv | cut -d, -f1 | sort > ~/team.txt",
+    "grep -E '\" 5[0-9]{2} ' /srv/logs/web.log > ~/errors.txt",
+    "cp /srv/data/app.conf ~/app.conf && sed -i 's/http:\\/\\//https:\\/\\//g' ~/app.conf",
+    "cut -d' ' -f1 /srv/logs/web.log | sort | uniq -c | sort -n | tail -1",
+    ":answer {{top}}",
+    "diff -u /srv/data/v1.conf /srv/data/v2.conf",
+    ":answer {{setting}}",
+    { answer_with = "grep -c '\" 404 ' /srv/logs/web.log" },
+]
+
+[[counterexample]]
+name = "streams mixed up, original edited"
+steps = [
+    { answer_with = "awk '$9 == 404' /srv/logs/web.log | wc -l" },
+    ":answer {{top}}",
+    "awk '$9 ~ /^5/' /srv/logs/web.log > ~/errors.txt",
+    "awk -F, '$2 == \"{{team}}\" {print $1}' /srv/data/staff.csv | sort > ~/team.txt",
+    "sudo -S true <<< letslinux; sudo sed -i 's|http://|https://|g' /srv/data/app.conf; cp /srv/data/app.conf ~/app.conf",
+    ":answer {{setting}}",
+    "noisy > ~/warnings.txt 2>&1",
+    "find ~/cache -name '*.tmp' -delete",
+]

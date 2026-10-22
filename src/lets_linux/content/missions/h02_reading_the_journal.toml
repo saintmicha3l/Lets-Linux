@@ -1,0 +1,264 @@
+schema = 1
+
+[mission]
+id = "h02-reading-the-journal"
+title = "What the Journal Knows"
+chapter = "H"
+kind = "lesson"
+order = 2
+difficulty = 3
+requires = ["h01-meet-the-services", "c03-grep"]
+skills = ["h.journalctl"]
+xp = 110
+estimated_minutes = 20
+
+[briefing]
+context = """
+Monday morning on an Ubuntu server: the payments API is down, someone tried to use sudo who
+should not have, and the weekend backup may have failed before last week's reboot. Every one
+of those stories is in the journal — if you know how to ask.
+"""
+concept = """
+systemd-journald collects messages from the kernel, services and programs, with metadata:
+time, priority, unit, process, boot. journalctl filters them: -u UNIT, -t IDENTIFIER,
+-p PRIORITY (err, warning, ...), -b (this boot) or -b -1 (the previous one), -k (kernel),
+--since/--until, -g PATTERN, and -n to limit the number of lines. On Ubuntu the journal is
+kept across reboots; --list-boots shows the boots it knows.
+"""
+objectives = ["Filter the journal by unit, priority and boot", "Find the cause of a service failure", "Use time and pattern filters"]
+
+[environment]
+profile = "ubuntu"
+[environment.vars]
+intruder = { choices = ["intern", "tempuser", "jdoe"] }
+
+[[environment.setup]]
+action = "user"
+name = "{{intruder}}"
+
+[[environment.setup]]
+action = "user"
+name = "payments"
+shell = "/usr/sbin/nologin"
+create_home = false
+
+[[environment.setup]]
+action = "file"
+path = "/etc/payments/api.key"
+content = "sk_live_simulated_key\n"
+mode = "0600"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/payments-api"
+mode = "0755"
+content = """#!/bin/bash
+echo "<6>payments-api 1.8 starting"
+if ! cat /etc/payments/api.key > /dev/null 2>&1; then
+    echo "<3>FATAL: cannot read /etc/payments/api.key: Permission denied"
+    exit 1
+fi
+echo "listening on 127.0.0.1:8080"
+sleep 86400
+"""
+
+[[environment.setup]]
+action = "journal"
+boot = -1
+ago = 432000
+identifier = "backup.sh"
+facility = "user"
+priority = "err"
+message = 'rsync: write failed on "/mnt/backup/home.tar": No space left on device (28)'
+
+[[environment.setup]]
+action = "journal"
+boot = -1
+ago = 431990
+identifier = "backup.sh"
+facility = "user"
+priority = "err"
+message = "backup FAILED after 1834 seconds"
+
+[[environment.setup]]
+action = "journal"
+ago = 7000
+identifier = "kernel"
+priority = "warning"
+message = "EXT4-fs (sda3): warning: mounting fs with errors, running e2fsck is recommended"
+
+[[environment.setup]]
+action = "journal"
+ago = 3600
+identifier = "sudo"
+facility = "authpriv"
+priority = "notice"
+message = "pam_unix(sudo:auth): authentication failure; logname={{intruder}} uid=1002 euid=0 tty=/dev/pts/1 ruser={{intruder}} rhost=  user={{intruder}}"
+
+[[environment.setup]]
+action = "journal"
+ago = 3590
+identifier = "sudo"
+facility = "authpriv"
+priority = "err"
+message = "{{intruder}} : 3 incorrect password attempts ; TTY=pts/1 ; PWD=/home/{{intruder}} ; USER=root ; COMMAND=/usr/bin/cat /etc/shadow"
+
+[[environment.setup]]
+action = "service"
+name = "payments-api.service"
+enable = true
+start = true
+content = """[Unit]
+Description=Payments API
+After=network.target
+
+[Service]
+User=payments
+ExecStart=/usr/local/bin/payments-api
+Restart=on-failure
+RestartSec=0
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[task]]
+id = "unitlog"
+title = "One unit's story"
+kind = "guided"
+instructions = "Show the journal entries for payments-api.service."
+skills = { "h.journalctl" = 1.0 }
+checks = [{ type = "output_contains", text = "FATAL", command = ["journalctl", "systemctl"] }]
+hints = ["journalctl can filter by unit.", "-u UNIT", "Type: journalctl -u payments-api"]
+explanation = "The service's own output (FATAL: ...) is interleaved with systemd's messages about starting and restarting it."
+
+[[task]]
+id = "why"
+title = "Root cause"
+kind = "explanation"
+instructions = "Read the messages carefully."
+skills = { "h.journalctl" = 1.0, "h.failed-services" = 0.5 }
+question = { prompt = "Why does payments-api fail?", type = "choice", choices = ["Port 8080 is already in use", "It runs as user payments, who cannot read /etc/payments/api.key", "The binary is missing", "The disk is full"], answer = 1 }
+hints = ["Look at the FATAL line and the User= of the service.", "ls -l /etc/payments/api.key shows who may read it.", "The answer is (b)."]
+explanation = "The key is root-only (600) while the service runs as payments. Fixing that is a permissions decision for the next mission."
+
+[[task]]
+id = "gaveup"
+title = "systemd gave up"
+kind = "independent"
+instructions = "systemd restarted the service several times and then stopped trying."
+skills = { "h.journalctl" = 1.0, "h.restart-policies" = 0.5 }
+question = { prompt = "With which result did payments-api.service end up failing?", type = "exact", accept = ["start-limit-hit", "'start-limit-hit'"] }
+hints = ["systemctl status shows 'Result: ...' in the Active line.", "Or look for 'Failed with result' in journalctl -u payments-api.", "The result is start-limit-hit."]
+explanation = "Restart=on-failure kept restarting it until the start rate limit (5 starts in 10 s by default) was reached."
+
+[[task]]
+id = "sudo"
+title = "Who knocked?"
+kind = "independent"
+instructions = "Someone failed to authenticate with sudo in the last few hours. Find out who."
+skills = { "h.journalctl" = 1.0, "l.audit-logging" = 0.5 }
+question = { prompt = "Which user failed sudo authentication?", type = "exact", accept = ["{{intruder}}"] }
+hints = ["sudo logs with the identifier 'sudo'.", "journalctl -t sudo, or journalctl -g 'incorrect password'.", "It was {{intruder}}."]
+explanation = "-t filters by syslog identifier. They tried to read /etc/shadow — worth a conversation."
+
+[[task]]
+id = "boots"
+title = "How far back?"
+kind = "independent"
+instructions = "Find out how many boots the journal has recorded."
+skills = { "h.journalctl" = 1.0 }
+question = { prompt = "How many boots does the journal contain?", type = "number", accept = ["2"] }
+hints = ["journalctl can list boots.", "--list-boots", "Two: index -1 and 0."]
+explanation = "Index 0 is the current boot, -1 the one before. On Debian 12 the journal is not kept across reboots by default."
+
+[[task]]
+id = "backup"
+title = "Before the reboot"
+kind = "independent"
+instructions = "Find out why last week's backup failed — it happened during the previous boot."
+skills = { "h.journalctl" = 1.0 }
+question = { prompt = "What error did the backup report?", type = "choice", choices = ["Permission denied", "No space left on device", "Connection refused", "Input/output error"], answer = 1 }
+hints = ["-b -1 selects the previous boot; -p err shows errors.", "journalctl -b -1 -p err", "The answer is (b): the backup disk was full."]
+explanation = "Combining -b and -p narrows thousands of lines to the few that matter."
+
+[[task]]
+id = "kernel"
+title = "Kernel warnings"
+kind = "guided"
+instructions = "Show the kernel's warnings (and worse) from this boot."
+skills = { "h.journalctl" = 1.0, "n.kernel-logs" = 0.3 }
+checks = [{ type = "output_contains", text = "EXT4-fs", command = ["journalctl", "dmesg"] }]
+hints = ["-k shows kernel messages of the current boot.", "Add -p warning.", "Type: journalctl -k -p warning"]
+explanation = "A filesystem mounted with errors: someone should schedule an fsck (chapter J)."
+
+[[task]]
+id = "report"
+title = "This boot's errors, for the ticket"
+kind = "independent"
+instructions = "Save all messages of priority err or worse from the current boot (and only this boot) into ~/errors.txt."
+skills = { "h.journalctl" = 1.0, "c.redirect-output" = 0.3 }
+checks = [
+    { type = "file_contains", path = "~/errors.txt", text = "FATAL" },
+    { type = "file_contains", path = "~/errors.txt", text = "incorrect password attempts" },
+    { type = "file_not_contains", path = "~/errors.txt", text = "No space left" },
+    { type = "file_not_contains", path = "~/errors.txt", text = "starting" },
+]
+hints = ["Combine a boot filter and a priority filter, then redirect.", "journalctl -b -p err", "Type: journalctl -b -p err > ~/errors.txt"]
+explanation = "Redirected output has no colours and no pager — ideal for attaching to a ticket."
+
+[debrief]
+summary = """
+journalctl filters by unit (-u), identifier (-t), priority (-p), boot (-b, --list-boots),
+kernel (-k), time (--since/--until) and pattern (-g). Start broad, then narrow.
+"""
+alternatives = ["journalctl -xeu payments-api jumps to the end with explanations", "journalctl --since '1 hour ago' -p warning", "journalctl -u payments-api -o cat shows only messages"]
+pitfalls = ["Without -b you search every boot the journal kept.", "Members of adm/systemd-journal see everything; other users only their own messages."]
+next = "Next: writing your own unit file."
+
+[[solution]]
+name = "filters"
+steps = [
+    "journalctl -u payments-api",
+    ":answer b",
+    "systemctl status payments-api",
+    ":answer start-limit-hit",
+    "journalctl -t sudo",
+    ":answer {{intruder}}",
+    "journalctl --list-boots",
+    ":answer 2",
+    "journalctl -b -1 -p err",
+    ":answer b",
+    "journalctl -k -p warning",
+    "journalctl -b -p err > ~/errors.txt",
+]
+
+[[solution]]
+name = "grep and since"
+steps = [
+    "systemctl status payments-api --no-pager",
+    ":answer It runs as user payments, who cannot read /etc/payments/api.key",
+    "journalctl -u payments-api -g 'Failed with result'",
+    ":answer 'start-limit-hit'",
+    "journalctl --since '2 hours ago' -g 'incorrect password'",
+    ":answer {{intruder}}",
+    "journalctl --list-boots | tail -n +2 | wc -l",
+    ":answer 2",
+    "journalctl -b -1 -t backup.sh",
+    ":answer No space left on device",
+    "dmesg --level=err,warn 2>/dev/null; journalctl -k -p 4",
+    "journalctl -b 0 -p 0..3 --no-pager > errors.txt",
+]
+
+[[counterexample]]
+name = "all boots in the report"
+steps = [
+    "journalctl -u payments-api",
+    ":answer b",
+    ":answer start-limit-hit",
+    ":answer {{intruder}}",
+    ":answer 2",
+    ":answer b",
+    "journalctl -k -p warning",
+    "journalctl -p err > ~/errors.txt",
+]

@@ -1,0 +1,126 @@
+schema = 1
+
+[mission]
+id = "c01-redirection"
+title = "Where Output Goes"
+chapter = "C"
+kind = "lesson"
+order = 1
+difficulty = 2
+requires = ["b04-reading-files", "a04-exit-status"]
+skills = ["c.redirect-output", "c.std-streams"]
+xp = 70
+estimated_minutes = 14
+
+[briefing]
+context = """
+Your lead wants an inventory of /etc saved to a file, and a clean list of configuration
+files without the noise of permission errors. That means controlling where a command's
+output goes.
+"""
+concept = """
+Every command has three standard streams: stdin (0), stdout (1) and stderr (2). > FILE sends
+stdout to a file (replacing it), >> FILE appends, 2> FILE sends errors elsewhere, 2>&1 sends
+errors wherever stdout currently goes, and /dev/null discards anything written to it.
+"""
+objectives = ["Redirect and append output", "Separate errors from normal output", "Discard noise with /dev/null"]
+
+[environment]
+profile = "debian"
+
+[[task]]
+id = "save"
+title = "Save a listing"
+kind = "guided"
+instructions = "Save the output of `ls /etc` into ~/etc-list.txt."
+skills = { "c.redirect-output" = 1.0 }
+checks = [
+    { type = "file_contains", path = "~/etc-list.txt", text = "passwd" },
+    { type = "file_contains", path = "~/etc-list.txt", text = "hostname" },
+]
+hints = ["> after a command sends its output to a file.", "COMMAND > FILE creates or replaces FILE.", "Type: ls /etc > ~/etc-list.txt"]
+explanation = "Nothing appeared on screen: stdout went to the file instead."
+
+[[task]]
+id = "append"
+title = "Add, don't replace"
+kind = "guided"
+instructions = "Add the current date as a new final line of ~/etc-list.txt without losing the listing."
+skills = { "c.redirect-output" = 1.0 }
+checks = [
+    { type = "file_contains", path = "~/etc-list.txt", text = "passwd" },
+    { type = "file_contains", path = "~/etc-list.txt", regex = "2026\\s*$" },
+]
+hints = ["> would replace the file.", "Two > signs append.", "Type: date >> ~/etc-list.txt"]
+explanation = ">> appends. With > you would have replaced the whole inventory with one date."
+
+[[task]]
+id = "predict"
+title = "Predict"
+kind = "prediction"
+instructions = "Think it through."
+skills = { "c.redirect-output" = 1.0 }
+question = { prompt = "After running   echo a > f; echo b > f   what does f contain?", type = "exact", accept = ["b"] }
+hints = ["Each > opens the file and empties it first.", "The second command truncates f before writing.", "The answer is b."]
+explanation = "> truncates the target before the command runs — which is also why sort f > f leaves you with an empty file."
+
+[[task]]
+id = "split"
+title = "Separate the streams"
+kind = "independent"
+instructions = "Run  ls /etc/hostname /nonexistent  so that normal output goes to ~/out.txt and the error goes to ~/err.txt."
+skills = { "c.std-streams" = 1.0 }
+checks = [
+    { type = "file_contains", path = "~/out.txt", text = "/etc/hostname" },
+    { type = "file_not_contains", path = "~/out.txt", text = "No such file" },
+    { type = "file_contains", path = "~/err.txt", text = "No such file or directory" },
+]
+hints = ["Errors travel on stream 2, normal output on stream 1.", "Use > for stdout and 2> for stderr on the same command.", "Type: ls /etc/hostname /nonexistent > ~/out.txt 2> ~/err.txt"]
+explanation = "stdout and stderr are separate, so you can log errors apart from results."
+
+[[task]]
+id = "quiet"
+title = "Silence the noise"
+kind = "independent"
+instructions = "List every file under /etc whose name ends in .conf using find, without any 'Permission denied' messages on screen."
+skills = { "c.std-streams" = 1.0, "b.find-files" = 0.3 }
+checks = [
+    { type = "output_contains", text = ".conf", command = "find" },
+    { type = "not", check = { type = "output_contains", text = "Permission denied" } },
+]
+hints = ["The permission errors are written to stderr.", "Redirect stream 2 to the special file that discards data.", "Type: find /etc -name '*.conf' 2>/dev/null"]
+explanation = "2>/dev/null throws error messages away. Use it deliberately: errors are often exactly what you need to see."
+
+[[task]]
+id = "both"
+title = "Everything in one file"
+kind = "independent"
+instructions = "Capture both the output and the error of  ls /etc/hostname /nonexistent  in a single file ~/all.txt."
+skills = { "c.std-streams" = 1.0 }
+checks = [
+    { type = "file_contains", path = "~/all.txt", text = "/etc/hostname" },
+    { type = "file_contains", path = "~/all.txt", text = "No such file or directory" },
+]
+hints = ["Send stdout to the file, then point stderr at the same place.", "2>&1 means 'stderr goes where stdout goes now' — order matters.", "Type: ls /etc/hostname /nonexistent > ~/all.txt 2>&1   (or &> ~/all.txt)"]
+explanation = "> file 2>&1 captures both. 2>&1 > file would not: stderr would still go to the terminal, because redirections are applied left to right."
+
+[debrief]
+summary = """
+>, >>, 2>, 2>&1 and /dev/null give you full control over where output goes. Remember that >
+truncates first and that redirections are processed left to right.
+"""
+alternatives = ["&> file is Bash shorthand for > file 2>&1", "tee writes to a file and the screen at the same time"]
+pitfalls = ["sort f > f empties f before sort reads it.", "sudo echo x > /root/f fails: your shell, not sudo, opens the file."]
+next = "Next: pipelines."
+
+[[solution]]
+name = "explicit"
+steps = ["ls /etc > ~/etc-list.txt", "date >> ~/etc-list.txt", ":answer b", "ls /etc/hostname /nonexistent > ~/out.txt 2> ~/err.txt", "find /etc -name '*.conf' 2>/dev/null", "ls /etc/hostname /nonexistent > ~/all.txt 2>&1"]
+
+[[solution]]
+name = "shorthand"
+steps = ["cd && ls /etc >etc-list.txt", "echo \"$(date)\" >> etc-list.txt", ":answer b", "ls /etc/hostname /nonexistent 2>err.txt >out.txt", "find /etc -name '*.conf' 2> /dev/null | sort", "ls /etc/hostname /nonexistent &> all.txt"]
+
+[[counterexample]]
+name = "overwriting"
+steps = ["ls /etc > ~/etc-list.txt", "date > ~/etc-list.txt"]

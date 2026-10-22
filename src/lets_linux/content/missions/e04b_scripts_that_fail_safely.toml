@@ -1,0 +1,201 @@
+schema = 1
+
+[mission]
+id = "e04b-scripts-that-fail-safely"
+title = "Scripts That Fail Safely"
+chapter = "E"
+kind = "lesson"
+order = 6
+difficulty = 3
+requires = ["e03b-case-and-functions"]
+skills = ["e.error-handling", "e.script-debugging", "e.script-logging", "e.traps-cleanup", "e.idempotency"]
+review_for = ["e.error-handling", "e.script-debugging"]
+xp = 100
+estimated_minutes = 25
+
+[briefing]
+context = """
+A script that keeps running after a failed step can do real damage: delete the wrong files,
+half-update a configuration. Scripts that run unattended also need to leave a trace of what
+they did and clean up after themselves. This lesson covers the habits that make scripts safe;
+the next three missions put them to the test on broken scripts.
+"""
+concept = """
+Stop on failure:  cd "$dir" || exit 1   or, for the whole script,  set -euo pipefail
+  (-e: exit when a command fails, -u: error on unset variables, -o pipefail: a pipeline fails
+  if any part fails).
+See what runs:  bash -x script.sh  prints each command, after expansion, prefixed with +.
+Leave a trace:  logger -t TAG -p user.warning "message"  writes to the system log;
+  journalctl -t TAG  reads it back. Errors for humans go to stderr:  echo "msg" >&2
+Clean up:  tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT  — the trap runs however the script ends.
+Idempotent: running a script twice has the same result as running it once:
+  mkdir -p DIR;  grep -qxF "$line" FILE || echo "$line" >> FILE
+"""
+objectives = ["Stop scripts at the first failure", "Trace a script with bash -x", "Log to the journal with logger", "Remove temporary files with trap", "Write idempotent changes"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+tag = { choices = ["nightly-sync", "report-job", "cache-warm"] }
+setting = { choices = ["max_workers=8", "log_level=info", "cache_mb=256"] }
+
+[[environment.setup]]
+action = "dir"
+path = "~/bin"
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "file"
+path = "~/bin/total.sh"
+mode = "0755"
+owner = "learner"
+group = "learner"
+content = """#!/bin/bash
+# total.sh - add up the numbers in a file, one per line
+file=$1
+sum=0
+while read -r n; do
+    sum=$((sum + n))
+done < "$fiel"
+echo "total: $sum"
+"""
+
+[[environment.setup]]
+action = "file"
+path = "~/numbers.txt"
+content = "4\n8\n15\n16\n23\n42\n"
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "file"
+path = "~/app.conf"
+content = "# app settings\nport=8080\n"
+owner = "learner"
+group = "learner"
+
+[[task]]
+id = "danger"
+title = "Why stop on failure?"
+kind = "prediction"
+instructions = "A clean-up script contains these two lines:  cd /srv/build/tmp   and then   rm -rf *"
+skills = { "e.error-handling" = 1.0 }
+question = { prompt = "What happens if /srv/build/tmp does not exist?", type = "choice", choices = ["Nothing: the script stops at the failed cd", "cd fails, the script continues, and rm -rf * deletes everything in the CURRENT directory", "rm refuses to run after a failed cd", "bash asks for confirmation"], answer = 1 }
+hints = ["By default, bash runs the next line whatever happened before.", "After a failed cd you are still where you were.", "The answer is (b). cd /srv/build/tmp || exit 1 (or set -e) prevents it."]
+explanation = "Bash continues after errors unless told otherwise. Write cd DIR || exit 1, or start scripts with set -euo pipefail, so a failed step stops everything that depends on it."
+
+[[task]]
+id = "trace"
+title = "Trace with bash -x"
+kind = "guided"
+instructions = "~/bin/total.sh ~/numbers.txt should print the sum but fails. Run it with tracing:  bash -x ~/bin/total.sh ~/numbers.txt"
+skills = { "e.script-debugging" = 1.0 }
+question = { prompt = "Which variable name is misspelled in the script?", type = "exact", accept = ["fiel", "$fiel"] }
+hints = ["Each + line shows a command after expansion. Look at the line where the input file is opened.", "The redirection shows < '' — the variable it uses is empty.", "The answer is fiel (the script sets file but reads $fiel)."]
+explanation = "bash -x shows each command after expansion, so an empty or wrong value is visible at once. set -x / set +x inside a script traces just one section."
+
+[[task]]
+id = "nounset"
+title = "Make bash catch it"
+kind = "guided"
+instructions = "Fix the typo, and add  set -euo pipefail  as the second line of total.sh, so unset variables become errors in future. Then run  ~/bin/total.sh ~/numbers.txt"
+skills = { "e.script-debugging" = 1.0, "e.error-handling" = 1.0 }
+checks = [
+    { type = "command_result", command = "~/bin/total.sh ~/numbers.txt", status = 0, stdout_equals = "total: 108" },
+    { type = "command_result", command = "~/bin/total.sh", status_not = 0 },
+    { type = "file_contains", path = "~/bin/total.sh", regex = "set -[a-z]*u|set -o nounset" },
+]
+hints = ["Change $fiel to $file and add the set line after #!/bin/bash.", "With -u, running the script without an argument now fails at file=$1 instead of reading nothing.", "sed -i 's/\\$fiel/$file/; 1a set -euo pipefail' ~/bin/total.sh"]
+explanation = "With set -u, a misspelled or missing variable stops the script with 'unbound variable' and the line number, instead of silently using an empty string."
+
+[[task]]
+id = "log"
+title = "Leave a trace in the journal"
+kind = "guided"
+instructions = "Scripts that run unattended should log what they do. Send a message tagged {{tag}} with priority warning, then read it back:  logger -t {{tag}} -p user.warning 'disk almost full'   and   journalctl -t {{tag}}"
+skills = { "e.script-logging" = 1.0 }
+checks = [{ type = "journal_contains", identifier = "{{tag}}", text = "disk almost full", max_priority = 4 }]
+hints = ["logger writes one message to the system log; -t sets the tag (identifier), -p the priority.", "journalctl -t TAG shows only messages with that tag.", "Type: logger -t {{tag}} -p user.warning 'disk almost full'"]
+explanation = "A tag makes a script's messages easy to find later (journalctl -t {{tag}}), and the priority lets monitoring pick out warnings and errors."
+
+[[task]]
+id = "trap"
+title = "Clean up with trap"
+kind = "independent"
+instructions = "Write the executable ~/bin/sorted-copy.sh SRC DEST: it sorts SRC into a temporary file made with mktemp, then moves that file to DEST. The temporary file must never be left behind — even when the move fails."
+skills = { "e.traps-cleanup" = 1.0, "e.error-handling" = 0.5 }
+checks = [
+    { type = "command_result", setup = ["printf 'b\\na\\nc\\n' > /tmp/in.txt"], command = "~/bin/sorted-copy.sh /tmp/in.txt /tmp/out.txt", status = 0, checks = [{ type = "file_equals", path = "/tmp/out.txt", content = "a\nb\nc\n" }, { type = "tree_count", path = "/tmp", glob = "tmp.*", count = 0 }] },
+    { type = "command_result", setup = ["printf 'b\\na\\n' > /tmp/in.txt"], command = "~/bin/sorted-copy.sh /tmp/in.txt /nonexistent/dir/out.txt", status_not = 0, checks = [{ type = "tree_count", path = "/tmp", glob = "tmp.*", count = 0 }] },
+    { type = "file_contains", path = "~/bin/sorted-copy.sh", regex = "trap" },
+]
+hints = ["Create the file with tmp=$(mktemp), and register the clean-up right after creating it.", "trap 'rm -f \"$tmp\"' EXIT runs when the script exits, for any reason.", "#!/bin/bash\nset -euo pipefail\ntmp=$(mktemp)\ntrap 'rm -f \"$tmp\"' EXIT\nsort \"$1\" > \"$tmp\"\nmv \"$tmp\" \"$2\""]
+explanation = "The EXIT trap runs whether the script succeeds, fails under set -e, or calls exit. Without it, every failed run would leave a tmp.XXXXXXXXXX file in /tmp."
+
+[[task]]
+id = "idempotent"
+title = "Run it twice"
+kind = "independent"
+instructions = "Make sure ~/app.conf contains the line {{setting}} exactly once, using a command (or script) that you could run any number of times without adding a second copy. Run it at least twice."
+skills = { "e.idempotency" = 1.0 }
+checks = [
+    { type = "command_result", command = "grep -cxF '{{setting}}' ~/app.conf", stdout_equals = "1" },
+    { type = "file_contains", path = "~/app.conf", text = "port=8080" },
+]
+persistent = true
+hints = ["echo LINE >> FILE adds a copy every time it runs.", "Test first: grep -qxF LINE FILE succeeds when the exact line is already there.", "Run twice: grep -qxF '{{setting}}' ~/app.conf || echo '{{setting}}' >> ~/app.conf"]
+explanation = "Idempotent steps (mkdir -p, 'add the line if missing', 'set the value') can be re-run after any failure. That is what makes automation safe to retry."
+
+[debrief]
+summary = """
+Stop at the first failure (|| exit 1, set -euo pipefail), trace with bash -x, log with
+logger -t, clean up with trap ... EXIT, and make every change safe to repeat.
+"""
+alternatives = ["set -x ... set +x traces only part of a script", "PS4='+ ${LINENO}: ' bash -x script.sh adds line numbers to the trace", "systemd-cat -t TAG COMMAND sends a command's output to the journal"]
+pitfalls = ["set -e does not stop on failures inside if conditions or before || — check those yourself.", "Registering the trap before mktemp, or never, leaves files behind.", "Appending with >> in a script that may be re-run duplicates lines."]
+next = "Next: three broken scripts to repair — failing safely, debugging and idempotency."
+
+[[solution]]
+name = "as instructed"
+steps = [
+    ":answer b",
+    "bash -x ~/bin/total.sh ~/numbers.txt",
+    ":answer fiel",
+    { edit = "#!/bin/bash\nset -euo pipefail\n# total.sh - add up the numbers in a file, one per line\nfile=$1\nsum=0\nwhile read -r n; do\n    sum=$((sum + n))\ndone < \"$file\"\necho \"total: $sum\"\n" },
+    "nano ~/bin/total.sh",
+    "~/bin/total.sh ~/numbers.txt",
+    "logger -t {{tag}} -p user.warning 'disk almost full'",
+    "journalctl -t {{tag}}",
+    { edit = "#!/bin/bash\nset -euo pipefail\ntmp=$(mktemp)\ntrap 'rm -f \"$tmp\"' EXIT\nsort \"$1\" > \"$tmp\"\nmv \"$tmp\" \"$2\"\n" },
+    "nano ~/bin/sorted-copy.sh",
+    "chmod +x ~/bin/sorted-copy.sh",
+    "grep -qxF '{{setting}}' ~/app.conf || echo '{{setting}}' >> ~/app.conf",
+    "grep -qxF '{{setting}}' ~/app.conf || echo '{{setting}}' >> ~/app.conf",
+]
+
+[[solution]]
+name = "sed and explicit checks"
+steps = [
+    ":answer 2",
+    "bash -x ~/bin/total.sh ~/numbers.txt 2>&1 | grep '<'",
+    ":answer $fiel",
+    "sed -i 's/\\$fiel/$file/; 1a set -euo pipefail' ~/bin/total.sh",
+    "logger -p user.warning -t {{tag}} 'disk almost full'",
+    "printf '#!/bin/bash\\ntmp=$(mktemp) || exit 1\\ntrap \"rm -f -- \\\\\"$tmp\\\\\"\" EXIT\\nsort -- \"$1\" > \"$tmp\" || exit 1\\nmv -- \"$tmp\" \"$2\" || exit 1\\n' > ~/bin/sorted-copy.sh",
+    "chmod 755 ~/bin/sorted-copy.sh",
+    "for i in 1 2 3; do grep -q '^{{setting}}$' ~/app.conf || echo '{{setting}}' >> ~/app.conf; done",
+]
+
+[[counterexample]]
+name = "no trap, plain append"
+steps = [
+    ":answer b",
+    ":answer fiel",
+    "sed -i 's/\\$fiel/$file/; 1a set -euo pipefail' ~/bin/total.sh",
+    "logger -t {{tag}} -p user.warning 'disk almost full'",
+    "printf '#!/bin/bash\\ntmp=$(mktemp)\\nsort \"$1\" > \"$tmp\"\\nmv \"$tmp\" \"$2\"\\n' > ~/bin/sorted-copy.sh",
+    "chmod +x ~/bin/sorted-copy.sh",
+    "echo '{{setting}}' >> ~/app.conf",
+    "echo '{{setting}}' >> ~/app.conf",
+]

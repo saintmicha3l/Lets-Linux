@@ -1,0 +1,195 @@
+schema = 1
+
+[mission]
+id = "k00-skill-check"
+title = "Skill Check K: Automation"
+chapter = "K"
+placement = "K"
+kind = "assessment"
+order = 0
+difficulty = 4
+requires = []
+skills = ["k.cron-basics", "k.cron-environment", "k.log-rotation", "k.safe-automation", "k.backup-automation", "k.config-management-concepts"]
+xp = 80
+estimated_minutes = 20
+sequential = false
+
+[briefing]
+context = """
+This skill check covers chapter K: cron schedules and cron's environment, log rotation,
+jobs that must not overlap, automated backups and desired-state configuration. Tasks in any
+order; you have sudo (password: letslinux). Solve them all (one slip allowed) to test out of
+chapter K. Anything you cannot do is simply not counted — :submit ends the check.
+"""
+concept = "No hints: show what you can do on your own. Some checks run your jobs with their own test data."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "debian"
+
+[environment.vars]
+job = { choices = ["send-digest", "sync-prices", "close-books"] }
+tool = { choices = ["pricefeed", "stocktake", "mailqueue"] }
+app = { choices = ["shopd", "apigw", "billing"] }
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/{{job}}"
+mode = "0755"
+content = "#!/bin/sh\necho \"{{job}} ran\"\n"
+
+[[environment.setup]]
+action = "file"
+path = "/opt/tools/bin/{{tool}}"
+mode = "0755"
+content = "#!/bin/sh\necho \"{{tool}}: done $(date +%H:%M)\"\n"
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "echo '*/5 * * * * {{tool}} >> /home/learner/{{tool}}.log 2>&1' | crontab -"
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /var/log/{{app}} /var/www/site && for n in 1 2 3; do echo \"line $n\" >> /var/log/{{app}}/access.log; done && echo 'error 1' > /var/log/{{app}}/error.log && echo '<h1>Site</h1>' > /var/www/site/index.html"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/import-orders"
+mode = "0755"
+content = "#!/bin/sh\n# import-orders: takes about ten minutes; two runs at once corrupt the order table\necho importing\n"
+
+[[environment.setup]]
+action = "file"
+path = "/etc/cron.d/import-orders"
+content = "# m h dom mon dow user command\n*/5 * * * * root /usr/local/bin/import-orders\n"
+
+[[task]]
+id = "cron"
+title = "Weekday mornings"
+kind = "assessment"
+instructions = "Run /usr/local/bin/{{job}} as root every Monday to Friday at 06:30."
+skills = { "k.cron-basics" = 1.0 }
+checks = [{ type = "command_result", user = "root", command = "(crontab -l -u root 2>/dev/null; cat /etc/crontab /etc/cron.d/* 2>/dev/null) | grep -v '^#' | grep -cE '^\\s*30\\s+0?6\\s+\\*\\s+\\*\\s+(1-5|[Mm][Oo][Nn]-[Ff][Rr][Ii])\\s+(root\\s+)?/usr/local/bin/{{job}}'", stdout_regex = "^[1-9]" }]
+explanation = "30 6 * * 1-5 — in root's crontab (crontab -e as root), or with a user column in /etc/cron.d."
+
+[[task]]
+id = "env"
+title = "Works by hand, not from cron"
+kind = "assessment"
+instructions = "Your crontab runs {{tool}} every five minutes, but ~/{{tool}}.log only ever shows an error. Make the job work (and see a successful run in the log)."
+skills = { "k.cron-environment" = 1.0 }
+checks = [
+    { type = "file_contains", path = "~/{{tool}}.log", text = "{{tool}}: done" },
+    { type = "command_result", user = "learner", command = "crontab -l | grep -v '^#' | grep -c '{{tool}}'", stdout_regex = "^[1-9]" },
+]
+explanation = "cron's PATH is /usr/bin:/bin; {{tool}} lives in /opt/tools/bin. Use the full path (or set PATH= in the crontab), then wait for the next run (sleep 300)."
+
+[[task]]
+id = "rotate"
+title = "Logs that grow forever"
+kind = "assessment"
+instructions = "Rotate the logs in /var/log/{{app}}/ (*.log) weekly, keep four old copies, compressed. Put the configuration in /etc/logrotate.d/{{app}}."
+skills = { "k.log-rotation" = 1.0 }
+checks = [
+    { type = "file_contains", path = "/etc/logrotate.d/{{app}}", regex = "(?m)^\\s*weekly\\s*$" },
+    { type = "file_contains", path = "/etc/logrotate.d/{{app}}", regex = "(?m)^\\s*rotate\\s+4\\s*$" },
+    { type = "file_contains", path = "/etc/logrotate.d/{{app}}", regex = "(?m)^\\s*compress\\s*$" },
+    { type = "command_result", user = "root", setup = ["for f in /var/log/{{app}}/*.log; do echo test >> $f; done"], command = "logrotate -f /etc/logrotate.d/{{app}} && ls /var/log/{{app}}", stdout_regex = "access\\.log\\.1(\\.gz)?" },
+]
+explanation = "/var/log/{{app}}/*.log { weekly / rotate 4 / compress / missingok / notifempty } — logrotate -d tests it without changes."
+
+[[task]]
+id = "overlap"
+title = "Never twice at once"
+kind = "assessment"
+instructions = "/etc/cron.d/import-orders starts import-orders every five minutes, but a run can take longer than that — and two at once corrupt data. Make sure a new run never starts while one is still going (keep the schedule)."
+skills = { "k.safe-automation" = 1.0 }
+checks = [
+    { type = "any_of", checks = [
+        { type = "file_contains", path = "/etc/cron.d/import-orders", regex = "(?m)^\\*/5 .*flock\\s+(-n|-w\\s*\\d+|--nonblock)?\\s*\\S+\\s+/usr/local/bin/import-orders" },
+        { type = "file_contains", path = "/usr/local/bin/import-orders", regex = "flock" },
+    ] },
+    { type = "file_contains", path = "/etc/cron.d/import-orders", regex = "(?m)^\\*/5\\s" },
+]
+explanation = "*/5 * * * * root flock -n /run/lock/import-orders.lock /usr/local/bin/import-orders — -n skips a run while the lock is held (or flock inside the script)."
+
+[[task]]
+id = "backup"
+title = "A nightly backup"
+kind = "assessment"
+instructions = """
+Write /usr/local/sbin/backup-site: it archives /var/www/site as
+/var/backups/site-YYYY-MM-DD.tar.gz (today's date) and exits non-zero if that fails.
+Schedule it for every night at 02:00.
+"""
+skills = { "k.backup-automation" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", setup = ["rm -f /var/backups/site-*.tar.gz"], command = "/usr/local/sbin/backup-site && tar -tzf /var/backups/site-$(date +%F).tar.gz | grep -c 'index.html'", stdout_equals = "1" },
+    { type = "command_result", user = "root", setup = ["mv /var/www/site /var/www/site.away"], command = "/usr/local/sbin/backup-site >/dev/null 2>&1; echo rc=$?; mv /var/www/site.away /var/www/site", stdout_regex = "^rc=[1-9]" },
+    { type = "command_result", user = "root", command = "(crontab -l -u root 2>/dev/null; cat /etc/crontab /etc/cron.d/* 2>/dev/null; cat /etc/systemd/system/*.timer 2>/dev/null) | grep -cE '(^\\s*0+\\s+0?2\\s.*backup-site)|OnCalendar=.*02:00'", stdout_regex = "^[1-9]" },
+]
+explanation = "set -e; tar -czf /var/backups/site-$(date +%F).tar.gz -C /var/www site — and 0 2 * * * root /usr/local/sbin/backup-site."
+
+[[task]]
+id = "desired"
+title = "Desired state"
+kind = "assessment"
+instructions = "A colleague's Ansible playbook reports changed=3 on every run, even when nothing on the server changed."
+skills = { "k.config-management-concepts" = 1.0 }
+question = { prompt = "What does that tell you?", type = "choice", choices = ["Everything is fine: changed means it worked", "Some tasks are not idempotent (for example shell commands that always run): they cannot show whether the server matches the description", "The server has drifted three times", "Ansible needs to be updated"], answer = 1 }
+explanation = "An idempotent task changes something only when reality differs from the description — so a second run reports changed=0."
+
+[debrief]
+summary = """
+The check covered chapter K's core. It does not test every chapter K skill (systemd timers
+are checked in H); untested skills stay unseen. Solved tasks are evidence for their skills.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "cron.d and logrotate"
+steps = [
+    { input = ["letslinux"] },
+    "echo '30 6 * * 1-5 root /usr/local/bin/{{job}}' | sudo tee /etc/cron.d/{{job}}",
+    "cat ~/{{tool}}.log; type {{tool}}; ls /opt/tools/bin",
+    "echo '*/5 * * * * /opt/tools/bin/{{tool}} >> /home/learner/{{tool}}.log 2>&1' | crontab -",
+    { edit = "/var/log/{{app}}/*.log {\n    weekly\n    rotate 4\n    compress\n    missingok\n    notifempty\n}\n" },
+    "sudo nano /etc/logrotate.d/{{app}}",
+    "sudo logrotate -d /etc/logrotate.d/{{app}}",
+    "printf '# m h dom mon dow user command\\n*/5 * * * * root flock -n /run/lock/import-orders.lock /usr/local/bin/import-orders\\n' | sudo tee /etc/cron.d/import-orders",
+    { edit = "#!/bin/bash\nset -euo pipefail\ntar -czf /var/backups/site-$(date +%F).tar.gz -C /var/www site\n" },
+    "sudo nano /usr/local/sbin/backup-site",
+    "sudo chmod 755 /usr/local/sbin/backup-site",
+    "echo '0 2 * * * root /usr/local/sbin/backup-site' | sudo tee /etc/cron.d/backup-site",
+    ":answer 2",
+    "sleep 300",
+]
+
+[[solution]]
+name = "root's crontab and PATH="
+steps = [
+    { input = ["letslinux"] },
+    ":answer b",
+    "printf 'PATH=/opt/tools/bin:/usr/bin:/bin\\n*/5 * * * * {{tool}} >> /home/learner/{{tool}}.log 2>&1\\n' | crontab -",
+    "sudo -i",
+    "(crontab -l 2>/dev/null; echo '30 06 * * mon-fri /usr/local/bin/{{job}}'; echo '0 2 * * * /usr/local/sbin/backup-site') | crontab -",
+    "printf '/var/log/{{app}}/*.log {\\n\\tweekly\\n\\trotate 4\\n\\tcompress\\n\\tdelaycompress\\n\\tmissingok\\n}\\n' > /etc/logrotate.d/{{app}}",
+    "printf '#!/bin/sh\\nexec 9>/run/lock/import-orders.lock\\nflock -n 9 || exit 0\\necho importing\\n' > /usr/local/bin/import-orders",
+    "printf '#!/bin/sh\\nset -e\\ncd /var/www\\ntar -czf /var/backups/site-$(date +%%F).tar.gz site\\n' > /usr/local/sbin/backup-site && chmod +x /usr/local/sbin/backup-site",
+    "exit",
+    "sleep 360",
+]
+
+[[counterexample]]
+name = "daily instead of weekdays, no lock"
+steps = [
+    { input = ["letslinux"] },
+    "echo '30 6 * * * root /usr/local/bin/{{job}}' | sudo tee /etc/cron.d/{{job}}",
+    "echo '*/5 * * * * /opt/tools/bin/{{tool}} >> /home/learner/{{tool}}.log 2>&1' | crontab -",
+    "printf '/var/log/{{app}}/*.log {\\n weekly\\n rotate 4\\n compress\\n}\\n' | sudo tee /etc/logrotate.d/{{app}}",
+    "printf '#!/bin/sh\\ntar -czf /var/backups/site-$(date +%%F).tar.gz -C /var/www site\\necho ok\\n' | sudo tee /usr/local/sbin/backup-site && sudo chmod +x /usr/local/sbin/backup-site",
+    "echo '0 2 * * * root /usr/local/sbin/backup-site' | sudo tee /etc/cron.d/backup-site",
+    ":answer 2",
+    "sleep 300",
+]

@@ -1,0 +1,323 @@
+schema = 1
+
+[mission]
+id = "i10-the-lab-behind"
+title = "The Lab Behind the Server"
+chapter = "I"
+kind = "lesson"
+order = 10
+difficulty = 5
+requires = ["i07-firewall", "i08-fixed-address"]
+skills = ["i.nat-concepts", "i.routing-gateways", "i.firewalls"]
+review_for = ["i.firewalls", "i.routing-gateways", "n.sysctl"]
+xp = 220
+estimated_minutes = 35
+
+[briefing]
+context = """
+This server has a second network card, enp0s8, on the lab's own segment 192.168.50.0/24:
+there is a lab PC (labpc, 192.168.50.20 — you can log in as lab, password letslinux) and a
+sensor with a web dashboard (sensor, 192.168.50.10, port 80). Both use this server
+(192.168.50.1) as their gateway. The lab wants two things: the lab PC must reach the
+Internet, and colleagues on the office LAN must see the sensor dashboard at
+http://10.0.2.15:8080. A colleague has already prepared a firewall. (sudo password:
+letslinux)
+"""
+concept = """
+A Linux machine with two networks becomes a router when it forwards packets between them
+(net.ipv4.ip_forward = 1). Forwarded packets pass the forward chain of the firewall.
+Network address translation rewrites addresses on the way through: source NAT
+(masquerade, snat — in the postrouting hook) makes the lab's packets leave with this
+server's address, so the answers come back here and are translated back; destination NAT
+(dnat — in prerouting) sends connections for a port of this server on to an inside host:
+port forwarding. Connection tracking remembers every translation, so only the first packet
+of a connection is matched against the nat rules — and replies are recognised as
+'established'.
+"""
+objectives = ["Turn a machine into a router", "Explain why private networks need source NAT", "Masquerade a segment", "Forward a port with DNAT", "Allow forwarded traffic, persistently"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "net"
+add_nic = "enp0s8"
+mac = "52:54:00:12:35:02"
+
+[[environment.setup]]
+action = "append"
+path = "/etc/network/interfaces"
+content = """
+# the lab segment
+auto enp0s8
+iface enp0s8 inet static
+    address 192.168.50.1/24
+"""
+
+[[environment.setup]]
+action = "run"
+command = "ifup enp0s8"
+
+[[environment.setup]]
+action = "append"
+path = "/etc/hosts"
+content = "192.168.50.10\tsensor\n192.168.50.20\tlabpc\n"
+
+[[environment.setup]]
+action = "peer"
+name = "sensor"
+addresses = ["192.168.50.10"]
+mac = "52:54:00:32:00:0a"
+behind = ""
+services = { 80 = { kind = "http", server = "lighttpd", pages = { "/" = { body = "<html><body><h1>Sensor 3</h1><p>Temperature 21.4 C, humidity 38 %</p></body></html>\n" } } } }
+
+[[environment.setup]]
+action = "peer"
+name = "labpc"
+addresses = ["192.168.50.20"]
+mac = "52:54:00:32:00:14"
+behind = ""
+services = { 22 = { kind = "ssh", banner = "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u3" } }
+
+[[environment.setup]]
+action = "remote"
+host = "labpc"
+user = "lab"
+password = "letslinux"
+prefix = "24"
+gateway = "192.168.50.1"
+packages = ["curl"]
+
+[[environment.setup]]
+action = "remote"
+host = "build"
+user = "ci"
+password = "letslinux"
+
+[[environment.setup]]
+action = "file"
+path = "/etc/nftables.conf"
+mode = "0755"
+content = """#!/usr/sbin/nft -f
+# Firewall for the lab gateway -- T.
+# Nothing passes between the networks unless a rule says so.
+
+flush ruleset
+
+table inet filter {
+	chain input {
+		type filter hook input priority filter; policy drop;
+		iifname "lo" accept
+		ct state established,related accept
+		tcp dport 22 accept
+		ip protocol icmp accept
+	}
+	chain forward {
+		type filter hook forward priority filter; policy drop;
+	}
+	chain output {
+		type filter hook output priority filter; policy accept;
+	}
+}
+"""
+
+[[environment.setup]]
+action = "run"
+command = "systemctl enable --now nftables"
+
+[[task]]
+id = "why"
+title = "Why the answers would not come back"
+kind = "guided"
+instructions = """
+Even when this server forwards the lab PC's packets, a web server on the Internet would
+answer to 192.168.50.20. Look at the office LAN's router from this server's point of view
+(`ip route`) and think about where that answer would go.
+"""
+skills = { "i.nat-concepts" = 1.0 }
+question = { prompt = "Why do the lab's connections need source NAT here?", type = "choice", choices = ["192.168.50.0/24 is a private range: routers outside, starting with the office gateway 10.0.2.2, have no route back to it — the answers would be lost", "Linux refuses to forward packets from private addresses", "The lab PC has no default gateway", "DNS cannot resolve private addresses"], answer = 0 }
+hints = ["Which machines know that 192.168.50.0/24 is behind this server?", "Only this server does. With masquerading, the packets leave with 10.0.2.15 as their source — an address everyone can answer."]
+explanation = "Private addresses (RFC 1918) are not routed on the Internet, and here not even the office router knows the lab segment. Masquerading replaces the source with this server's own address on the way out; connection tracking maps the answers back. The alternative inside an organisation is a route to 192.168.50.0/24 on the other routers."
+
+[[task]]
+id = "forwarding"
+title = "Become a router"
+kind = "guided"
+instructions = "Make the kernel forward packets between its networks — now and after every reboot."
+skills = { "i.routing-gateways" = 1.0, "i.nat-concepts" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "sysctl -n net.ipv4.ip_forward", stdout_equals = "1\n" },
+    { type = "after_reboot", checks = [{ type = "command_result", user = "root", command = "sysctl -n net.ipv4.ip_forward", stdout_equals = "1\n" }] },
+]
+persistent = true
+hints = ["The kernel parameter is net.ipv4.ip_forward; sysctl -w sets it now.", "For every boot, put it into a file in /etc/sysctl.d/.", "echo 'net.ipv4.ip_forward = 1' | sudo tee /etc/sysctl.d/90-router.conf; sudo sysctl --system"]
+explanation = "With ip_forward = 0 (the default) Linux drops packets that are not addressed to itself. Files in /etc/sysctl.d are applied at boot by systemd-sysctl."
+
+[[task]]
+id = "outbound"
+title = "The lab goes online"
+kind = "independent"
+instructions = """
+Make the lab PC reach the Internet (http://example.com) through this server, with this
+server's address as the source — and keep it working after a reboot. The colleague's
+firewall must stay strict: allow only what is needed.
+"""
+skills = { "i.nat-concepts" = 1.0, "i.firewalls" = 1.0 }
+checks = [
+    { type = "can_reach", from = "labpc", host = "example.com", port = 80 },
+    { type = "command_result", user = "root", command = "nft list chain inet filter forward", stdout_contains = "policy drop" },
+    { type = "after_reboot", checks = [
+        { type = "can_reach", from = "labpc", host = "example.com", port = 80 },
+        { type = "command_result", user = "root", command = "nft list chain inet filter forward", stdout_contains = "policy drop" },
+    ] },
+]
+persistent = true
+hints = [
+    "Three things: a nat chain (type nat hook postrouting) with a masquerade rule for traffic leaving through enp0s3; forward rules that let the lab out and let the answers back in; all of it in /etc/nftables.conf. Test from the lab PC: ssh lab@labpc, then curl http://example.com.",
+    "In /etc/nftables.conf: in the forward chain add  iifname \"enp0s8\" oifname \"enp0s3\" accept  and  ct state established,related accept ; add  table ip nat { chain postrouting { type nat hook postrouting priority srcnat; oifname \"enp0s3\" masquerade } }. Then sudo nft -f /etc/nftables.conf (or systemctl restart nftables).",
+    "The DNS answers also come back through the forward chain: without the established rule, names do not resolve on the lab PC.",
+]
+explanation = """
+Three pieces work together: forwarding (the kernel), filtering (the forward chain decides
+which connections may pass — and ct state established,related lets their answers back),
+and translation (masquerade rewrites the source on the way out). Masquerade uses whatever
+address enp0s3 has at the moment; snat to 10.0.2.15 would fix it.
+"""
+
+[[task]]
+id = "dashboard"
+title = "The dashboard for the office"
+kind = "independent"
+instructions = """
+Colleagues on the office LAN should open the sensor dashboard at http://10.0.2.15:8080 —
+it really runs on 192.168.50.10, port 80. Make it so, persistently. (You can test from
+the build server: ssh ci@build, password letslinux, then wget -qO- http://10.0.2.15:8080/.)
+"""
+skills = { "i.nat-concepts" = 1.0, "i.firewalls" = 1.0 }
+checks = [
+    { type = "can_reach", from = "build", host = "10.0.2.15", port = 8080 },
+    { type = "after_reboot", checks = [{ type = "can_reach", from = "build", host = "10.0.2.15", port = 8080 }] },
+]
+persistent = true
+hints = [
+    "Destination NAT, in the prerouting hook: connections arriving on enp0s3 for TCP port 8080 go to 192.168.50.10:80. Then the forward chain must let them through to the sensor.",
+    "Add  chain prerouting { type nat hook prerouting priority dstnat; iifname \"enp0s3\" tcp dport 8080 dnat to 192.168.50.10:80 }  to the ip nat table, and to the forward chain  iifname \"enp0s3\" oifname \"enp0s8\" ip daddr 192.168.50.10 tcp dport 80 accept.",
+    "Note the port in the forward rule: by then the destination has already been rewritten to 192.168.50.10:80.",
+]
+explanation = """
+After prerouting has rewritten the destination, routing sends the connection to enp0s8 and
+the forward chain sees the new address and port. The sensor answers to its gateway — this
+server — where connection tracking restores the original addresses. The input chain is not
+involved: the packets are not for this server any more.
+"""
+
+[[task]]
+id = "kinds"
+title = "Which is which"
+kind = "explanation"
+instructions = "Your colleagues ask what you did."
+skills = { "i.nat-concepts" = 1.0 }
+question = { prompt = "Which pairing is right?", type = "choice", choices = ["Lab → Internet: source NAT in postrouting; office → dashboard: destination NAT in prerouting", "Lab → Internet: destination NAT in prerouting; office → dashboard: source NAT in postrouting", "Both: masquerade in the forward chain", "Both: only ip_forward is needed"], answer = 0 }
+hints = ["Which address is rewritten in each case — the sender's or the receiver's?", "Outgoing: the lab's source address is hidden. Incoming: the destination 10.0.2.15:8080 is replaced.", "Source NAT in postrouting for the lab, destination NAT in prerouting for the dashboard."]
+explanation = "Source NAT changes who a connection seems to come from, after routing (postrouting); destination NAT changes where it goes, before routing (prerouting) — so that routing already sees the new destination."
+
+[debrief]
+summary = """
+A router forwards (ip_forward = 1), filters what it forwards (the forward chain — with
+ct state established,related for the answers) and may translate: masquerade/snat in
+postrouting hides a private network behind its own address; dnat in prerouting forwards a
+port to an inside host. Make all three persistent: /etc/sysctl.d, /etc/nftables.conf and
+an enabled nftables.service.
+"""
+alternatives = [
+    "snat to 10.0.2.15 instead of masquerade (for a fixed outside address)",
+    "Instead of NAT for the office: a route to 192.168.50.0/24 via 10.0.2.15 on the office router (or on build: ip route add 192.168.50.0/24 via 10.0.2.15)",
+    "Fedora: firewall-cmd --add-masquerade and --add-forward-port=port=8080:proto=tcp:toport=80:toaddr=192.168.50.10",
+    "iptables -t nat -A POSTROUTING -o enp0s3 -j MASQUERADE (older guides; iptables-nft writes the same netfilter rules)",
+]
+pitfalls = [
+    "Forgetting ip_forward — or setting it only with sysctl -w.",
+    "A forward chain with policy drop and no established rule: the first packet passes, the answers do not.",
+    "Allowing port 8080 in the forward chain: after DNAT the packet goes to port 80.",
+    "Rules typed with nft but not saved in /etc/nftables.conf.",
+]
+next = "Chapter I ends with security on the wire: TLS."
+
+[[solution]]
+name = "one nftables.conf"
+steps = [
+    { input = ["letslinux"] },
+    "ip route",
+    ":answer 1",
+    "echo 'net.ipv4.ip_forward = 1' | sudo tee /etc/sysctl.d/90-router.conf",
+    "sudo sysctl --system",
+    "sudo cp /etc/nftables.conf /root/nftables.conf.orig",
+    { edit = "#!/usr/sbin/nft -f\n# Firewall for the lab gateway -- T.\n\nflush ruleset\n\ntable inet filter {\n\tchain input {\n\t\ttype filter hook input priority filter; policy drop;\n\t\tiifname \"lo\" accept\n\t\tct state established,related accept\n\t\ttcp dport 22 accept\n\t\tip protocol icmp accept\n\t}\n\tchain forward {\n\t\ttype filter hook forward priority filter; policy drop;\n\t\tct state established,related accept\n\t\tiifname \"enp0s8\" oifname \"enp0s3\" accept\n\t\tiifname \"enp0s3\" oifname \"enp0s8\" ip daddr 192.168.50.10 tcp dport 80 accept\n\t}\n\tchain output {\n\t\ttype filter hook output priority filter; policy accept;\n\t}\n}\n\ntable ip nat {\n\tchain prerouting {\n\t\ttype nat hook prerouting priority dstnat;\n\t\tiifname \"enp0s3\" tcp dport 8080 dnat to 192.168.50.10:80\n\t}\n\tchain postrouting {\n\t\ttype nat hook postrouting priority srcnat;\n\t\toifname \"enp0s3\" masquerade\n\t}\n}\n" },
+    "sudo nano /etc/nftables.conf",
+    "sudo nft -c -f /etc/nftables.conf",
+    "sudo systemctl restart nftables",
+    ":answer 1",
+]
+
+[[solution]]
+name = "nft commands, then saved"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 1",
+    "sudo sysctl -w net.ipv4.ip_forward=1",
+    "echo net.ipv4.ip_forward=1 | sudo tee /etc/sysctl.d/99-forward.conf",
+    "sudo nft add rule inet filter forward ct state established,related accept",
+    "sudo nft add rule inet filter forward iifname enp0s8 oifname enp0s3 accept",
+    "sudo nft add rule inet filter forward iifname enp0s3 ip daddr 192.168.50.10 tcp dport 80 accept",
+    "sudo nft add table ip nat",
+    "sudo nft 'add chain ip nat postrouting { type nat hook postrouting priority 100; }'",
+    "sudo nft add rule ip nat postrouting oifname enp0s3 snat to 10.0.2.15",
+    "sudo nft 'add chain ip nat prerouting { type nat hook prerouting priority -100; }'",
+    "sudo nft add rule ip nat prerouting tcp dport 8080 dnat to 192.168.50.10:80",
+    "sudo sh -c 'echo \"#!/usr/sbin/nft -f\" > /etc/nftables.conf; echo \"flush ruleset\" >> /etc/nftables.conf; nft list ruleset >> /etc/nftables.conf'",
+    ":answer 1",
+]
+
+[[counterexample]]
+name = "runtime only"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 1",
+    "sudo sysctl -w net.ipv4.ip_forward=1",
+    "echo net.ipv4.ip_forward=1 | sudo tee /etc/sysctl.d/99-forward.conf",
+    "sudo nft add rule inet filter forward ct state established,related accept",
+    "sudo nft add rule inet filter forward iifname enp0s8 oifname enp0s3 accept",
+    "sudo nft add rule inet filter forward iifname enp0s3 ip daddr 192.168.50.10 tcp dport 80 accept",
+    "sudo nft add table ip nat",
+    "sudo nft 'add chain ip nat postrouting { type nat hook postrouting priority 100; }'",
+    "sudo nft add rule ip nat postrouting oifname enp0s3 masquerade",
+    "sudo nft 'add chain ip nat prerouting { type nat hook prerouting priority -100; }'",
+    "sudo nft add rule ip nat prerouting tcp dport 8080 dnat to 192.168.50.10:80",
+    ":answer 1",
+]
+
+[[counterexample]]
+name = "open the forward chain"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 1",
+    "echo 'net.ipv4.ip_forward = 1' | sudo tee /etc/sysctl.d/90-router.conf",
+    "sudo sysctl --system",
+    "sudo sed -i 's/hook forward priority filter; policy drop;/hook forward priority filter; policy accept;/' /etc/nftables.conf",
+    "printf 'table ip nat {\\n\\tchain postrouting {\\n\\t\\ttype nat hook postrouting priority srcnat;\\n\\t\\toifname \"enp0s3\" masquerade\\n\\t}\\n\\tchain prerouting {\\n\\t\\ttype nat hook prerouting priority dstnat;\\n\\t\\ttcp dport 8080 dnat to 192.168.50.10:80\\n\\t}\\n}\\n' | sudo tee -a /etc/nftables.conf",
+    "sudo systemctl restart nftables",
+    ":answer 1",
+]
+
+[[counterexample]]
+name = "port 8080 in the forward rule"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 1",
+    "echo 'net.ipv4.ip_forward = 1' | sudo tee /etc/sysctl.d/90-router.conf",
+    "sudo sysctl --system",
+    "sudo sed -i 's/hook forward priority filter; policy drop;/hook forward priority filter; policy drop;\\n\\t\\tct state established,related accept\\n\\t\\tiifname \"enp0s8\" oifname \"enp0s3\" accept\\n\\t\\ttcp dport 8080 accept/' /etc/nftables.conf",
+    "printf 'table ip nat {\\n\\tchain postrouting {\\n\\t\\ttype nat hook postrouting priority srcnat;\\n\\t\\toifname \"enp0s3\" masquerade\\n\\t}\\n\\tchain prerouting {\\n\\t\\ttype nat hook prerouting priority dstnat;\\n\\t\\ttcp dport 8080 dnat to 192.168.50.10:80\\n\\t}\\n}\\n' | sudo tee -a /etc/nftables.conf",
+    "sudo systemctl restart nftables",
+    ":answer 1",
+]

@@ -1,0 +1,264 @@
+schema = 1
+
+[mission]
+id = "m04-multi-fault"
+title = "Monday Morning"
+chapter = "M"
+kind = "troubleshooting"
+order = 5
+difficulty = 7
+requires = ["m01-what-changed", "m03-unreachable", "d03-access-denied", "j02b-measuring-space"]
+skills = ["m.multi-fault", "m.service-rca", "m.permission-rca", "m.verification"]
+review_for = ["i.dns-resolution", "h.failed-services", "d.directory-permissions"]
+xp = 280
+estimated_minutes = 45
+
+[briefing]
+context = """
+The shop on this Ubuntu server ran fine on Friday. Over the weekend it was rebooted for
+updates, and now nothing works. The shop is two parts: nginx on port 80 forwards every
+request to the shop backend (backend.internal:8080). Get it working again, find out why
+the reboot broke it, and make sure the next reboot will not. (sudo password: letslinux)
+"""
+concept = """
+When several things are broken, work from the outside in and fix one layer at a time: what
+does the client see, which component answers (or not), what does that component log? Every
+fix changes the symptom — a refused connection becomes a 502 Bad Gateway, which becomes
+a working page — and each new symptom points to the next layer. Keep notes. When a problem
+appeared at a reboot, look at what runs at boot: enabled units (systemctl list-unit-files
+--state=enabled), generated files, ordering. Verify the whole chain at the end, including
+across another reboot.
+"""
+objectives = ["Triage several simultaneous faults", "Follow the symptom from layer to layer", "Find a boot-time cause", "Fix permission and name-resolution faults at their source", "Verify end to end, also after a reboot"]
+
+[environment]
+profile = "ubuntu"
+packages = ["nginx"]
+
+[[environment.setup]]
+action = "user"
+name = "shop"
+system = true
+shell = "/usr/sbin/nologin"
+home = "/opt/shop"
+
+[[environment.setup]]
+action = "file"
+path = "/opt/shop/backend.sh"
+mode = "0755"
+content = """#!/bin/sh
+# shop backend: answers nginx on 127.0.0.1:8080, logs to /var/log/shop
+echo "$(date -Is) backend starting" >> /var/log/shop/backend.log || { echo "shop-backend: cannot write /var/log/shop/backend.log" >&2; exit 1; }
+exec /usr/bin/python3 -m http.server 8080 --bind 127.0.0.1 --directory /opt/shop/www
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/opt/shop/www/index.html"
+content = "<html><body><h1>Example Shop</h1><p>Today's offers.</p></body></html>\n"
+
+[[environment.setup]]
+action = "dir"
+path = "/var/log/shop"
+owner = "shop"
+group = "shop"
+mode = "0755"
+
+[[environment.setup]]
+action = "service"
+name = "shop-backend.service"
+enable = true
+start = true
+content = """[Unit]
+Description=Shop backend
+After=network.target
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+User=shop
+ExecStart=/opt/shop/backend.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "run"
+command = "cp /etc/hosts /etc/hosts.base && echo '127.0.0.1\tbackend.internal' >> /etc/hosts.base && cp /etc/hosts.base /etc/hosts"
+
+[[environment.setup]]
+action = "service"
+name = "hosts-sync.service"
+enable = true
+content = """[Unit]
+Description=Install /etc/hosts from /etc/hosts.base (site standard)
+DefaultDependencies=no
+Before=network.target nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/cp /etc/hosts.base /etc/hosts
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/etc/nginx/sites-available/shop"
+content = """server {
+    listen 80 default_server;
+    server_name shop.example.lan;
+
+    location / {
+        proxy_pass http://backend.internal:8080;
+        proxy_set_header Host $host;
+    }
+}
+"""
+
+[[environment.setup]]
+action = "run"
+command = "rm -f /etc/nginx/sites-enabled/default && ln -s /etc/nginx/sites-available/shop /etc/nginx/sites-enabled/shop && systemctl reload nginx"
+
+[[environment.setup]]
+action = "clock"
+advance = 172800
+
+[[environment.setup]]
+action = "run"
+command = "sed -i '/backend.internal/d' /etc/hosts.base && rm -rf /var/log/shop && mkdir /var/log/shop && chmod 755 /var/log/shop"
+
+[[environment.setup]]
+action = "reboot"
+
+[[task]]
+id = "symptom"
+title = "What do customers see?"
+kind = "troubleshooting"
+instructions = "Request the shop's start page via the server's network address, as a customer would."
+skills = { "m.multi-fault" = 1.0 }
+question = { prompt = "What happens?", type = "choice", choices = ["Connection refused", "502 Bad Gateway", "The page loads"], answer = 0 }
+hints = ["curl -i http://10.0.2.15/", "Refused means nothing listens on port 80 — nginx is not running.", "Connection refused."]
+explanation = "The outermost layer is down: nginx itself."
+
+[[task]]
+id = "nginx"
+title = "Why is nginx down?"
+kind = "troubleshooting"
+instructions = "Find out why nginx did not start at boot."
+skills = { "m.service-rca" = 1.0, "i.dns-resolution" = 0.5 }
+question = { prompt = "Why did nginx fail?", type = "choice", choices = ["Port 80 was already in use", "It could not resolve the host name of its upstream, backend.internal", "A syntax error in its configuration"], answer = 1 }
+hints = ["systemctl status nginx and journalctl -u nginx -b", "sudo nginx -t gives the same message.", "'host not found in upstream \"backend.internal:8080\"' — nginx resolves proxy_pass names when it loads its configuration. getent hosts backend.internal finds nothing."]
+explanation = "nginx refuses to start when an upstream name does not resolve. The name used to be in /etc/hosts — so what changed /etc/hosts?"
+
+[[task]]
+id = "hosts"
+title = "Who rewrote /etc/hosts?"
+kind = "troubleshooting"
+instructions = "Find out what replaced /etc/hosts during the boot."
+skills = { "m.multi-fault" = 1.0, "m.verification" = 0.5 }
+question = { prompt = "Which unit writes /etc/hosts at boot?", type = "exact", accept = ["hosts-sync", "hosts-sync.service"] }
+hints = ["When was /etc/hosts last modified? stat /etc/hosts — compare with the boot time (uptime -s, who -b).", "Which units ran at that moment? journalctl -b | head -60, or systemctl list-unit-files --state=enabled", "hosts-sync.service copies /etc/hosts.base over /etc/hosts at every boot — and the base file lacks backend.internal."]
+explanation = "Fixing /etc/hosts alone would last until the next reboot. The source is /etc/hosts.base."
+
+[[task]]
+id = "fix"
+title = "Shop open, for good"
+kind = "independent"
+instructions = "Get the whole chain working: nginx up, the backend up, the start page answered with HTTP 200 via 10.0.2.15. Fix every cause at its source so that it still works after the next reboot. (The backend runs as the user shop and logs to /var/log/shop.)"
+skills = { "m.multi-fault" = 1.0, "m.permission-rca" = 1.0, "m.service-rca" = 1.0, "m.verification" = 1.0 }
+checks = [
+    { type = "unit_state", unit = "nginx.service", active = "active" },
+    { type = "unit_state", unit = "shop-backend.service", active = "active" },
+    { type = "command_result", user = "root", command = "curl -s -o /dev/null -w '%{http_code}' http://10.0.2.15/", stdout_equals = "200" },
+    { type = "unit_enabled", unit = "hosts-sync.service", state = "enabled" },
+    { type = "after_reboot", checks = [
+        { type = "unit_state", unit = "shop-backend.service", active = "active" },
+        { type = "command_result", user = "root", command = "curl -s -o /dev/null -w '%{http_code}' http://10.0.2.15/", stdout_equals = "200" },
+    ] },
+]
+hints = [
+    "Layer by layer: name resolution for nginx (fix /etc/hosts.base, then /etc/hosts), start nginx, test again — the symptom becomes 502 Bad Gateway. Then the backend: systemctl status shop-backend, journalctl -u shop-backend.",
+    "The backend cannot write /var/log/shop: who owns it now? ls -ld /var/log/shop. It runs as shop.",
+    "echo '127.0.0.1 backend.internal' | sudo tee -a /etc/hosts.base && sudo cp /etc/hosts.base /etc/hosts && sudo systemctl restart nginx; sudo chown shop:shop /var/log/shop && sudo systemctl reset-failed shop-backend && sudo systemctl restart shop-backend",
+]
+explanation = "The game tested the chain now and after another reboot: name resolution survives because the base file is right, the backend can write its log, nginx forwards and gets an answer."
+
+[[task]]
+id = "priorities"
+title = "Order of work"
+kind = "explanation"
+instructions = "Look back at how the symptoms changed."
+skills = { "m.multi-fault" = 1.0 }
+question = { prompt = "After you started nginx, customers got 502 Bad Gateway. What did that tell you?", type = "choice", choices = ["The nginx fix was wrong", "nginx now works and answers — but its upstream, the backend, does not: the next layer", "The network is down"], answer = 1 }
+hints = ["Who generates a 502?", "nginx produces 502 when it cannot get an answer from the upstream.", "(b)"]
+explanation = "A changed symptom is progress. Two independent faults (a boot-time hosts file and a directory recreated with the wrong owner) hid behind each other."
+
+[debrief]
+summary = """
+Outside in: client symptom → component that should answer → its log → fix → new symptom.
+For problems that appear at boot: what runs at boot and what it writes. Verify end to end
+and across a reboot.
+"""
+alternatives = ["Put the backend's address directly into proxy_pass (127.0.0.1:8080) to remove the name dependency", "LogsDirectory=shop in the unit lets systemd create /var/log/shop with the right owner", "systemd-analyze critical-chain and journalctl -b show what happened during boot"]
+pitfalls = ["Editing /etc/hosts instead of its source.", "Stopping at the first improvement (502) without testing again.", "Running the backend as root to avoid the permission problem."]
+next = "Chapter M is done. The advanced chapters start with the kernel."
+
+[[solution]]
+name = "outside in"
+steps = [
+    "curl -i http://10.0.2.15/",
+    ":answer a",
+    "systemctl status nginx",
+    { input = ["letslinux"] },
+    "sudo nginx -t",
+    ":answer b",
+    "stat /etc/hosts",
+    "systemctl list-unit-files --state=enabled | grep hosts",
+    "systemctl cat hosts-sync",
+    ":answer hosts-sync",
+    "echo '127.0.0.1 backend.internal' | sudo tee -a /etc/hosts.base",
+    "sudo cp /etc/hosts.base /etc/hosts",
+    "sudo systemctl restart nginx",
+    "curl -s -o /dev/null -w '%{http_code}\\n' http://10.0.2.15/",
+    "journalctl -u shop-backend -b | tail -5",
+    "ls -ld /var/log/shop",
+    "sudo chown shop:shop /var/log/shop",
+    "sudo systemctl reset-failed shop-backend",
+    "sudo systemctl restart shop-backend",
+    "curl -s -o /dev/null -w '%{http_code}\\n' http://10.0.2.15/",
+    ":answer b",
+]
+
+[[solution]]
+name = "group permissions and printf"
+steps = [
+    ":answer Connection refused",
+    ":answer It could not resolve the host name of its upstream, backend.internal",
+    ":answer hosts-sync.service",
+    { input = ["letslinux"] },
+    "sudo sh -c 'printf \"127.0.0.1\\tbackend.internal\\n\" >> /etc/hosts.base; cp /etc/hosts.base /etc/hosts'",
+    "sudo chgrp shop /var/log/shop",
+    "sudo chmod 775 /var/log/shop",
+    "sudo systemctl reset-failed",
+    "sudo systemctl restart shop-backend nginx",
+    ":answer b",
+]
+
+[[counterexample]]
+name = "edit /etc/hosts only"
+steps = [
+    ":answer a",
+    ":answer b",
+    ":answer hosts-sync",
+    { input = ["letslinux"] },
+    "echo '127.0.0.1 backend.internal' | sudo tee -a /etc/hosts",
+    "sudo chown shop:shop /var/log/shop",
+    "sudo systemctl reset-failed",
+    "sudo systemctl restart shop-backend nginx",
+    ":answer b",
+]

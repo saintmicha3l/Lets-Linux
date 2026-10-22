@@ -1,0 +1,138 @@
+schema = 1
+
+[mission]
+id = "i05-ssh"
+title = "Remote Control"
+chapter = "I"
+kind = "lesson"
+order = 5
+difficulty = 3
+requires = ["i04-ports", "d02-chmod"]
+skills = ["i.ssh-basics", "i.ssh-keys"]
+review_for = ["i.dns-resolution", "d.permission-bits"]
+xp = 150
+estimated_minutes = 25
+
+[briefing]
+context = """
+You will look after the file server 'files' from now on. Log in to it with SSH, find out what
+is waiting for you there, and then set up key-based login so that you (and your scripts) no
+longer need to type its password. The account on files is 'admin', password 'letslinux'.
+"""
+concept = """
+ssh user@host opens a shell on another machine; ssh user@host COMMAND runs one command there.
+On the first connection ssh shows the server's host-key fingerprint — accepting it stores the
+key in ~/.ssh/known_hosts, and a changed key later is a warning sign. Keys replace passwords:
+ssh-keygen creates a key pair (private key ~/.ssh/id_ed25519, public key …/id_ed25519.pub);
+the public key goes into ~/.ssh/authorized_keys on the server (ssh-copy-id does that). The
+private key must stay private: mode 600, and never copied anywhere.
+"""
+objectives = ["Connect and accept a host key", "Run remote commands", "Create a key pair", "Install the public key and log in without a password"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "remote"
+host = "files"
+steps = [
+    { action = "file", path = "~/WELCOME.txt", content = "Welcome, new administrator of files.\nThe share is in /srv/share; the backup disk is checked every Monday.\nYour handover code word is: albatross\n" },
+    { action = "dir", path = "/srv/share" },
+]
+
+[[task]]
+id = "connect"
+title = "First contact"
+kind = "guided"
+instructions = "Log in to files as admin (password letslinux). You will be asked to confirm the host key. Read ~/WELCOME.txt there — then exit to come back."
+skills = { "i.ssh-basics" = 1.0 }
+question = { prompt = "What is the handover code word in WELCOME.txt on files?", type = "exact", accept = ["albatross"] }
+hints = ["ssh admin@files", "Answer yes to the host-key question, then type the password. On files: cat WELCOME.txt", "The code word is albatross."]
+explanation = "Your prompt changed to admin@files while you were logged in there; exit (or Ctrl-D) closed the connection."
+
+[[task]]
+id = "known"
+title = "Trust on first use"
+kind = "explanation"
+instructions = "Look at ~/.ssh/known_hosts on this machine."
+skills = { "i.ssh-basics" = 1.0 }
+question = { prompt = "What does ssh do if files later presents a different host key?", type = "choice", choices = ["It updates known_hosts silently", "It refuses to connect and warns of a possible man-in-the-middle attack", "It asks for the password twice"], answer = 1 }
+hints = ["known_hosts stores the key you accepted.", "A different key could mean someone is impersonating the server.", "(b)"]
+explanation = "If a server is really reinstalled, verify the new fingerprint out of band, then remove the old entry with ssh-keygen -R files."
+
+[[task]]
+id = "remote"
+title = "One command, no session"
+kind = "independent"
+instructions = "Without opening an interactive session, find out how much space is free on files' root filesystem, and write the output of 'df -h /' on files into ~/files-df.txt on this machine."
+skills = { "i.ssh-basics" = 1.0 }
+checks = [{ type = "file_contains", path = "~/files-df.txt", regex = "Filesystem.*\\n/dev/\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\d+% /" }]
+hints = ["ssh HOST COMMAND runs COMMAND remotely; its output arrives here.", "Redirect locally: the > is interpreted by your local shell.", "ssh admin@files 'df -h /' > ~/files-df.txt"]
+explanation = "The command ran on files, its output travelled back through SSH, and your local shell wrote it into the file."
+
+[[task]]
+id = "keys"
+title = "Keys instead of passwords"
+kind = "independent"
+instructions = "Create an ed25519 key pair (default location), install the public key for admin on files, and make sure you can log in without being asked for a password."
+skills = { "i.ssh-keys" = 1.0 }
+checks = [
+    { type = "path_exists", path = "~/.ssh/id_ed25519", kind = "file" },
+    { type = "file_mode", path = "~/.ssh/id_ed25519", mode = "0600" },
+    { type = "command_result", command = "ssh -o BatchMode=yes admin@files whoami", status = 0, stdout_equals = "admin" },
+]
+persistent = true
+hints = ["ssh-keygen -t ed25519 creates the pair (press Enter to accept the file; a passphrase is optional).", "ssh-copy-id admin@files installs the public key (it asks for the password one last time).", "ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 && ssh-copy-id admin@files && ssh admin@files whoami"]
+explanation = "The check logged in with BatchMode=yes, which forbids password prompts: only your key could get you in. The server logged 'Accepted publickey for admin'."
+
+[debrief]
+summary = """
+ssh user@host [command]; verify host keys on first contact; ssh-keygen + ssh-copy-id for key
+login; keep private keys at mode 600 and never share them.
+"""
+alternatives = ["Manually: cat ~/.ssh/id_ed25519.pub | ssh admin@files 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys'", "A passphrase on the key, with ssh-agent to avoid retyping it", "~/.ssh/config with Host files / User admin to shorten commands"]
+pitfalls = ["Accepting changed host keys without thinking.", "Copying the private key to the server instead of the public one.", "authorized_keys or ~/.ssh writable by others: sshd ignores the key (StrictModes)."]
+next = "Next: copying and synchronising files between machines."
+
+[[solution]]
+name = "interactive first, then ssh-copy-id"
+steps = [
+    { input = ["yes", "letslinux"] },
+    "ssh admin@files",
+    "cat WELCOME.txt",
+    "exit",
+    ":answer albatross",
+    "cat ~/.ssh/known_hosts",
+    ":answer b",
+    { input = ["letslinux"] },
+    "ssh admin@files 'df -h /' > ~/files-df.txt",
+    "ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519",
+    { input = ["letslinux"] },
+    "ssh-copy-id admin@files",
+    "ssh admin@files whoami",
+]
+
+[[solution]]
+name = "remote commands only"
+steps = [
+    { input = ["yes", "letslinux"] },
+    "ssh admin@files cat WELCOME.txt",
+    ":answer albatross",
+    ":answer It refuses to connect and warns of a possible man-in-the-middle attack",
+    { input = ["letslinux"] },
+    "ssh admin@files df -h / > files-df.txt",
+    { input = ["", "", ""] },
+    "ssh-keygen -t ed25519",
+    { input = ["letslinux"] },
+    "cat ~/.ssh/id_ed25519.pub | ssh admin@files 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'",
+]
+
+[[counterexample]]
+name = "password every time"
+steps = [
+    { input = ["yes", "letslinux"] },
+    "ssh admin@files cat WELCOME.txt",
+    ":answer albatross",
+    ":answer b",
+    "ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519",
+]

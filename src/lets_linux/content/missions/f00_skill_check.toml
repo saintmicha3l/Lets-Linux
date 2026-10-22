@@ -1,0 +1,161 @@
+schema = 1
+
+[mission]
+id = "f00-skill-check"
+title = "Skill Check F: Packages"
+chapter = "F"
+placement = "F"
+kind = "assessment"
+order = 0
+difficulty = 3
+requires = []
+skills = ["f.apt-basics", "f.search-info", "f.file-ownership", "f.dependencies", "f.upgrades-versions", "f.package-concepts", "f.repo-trust", "f.dnf-basics"]
+xp = 70
+estimated_minutes = 15
+sequential = false
+
+[briefing]
+context = """
+This skill check covers chapter F on a Debian system: finding and installing software,
+which package owns a file, dependencies, versions, holding and purging packages, repository
+trust — and what the same work looks like on Fedora. Tasks in any order; you have sudo
+(password: letslinux). Solve them all (one slip allowed) to test out of chapter F. Anything
+you cannot do is simply not counted — :submit ends the check.
+"""
+concept = "No hints: show what you can do on your own."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "debian"
+packages = ["nginx", "git"]
+
+[environment.vars]
+cmd = { choices = ["dig", "netstat", "iostat", "tree"] }
+owned = { choices = ["ss", "ping", "less", "crontab"] }
+pkgv = { choices = ["tree", "curl", "sqlite3"] }
+
+[[task]]
+id = "provide"
+title = "A missing command"
+kind = "assessment"
+instructions = "The command {{cmd}} is not installed. Install the package that provides it."
+skills = { "f.apt-basics" = 1.0, "f.search-info" = 1.0 }
+checks = [{ type = "command_result", user = "root", command = "command -v {{cmd}} >/dev/null && echo found", stdout_equals = "found" }]
+explanation = "apt-cache search / apt search find the package (or the command-not-found message names it); then sudo apt install it."
+
+[[task]]
+id = "owner"
+title = "Whose file is it?"
+kind = "assessment"
+instructions = "Find which installed package put the program {{owned}} on this system."
+skills = { "f.file-ownership" = 1.0 }
+question = { prompt = "The package's name?", type = "state", state = { command = "dpkg -S \"$(command -v {{owned}})\" | head -1 | cut -d: -f1" } }
+explanation = "dpkg -S $(command -v {{owned}}) — dpkg -L PACKAGE lists the other way round."
+
+[[task]]
+id = "deps"
+title = "What it would bring along"
+kind = "assessment"
+instructions = "Without installing it: find a package that gcc depends on."
+skills = { "f.dependencies" = 1.0, "f.search-info" = 0.5 }
+question = { prompt = "One of its dependencies?", type = "regex", accept = ["^(libc6-dev|binutils)$"] }
+explanation = "apt-cache depends gcc or apt show gcc (Depends: line)."
+
+[[task]]
+id = "version"
+title = "Which version"
+kind = "assessment"
+instructions = "Find out which version of {{pkgv}} apt would install from the configured repositories."
+skills = { "f.upgrades-versions" = 1.0, "f.search-info" = 0.5 }
+question = { prompt = "The version?", type = "state", state = { command = "apt-cache policy {{pkgv}} | awk '/Candidate:/ {print $2}'" } }
+explanation = "apt-cache policy {{pkgv}} (Candidate:) or apt show {{pkgv}} (Version:)."
+
+[[task]]
+id = "hold"
+title = "Not this one"
+kind = "assessment"
+instructions = "git must stay at its current version when the system is upgraded. Make sure it does."
+skills = { "f.upgrades-versions" = 1.0 }
+checks = [{ type = "package_state", name = "git", held = true }]
+explanation = "sudo apt-mark hold git (apt-mark showhold lists held packages; unhold releases)."
+
+[[task]]
+id = "purge"
+title = "Gone for good"
+kind = "assessment"
+instructions = "nginx is no longer needed. Remove it completely — its configuration files under /etc/nginx included."
+skills = { "f.apt-basics" = 1.0, "f.package-concepts" = 1.0 }
+checks = [
+    { type = "package_state", name = "nginx", state = "absent" },
+    { type = "path_absent", path = "/etc/nginx/nginx.conf" },
+]
+explanation = "sudo apt purge nginx — remove leaves the configuration (state rc); purge removes it too."
+
+[[task]]
+id = "trust"
+title = "An unsigned repository"
+kind = "assessment"
+instructions = "A colleague added a third-party repository and apt update now says NO_PUBKEY for it."
+skills = { "f.repo-trust" = 1.0 }
+question = { prompt = "What is the safe response?", type = "choice", choices = ["Add [trusted=yes] to the repository line", "Obtain the vendor's signing key over a trusted channel, verify its fingerprint, and reference it with signed-by= for that repository only", "Disable signature checking in apt.conf", "Copy the key from a forum post"], answer = 1 }
+explanation = "Signatures are how apt knows packages come from the vendor; signed-by= limits the key to that one repository."
+
+[[task]]
+id = "fedora"
+title = "On Fedora"
+kind = "assessment"
+instructions = "The same team also runs Fedora servers."
+skills = { "f.dnf-basics" = 1.0 }
+question = { prompt = "Which command finds the package that provides a file such as /usr/bin/dig there?", type = "choice", choices = ["apt-file search /usr/bin/dig", "dnf provides /usr/bin/dig", "rpm -i dig", "pacman -Qo /usr/bin/dig"], answer = 1 }
+explanation = "dnf provides (also for files not yet installed); rpm -qf answers for installed files."
+
+[debrief]
+summary = """
+The check covered chapter F's core. Solved tasks are evidence for their skills; chapter F's
+missions stay open to replay.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "apt and dpkg"
+steps = [
+    { input = ["letslinux"] },
+    "apt-cache search {{cmd}} | head",
+    "sudo apt-get install -y $(apt-cache search {{cmd}} >/dev/null; case {{cmd}} in dig) echo dnsutils;; netstat) echo net-tools;; iostat) echo sysstat;; tree) echo tree;; esac)",
+    { answer_with = "dpkg -S \"$(command -v {{owned}})\" | head -1 | cut -d: -f1" },
+    "apt-cache depends gcc",
+    ":answer binutils",
+    { answer_with = "apt-cache policy {{pkgv}} | awk '/Candidate:/ {print $2}'" },
+    "sudo apt-mark hold git",
+    "sudo apt-get purge -y nginx",
+    ":answer 2",
+    ":answer b",
+]
+
+[[solution]]
+name = "apt front-end"
+steps = [
+    { input = ["letslinux"] },
+    ":answer dnf provides /usr/bin/dig",
+    "sudo apt purge -y nginx",
+    "sudo apt-mark hold git && apt-mark showhold",
+    "apt show gcc 2>/dev/null | grep Depends",
+    ":answer libc6-dev",
+    "sudo apt install -y dnsutils net-tools sysstat tree",
+    { answer_with = "apt-cache policy {{pkgv}} | awk '/Candidate:/ {print $2}'" },
+    { answer_with = "dpkg -S \"$(command -v {{owned}})\" | head -1 | cut -d: -f1" },
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "remove instead of purge, no hold"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt install -y dnsutils net-tools sysstat tree",
+    { answer_with = "dpkg -S \"$(command -v {{owned}})\" | head -1 | cut -d: -f1" },
+    ":answer binutils",
+    { answer_with = "apt-cache policy {{pkgv}} | awk '/Candidate:/ {print $2}'" },
+    "sudo apt-get remove -y nginx",
+    ":answer 2",
+    ":answer b",
+]

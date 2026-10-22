@@ -1,0 +1,200 @@
+schema = 1
+
+[mission]
+id = "i00-skill-check"
+title = "Skill Check I: Networking"
+chapter = "I"
+placement = "I"
+kind = "assessment"
+order = 0
+difficulty = 4
+requires = []
+skills = ["i.interfaces-addresses", "i.cidr-subnetting", "i.routing-gateways", "i.dns-resolution", "i.ports-sockets", "i.http-curl", "i.ssh-keys", "i.ssh-basics", "i.nat-concepts", "i.net-troubleshooting"]
+xp = 90
+estimated_minutes = 20
+sequential = false
+
+[briefing]
+context = """
+This skill check covers chapter I: addresses and prefixes, subnets, the default route, DNS,
+listening sockets, HTTP and SSH keys. This server's network was left half-broken. Tasks in
+any order; you have sudo (password: letslinux), and an account admin on the file server
+files (password letslinux). Solve them all (one slip allowed) to test out of chapter I.
+Anything you cannot do is simply not counted — :submit ends the check.
+"""
+concept = "No hints: show what you can do on your own."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "debian"
+packages = ["curl"]
+
+[environment.vars]
+prefix = { choices = ["26", "27", "28", "29"] }
+daemon = { choices = ["metricsd", "relayd", "syncd"] }
+port = { choices = ["7443", "8125", "9933"] }
+page = { choices = ["payroll", "board-minutes", "salaries"] }
+
+[[environment.setup]]
+action = "net"
+del_route = "default"
+
+[[environment.setup]]
+action = "file"
+path = "/etc/resolv.conf"
+content = "# edited by hand during the migration\nsearch example.lan\nnameserver 10.0.2.99\n"
+
+[[environment.setup]]
+action = "process"
+comm = "{{daemon}}"
+argv = ["/usr/local/sbin/{{daemon}}", "--listen", "0.0.0.0"]
+user = "root"
+listen = ["{{port}}"]
+
+[[environment.setup]]
+action = "peer"
+name = "intranet"
+services = { 80 = { kind = "http", pages = { "/" = { body = "<h1>Intranet</h1>\n" }, "/{{page}}" = { status = 403, body = "<h1>403 Forbidden</h1>\n" } } } }
+
+[[environment.setup]]
+action = "remote"
+host = "files"
+user = "admin"
+password = "letslinux"
+
+[[task]]
+id = "addr"
+title = "Your address"
+kind = "assessment"
+instructions = "Report this machine's IPv4 address on its network card, with the prefix length."
+skills = { "i.interfaces-addresses" = 1.0 }
+question = { prompt = "Address/prefix (e.g. 192.0.2.7/24)", type = "state", state = { command = "ip -4 -br addr show dev enp0s3 | awk '{print $3}'" } }
+explanation = "ip -br a (or ip addr show) — the /24 is the prefix length."
+
+[[task]]
+id = "subnet"
+title = "A smaller network"
+kind = "assessment"
+instructions = "A new segment gets a /{{prefix}} network."
+skills = { "i.cidr-subnetting" = 1.0 }
+question = { prompt = "How many usable host addresses does a /{{prefix}} have?", type = "state", state = { command = "echo $(( 2 ** (32 - {{prefix}}) - 2 ))" } }
+explanation = "2^(32 − {{prefix}}) addresses, minus the network and the broadcast address."
+
+[[task]]
+id = "route"
+title = "No way out"
+kind = "assessment"
+instructions = "This server can reach its own LAN but nothing beyond it. The LAN's router is 10.0.2.2. Fix that (for the running system)."
+skills = { "i.routing-gateways" = 1.0, "i.net-troubleshooting" = 0.5 }
+checks = [{ type = "default_route", via = "10.0.2.2" }]
+explanation = "ip route showed no default route: sudo ip route add default via 10.0.2.2 (permanently: the network configuration)."
+
+[[task]]
+id = "dns"
+title = "Names do not resolve"
+kind = "assessment"
+instructions = "Host names no longer resolve on this server. The LAN's DNS server is 10.0.2.3. Fix name resolution."
+skills = { "i.dns-resolution" = 1.0, "i.net-troubleshooting" = 0.5 }
+checks = [
+    { type = "name_resolves", name = "intranet.example.lan", address = "10.0.2.20" },
+    { type = "name_resolves", name = "printer.example.lan", address = "10.0.2.50" },
+]
+explanation = "/etc/resolv.conf pointed at 10.0.2.99, which does not exist: nameserver 10.0.2.3. getent hosts or dig @10.0.2.3 confirm."
+
+[[task]]
+id = "port"
+title = "What is listening"
+kind = "assessment"
+instructions = "The process {{daemon}} accepts TCP connections."
+skills = { "i.ports-sockets" = 1.0 }
+question = { prompt = "On which port?", type = "exact", accept = ["{{port}}"] }
+explanation = "sudo ss -ltnp shows listening TCP sockets with their processes."
+
+[[task]]
+id = "http"
+title = "A page on the intranet"
+kind = "assessment"
+instructions = "Request http://intranet.example.lan/{{page}} (name resolution must work first)."
+skills = { "i.http-curl" = 1.0 }
+question = { prompt = "Which HTTP status code does the server answer with?", type = "exact", accept = ["403"] }
+explanation = "curl -I (or curl -s -o /dev/null -w '%{http_code}') — 403 Forbidden: the page exists, but you may not read it."
+
+[[task]]
+id = "key"
+title = "Log in without a password"
+kind = "assessment"
+instructions = "Set up key-based SSH login from your account here to admin@files, so that ssh admin@files no longer asks for a password."
+skills = { "i.ssh-keys" = 1.0, "i.ssh-basics" = 1.0 }
+checks = [
+    { type = "any_of", checks = [{ type = "path_exists", path = "~/.ssh/id_ed25519.pub" }, { type = "path_exists", path = "~/.ssh/id_rsa.pub" }, { type = "path_exists", path = "~/.ssh/id_ecdsa.pub" }] },
+    { type = "on_host", host = "files", checks = [{ type = "command_result", command = "grep -c 'learner@' ~/.ssh/authorized_keys", stdout_regex = "^[1-9]" }] },
+]
+explanation = "ssh-keygen -t ed25519, then ssh-copy-id admin@files (it appends your public key to ~admin/.ssh/authorized_keys there)."
+
+[[task]]
+id = "nat"
+title = "Private addresses"
+kind = "assessment"
+instructions = "This server's address is in 10.0.2.0/24, a private range — yet it can reach hosts on the internet."
+skills = { "i.nat-concepts" = 1.0 }
+question = { prompt = "How?", type = "choice", choices = ["The internet routes 10.0.0.0/8 to every company", "The router replaces the private source address with its own public one (NAT/masquerading) and translates the answers back", "DNS translates the address", "Private addresses are only private for ICMP"], answer = 1 }
+explanation = "Source NAT on the router: outside, all of the LAN appears as the router's public address."
+
+[debrief]
+summary = """
+The check covered chapter I's core. It does not test every chapter I skill (TLS, firewalls,
+packet capture, persistent network configuration are left to the missions); untested skills
+stay unseen. Solved tasks are evidence for their skills.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "diagnose and repair"
+steps = [
+    { input = ["letslinux", "yes", "letslinux"] },
+    "ip -br a",
+    { answer_with = "ip -4 -br addr show dev enp0s3 | awk '{print $3}'" },
+    { answer_with = "echo $(( 2 ** (32 - {{prefix}}) - 2 ))" },
+    "ip route",
+    "sudo ip route add default via 10.0.2.2",
+    "cat /etc/resolv.conf",
+    "printf 'search example.lan\\nnameserver 10.0.2.3\\n' | sudo tee /etc/resolv.conf",
+    "getent hosts intranet.example.lan",
+    "sudo ss -ltnp",
+    ":answer {{port}}",
+    "curl -s -o /dev/null -w '%{http_code}\\n' http://intranet.example.lan/{{page}}",
+    ":answer 403",
+    "ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519",
+    "ssh-copy-id admin@files",
+    ":answer 2",
+]
+
+[[solution]]
+name = "other tools"
+steps = [
+    { input = ["letslinux", "yes", "letslinux"] },
+    ":answer b",
+    "sudo sed -i 's/10.0.2.99/10.0.2.3/' /etc/resolv.conf",
+    "sudo ip route replace default via 10.0.2.2 dev enp0s3",
+    "curl -sI http://intranet.example.lan/{{page}} | head -1",
+    ":answer 403",
+    "ssh-keygen -t rsa -b 3072 -N '' -f ~/.ssh/id_rsa",
+    "cat ~/.ssh/id_rsa.pub | ssh admin@files 'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys'",
+    "sudo lsof -i -P -n | grep LISTEN",
+    ":answer {{port}}",
+    { answer_with = "ip -4 -br addr show dev enp0s3 | awk '{print $3}'" },
+    { answer_with = "echo $(( 2 ** (32 - {{prefix}}) - 2 ))" },
+]
+
+[[counterexample]]
+name = "symptoms only"
+steps = [
+    { input = ["letslinux"] },
+    { answer_with = "ip -4 -br addr show dev enp0s3 | awk '{print $3}'" },
+    { answer_with = "echo $(( 2 ** (32 - {{prefix}}) - 2 ))" },
+    "echo '10.0.2.20 intranet.example.lan' | sudo tee -a /etc/hosts",
+    ":answer {{port}}",
+    ":answer 403",
+    "ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519",
+    ":answer 2",
+]

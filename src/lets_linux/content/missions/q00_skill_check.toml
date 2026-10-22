@@ -1,0 +1,217 @@
+schema = 1
+
+[mission]
+id = "q00-skill-check"
+title = "Skill Check Q: Development Tools"
+chapter = "Q"
+placement = "Q"
+kind = "assessment"
+order = 0
+difficulty = 4
+requires = []
+skills = ["q.toolchain", "q.shared-libraries", "q.abi-environment", "q.build-systems", "q.debugging-tracing", "q.version-control"]
+xp = 90
+estimated_minutes = 25
+sequential = false
+
+[briefing]
+context = """
+This skill check covers chapter Q: compiling and linking, shared libraries, the glibc ABI,
+make, debugging and git. Tasks in any order; you have sudo (password: letslinux). Solve them
+all (one slip allowed) to test out of chapter Q. :submit ends the check.
+"""
+concept = "No hints: show what you can do on your own."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "debian"
+packages = ["build-essential", "gdb", "git"]
+
+[environment.vars]
+vendor = { choices = ["acme", "globex", "initech"] }
+fn = { choices = ["parse_line", "load_rates", "split_fields"] }
+who = { choices = ["Ana Ruiz", "Ben Odede", "Chen Wei"] }
+timeout = { choices = ["45", "90", "120"] }
+
+[[environment.setup]]
+action = "file"
+path = "~/src/hyp.c"
+owner = "learner"
+group = "learner"
+content = """#include <stdio.h>
+#include <math.h>
+
+int main(void)
+{
+    printf("%.3f\\n", sqrt(3.0 * 3.0 + 4.0 * 4.0));
+    return 0;
+}
+"""
+
+[[environment.setup]]
+action = "run"
+command = '''
+mkdir -p /opt/{{vendor}}/lib /opt/{{vendor}}/bin /tmp/vb && cd /tmp/vb &&
+printf '#include <stdio.h>\nvoid report(void) { puts("{{vendor}} report ok"); }\n' > lib.c &&
+printf 'void report(void);\nint main(void) { report(); return 0; }\n' > main.c &&
+gcc -shared -fPIC -Wl,-soname,lib{{vendor}}.so.1 -o /opt/{{vendor}}/lib/lib{{vendor}}.so.1 lib.c &&
+ln -s lib{{vendor}}.so.1 /opt/{{vendor}}/lib/lib{{vendor}}.so &&
+gcc -o /opt/{{vendor}}/bin/report main.c -L/opt/{{vendor}}/lib -l{{vendor}} &&
+rm -rf /tmp/vb
+'''
+
+[[environment.setup]]
+action = "file"
+path = "~/tool/probe.c"
+owner = "learner"
+group = "learner"
+content = """#include <stdio.h>
+
+int main(void)
+{
+    puts("probe ok");
+    return 0;
+}
+"""
+
+[[environment.setup]]
+action = "file"
+path = "~/tool/Makefile"
+owner = "learner"
+group = "learner"
+content = """probe: probe.c
+    gcc -Wall -o probe probe.c
+"""
+
+[[environment.setup]]
+action = "file"
+path = "~/crash/crash.c"
+owner = "learner"
+group = "learner"
+content = """#include <stdio.h>
+
+int {{fn}}(const char *line)
+{
+    return line[0];
+}
+
+int main(void)
+{
+    printf("%d\\n", {{fn}}(NULL));
+    return 0;
+}
+"""
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "mkdir -p ~/deploy && cd ~/deploy && git init -q -b main && printf 'workers=4\\ntimeout=30\\n' > app.conf && GIT_AUTHOR_NAME='Lea Park' GIT_AUTHOR_EMAIL=lea@example.lan GIT_COMMITTER_NAME='Lea Park' GIT_COMMITTER_EMAIL=lea@example.lan sh -c 'git add app.conf && git commit -qm \"Add settings\"' && sed -i 's/^timeout=30$/timeout={{timeout}}/' app.conf && GIT_AUTHOR_NAME='{{who}}' GIT_AUTHOR_EMAIL=ops@example.lan GIT_COMMITTER_NAME='{{who}}' GIT_COMMITTER_EMAIL=ops@example.lan git commit -qam 'Raise timeout'"
+
+[[task]]
+id = "build"
+title = "Compile and link"
+kind = "assessment"
+instructions = "Build ~/src/hyp.c into ~/bin/hyp (create ~/bin if needed) without changing the source. It must print 5.000."
+skills = { "q.toolchain" = 1.0 }
+checks = [{ type = "command_result", command = "~/bin/hyp", stdout_equals = "5.000" }]
+explanation = "sqrt lives in the maths library: gcc -o ~/bin/hyp ~/src/hyp.c -lm (the library after the source)."
+
+[[task]]
+id = "library"
+title = "A vendor library"
+kind = "assessment"
+instructions = "/opt/{{vendor}}/bin/report does not start. Make it work for every user and every way of starting it — no LD_LIBRARY_PATH, and without moving or copying the vendor's files."
+skills = { "q.shared-libraries" = 1.0 }
+checks = [{ type = "command_result", user = "learner", login = true, command = "/opt/{{vendor}}/bin/report", stdout_equals = "{{vendor}} report ok" }]
+explanation = "ldd shows lib{{vendor}}.so.1 => not found. A file in /etc/ld.so.conf.d/ naming /opt/{{vendor}}/lib, then sudo ldconfig."
+
+[[task]]
+id = "glibc"
+title = "Which glibc?"
+kind = "assessment"
+instructions = "A colleague wants to know whether their binary, built for glibc 2.38, will run here."
+skills = { "q.abi-environment" = 1.0 }
+question = { prompt = "Which glibc version does this server have?", type = "state", state = { command = "ldd --version | head -1 | awk '{print $NF}'" } }
+explanation = "ldd --version (or /lib/x86_64-linux-gnu/libc.so.6 run directly) — a binary that needs a newer glibc symbol version does not start."
+
+[[task]]
+id = "make"
+title = "A Makefile that will not build"
+kind = "assessment"
+instructions = "make in ~/tool fails. Fix the Makefile so that make builds probe."
+skills = { "q.build-systems" = 1.0 }
+checks = [{ type = "command_result", command = "cd ~/tool && rm -f probe && make && ./probe", stdout_contains = "probe ok" }]
+explanation = "'missing separator': recipe lines must start with a tab, not spaces."
+
+[[task]]
+id = "crash"
+title = "Where does it crash?"
+kind = "assessment"
+instructions = "~/crash/crash.c crashes with a segmentation fault. Find out where."
+skills = { "q.debugging-tracing" = 1.0 }
+question = { prompt = "In which function does it crash?", type = "exact", accept = ["{{fn}}", "{{fn}}()"] }
+explanation = "gcc -g -o crash crash.c, then gdb ./crash: run, bt — frame #0 is {{fn}} (line=0x0)."
+
+[[task]]
+id = "git"
+title = "Who changed it?"
+kind = "assessment"
+instructions = "The settings in ~/deploy are kept in git. Someone changed the timeout."
+skills = { "q.version-control" = 1.0 }
+question = { prompt = "Who set the timeout to {{timeout}}?", type = "exact", accept = ["{{who}}"] }
+explanation = "git blame app.conf (or git log -p) shows the author of the line."
+
+[debrief]
+summary = """
+The check covered chapter Q: linking, shared libraries, the glibc ABI, make, gdb and git.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "as an engineer would"
+steps = [
+    { input = ["letslinux"] },
+    "mkdir -p ~/bin && gcc -o ~/bin/hyp ~/src/hyp.c -lm && ~/bin/hyp",
+    "ldd /opt/{{vendor}}/bin/report",
+    "echo /opt/{{vendor}}/lib | sudo tee /etc/ld.so.conf.d/{{vendor}}.conf",
+    "sudo ldconfig",
+    "/opt/{{vendor}}/bin/report",
+    "ldd --version | head -1",
+    { answer_with = "ldd --version | head -1 | awk '{print $NF}'" },
+    "cd ~/tool && make",
+    "printf 'probe: probe.c\\n\\tgcc -Wall -o probe probe.c\\n' > ~/tool/Makefile",
+    "cd ~/tool && make",
+    "cd ~/crash && gcc -g -o crash crash.c",
+    { input = ["run", "bt", "quit"] },
+    "cd ~/crash && gdb -q ./crash",
+    ":answer {{fn}}",
+    "cd ~/deploy && git blame app.conf",
+    ":answer {{who}}",
+]
+
+[[solution]]
+name = "sed, batch gdb, git log"
+steps = [
+    { input = ["letslinux"] },
+    "mkdir -p ~/bin",
+    "gcc ~/src/hyp.c -o ~/bin/hyp -lm",
+    "printf '/opt/{{vendor}}/lib\\n' | sudo tee /etc/ld.so.conf.d/vendor.conf && sudo /sbin/ldconfig",
+    { answer_with = "ldd --version | head -1 | awk '{print $NF}'" },
+    "sed -i 's/^    /\\t/' ~/tool/Makefile",
+    "make -C ~/tool",
+    "gcc -g -o /tmp/crash ~/crash/crash.c && gdb -q -batch -ex run -ex bt /tmp/crash",
+    ":answer {{fn}}()",
+    "git -C ~/deploy log -p -- app.conf | head -20",
+    ":answer {{who}}",
+]
+
+[[counterexample]]
+name = "LD_LIBRARY_PATH and copying"
+steps = [
+    { input = ["letslinux"] },
+    "mkdir -p ~/bin && gcc -o ~/bin/hyp ~/src/hyp.c",
+    "export LD_LIBRARY_PATH=/opt/{{vendor}}/lib",
+    { answer_with = "ldd --version | head -1 | awk '{print $NF}'" },
+    ":answer {{fn}}",
+    ":answer {{who}}",
+]

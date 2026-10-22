@@ -1,0 +1,245 @@
+schema = 1
+
+[mission]
+id = "k06-desired-state"
+title = "Desired State"
+chapter = "K"
+kind = "lesson"
+order = 7
+difficulty = 4
+requires = ["k05-safe-at-night", "l01-ssh-hardening"]
+skills = ["k.config-management-concepts", "k.safe-automation", "l.ssh-hardening"]
+review_for = ["e.idempotency", "l.ssh-hardening"]
+xp = 210
+estimated_minutes = 35
+
+[briefing]
+context = """
+The team describes how its servers should look in an Ansible playbook: ~/baseline/site.yml.
+This server was set up by hand before the playbook existed, and colleagues still "fix"
+things on it directly. Bring it under the playbook's control — and keep it there.
+(sudo password: letslinux)
+"""
+concept = """
+Configuration management describes the desired state ("this package is installed, this
+line is in sshd_config, this user exists") instead of the steps to get there. A tool such as
+Ansible compares the description with reality and changes only what differs: a task reports
+ok (already so) or changed. Running it twice changes nothing the second time — it is
+idempotent. --check --diff shows what would change without touching anything; differences
+that appear later, because somebody changed the server by hand, are drift. ansible-playbook
+-K asks for the sudo password the play's become: true needs.
+"""
+objectives = ["Read a playbook", "Preview changes with --check --diff", "Converge a server", "Detect and repair drift", "Extend the desired state idempotently"]
+
+[environment]
+profile = "debian"
+packages = ["ansible-core"]
+
+[[environment.setup]]
+action = "file"
+path = "~/baseline/site.yml"
+owner = "learner"
+group = "learner"
+content = """---
+- name: Server baseline
+  hosts: localhost
+  become: true
+  vars:
+    banner: "This system is property of Example Corp. Authorized use only."
+
+  tasks:
+    - name: admin tools are installed
+      apt:
+        name: [tree, rsync, sysstat]
+        state: present
+
+    - name: login banner
+      copy:
+        dest: /etc/motd
+        content: "\\{{ banner }}\\n"
+        mode: "0644"
+
+    - name: no root logins over SSH
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: PermitRootLogin no
+      notify: restart ssh
+
+    - name: deploy account
+      user:
+        name: deploy
+        shell: /bin/bash
+
+    - name: ignore ICMP redirects
+      sysctl:
+        name: net.ipv4.conf.all.accept_redirects
+        value: "0"
+        sysctl_file: /etc/sysctl.d/90-baseline.conf
+
+  handlers:
+    - name: restart ssh
+      service:
+        name: ssh
+        state: restarted
+"""
+
+[[environment.setup]]
+action = "run"
+command = "sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && apt-get install -y rsync"
+
+[[task]]
+id = "preview"
+title = "Look before you leap"
+kind = "guided"
+instructions = """
+Read ~/baseline/site.yml, then let Ansible compare it with this server without changing
+anything: `cd ~/baseline && ansible-playbook -K --check --diff site.yml`.
+"""
+skills = { "k.config-management-concepts" = 1.0 }
+question = { prompt = "How many tasks would change something? (changed= in the PLAY RECAP)", type = "state", state = { command = "cd /home/learner/baseline && ansible-playbook --check site.yml | grep -o 'changed=[0-9]*' | cut -d= -f2" } }
+hints = ["The PLAY RECAP at the end counts ok, changed, failed … tasks.", "Handlers count too.", "Read the number after changed= in the recap."]
+explanation = "Check mode is a dry run for the whole server: each changed task (and its --diff) shows where reality differs from the description. Nothing was touched."
+
+[[task]]
+id = "converge"
+title = "Make it so"
+kind = "guided"
+instructions = "Run the playbook for real. Afterwards, a check run must find nothing left to change."
+skills = { "k.config-management-concepts" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "cd /home/learner/baseline && ansible-playbook --check site.yml", stdout_regex = "changed=0 +unreachable=0 +failed=0" },
+]
+hints = ["The same command without --check.", "become: true needs your sudo password: -K.", "cd ~/baseline && ansible-playbook -K site.yml"]
+explanation = "The handler restarted sshd because its configuration changed — and only then. Run the playbook again: everything is ok, nothing changed. That is idempotency."
+
+[[task]]
+id = "drift"
+title = "Somebody was here"
+kind = "troubleshooting"
+instructions = """
+A week later. A colleague "quickly fixed something" on this server by hand. Find out what
+differs from the desired state — without changing anything yet.
+"""
+skills = { "k.config-management-concepts" = 1.0, "l.ssh-hardening" = 0.5 }
+setup = [
+    { action = "clock", seconds = 604800 },
+    { action = "run", command = "sed -i 's/^PermitRootLogin no/PermitRootLogin yes/' /etc/ssh/sshd_config && echo 'Welcome!' > /etc/motd" },
+]
+question = { prompt = "Which two things drifted?", type = "choice", choices = ["The packages and the deploy user", "Root logins over SSH were allowed again, and the login banner was replaced", "The sysctl setting and the packages", "Nothing: check mode reports changed=0"], answer = 1 }
+hints = ["Check mode with --diff is the drift detector.", "Look at the tasks marked changed and their diffs.", "Answer (b)."]
+explanation = "Drift is invisible until something compares — which is why many teams run their playbooks on a schedule (or in check mode with alerting)."
+
+[[task]]
+id = "repair"
+title = "Back to the description"
+kind = "guided"
+instructions = "Bring the server back to the desired state — the way you would on fifty servers, not by hand."
+skills = { "k.config-management-concepts" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "grep -E '^PermitRootLogin' /etc/ssh/sshd_config", stdout_equals = "PermitRootLogin no" },
+    { type = "command_result", user = "root", command = "cd /home/learner/baseline && ansible-playbook --check site.yml", stdout_regex = "changed=0 +unreachable=0 +failed=0" },
+]
+persistent = true
+hints = ["The playbook already describes the right state.", "Run it again.", "cd ~/baseline && ansible-playbook -K site.yml"]
+explanation = "Re-applying the description repaired exactly the two drifted items and left everything else alone."
+
+[[task]]
+id = "extend"
+title = "A new requirement"
+kind = "independent"
+instructions = """
+Backups will be written by the deploy account into /srv/backups: the directory must exist,
+belong to deploy (user and group) and be mode 0750. Add this to the desired state in
+site.yml and apply it — a second run must report no changes.
+"""
+skills = { "k.config-management-concepts" = 1.0, "k.safe-automation" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "stat -c '%U %G %a' /srv/backups", stdout_equals = "deploy deploy 750" },
+    { type = "command_result", user = "root", setup = ["rm -rf /srv/backups"], command = "cd /home/learner/baseline && ansible-playbook site.yml >/dev/null; stat -c '%U %G %a' /srv/backups", stdout_equals = "deploy deploy 750" },
+    { type = "command_result", user = "root", command = "cd /home/learner/baseline && ansible-playbook site.yml", stdout_regex = "changed=0 +unreachable=0 +failed=0" },
+]
+persistent = true
+hints = [
+    "The file module manages directories: path, state: directory, owner, group, mode. Put the task after the user task (deploy must exist first).",
+    "Indentation matters: the new task is a list item at the same level as the others under tasks:. ansible-playbook --syntax-check site.yml finds mistakes.",
+    "    - name: backup directory\n      file:\n        path: /srv/backups\n        state: directory\n        owner: deploy\n        group: deploy\n        mode: \"0750\"",
+]
+explanation = """
+The check deleted /srv/backups on a copy of the machine and ran your playbook: it came back
+exactly as described. Creating the directory by hand would not have survived that test —
+the description is the source of truth, not the server.
+"""
+
+[[task]]
+id = "why"
+title = "Steps or state?"
+kind = "explanation"
+instructions = "A colleague prefers a shell script with mkdir, useradd and sed."
+skills = { "k.config-management-concepts" = 1.0 }
+question = { prompt = "What does the declarative playbook do better?", type = "choice", choices = ["It is faster", "It describes the end state: each run compares and changes only what differs, so it is safe to repeat, shows drift (--check) and documents the server", "It needs no root privileges", "It cannot fail"], answer = 1 }
+hints = ["What happens when you run each twice?", "useradd fails the second time; the user module says ok.", "Answer (b)."]
+explanation = "Scripts describe steps and assume a starting point; declarative tools describe the result and work out the steps from wherever the server is. (A script can be made idempotent too — it is just a lot of work.)"
+
+[debrief]
+summary = """
+Describe the desired state, preview with --check --diff, apply, run again (changed=0 is the
+goal), re-run to repair drift. Extend the description rather than the server; test that it
+recreates what it manages.
+"""
+alternatives = ["ansible-playbook --syntax-check site.yml before running", "Running the playbook from a systemd timer (or ansible-pull) to keep servers converged", "Other tools with the same idea: Puppet, Salt, Chef, NixOS, cloud-init for first boot"]
+pitfalls = ["Fixing servers by hand and forgetting the playbook", "command/shell tasks that report changed every time (use creates:, or a real module)", "YAML indentation errors"]
+next = "Chapter K is complete."
+
+[[solution]]
+name = "check, apply, repair, extend"
+steps = [
+    { input = ["letslinux"] },
+    "cat ~/baseline/site.yml",
+    { input = ["letslinux"] },
+    "cd ~/baseline && ansible-playbook -K --check --diff site.yml",
+    { answer_with = "cd /home/learner/baseline && ansible-playbook --check site.yml | grep -o 'changed=[0-9]*' | cut -d= -f2" },
+    { input = ["letslinux"] },
+    "ansible-playbook -K site.yml",
+    { input = ["letslinux"] },
+    "ansible-playbook -K --check --diff site.yml",
+    ":answer 2",
+    { input = ["letslinux"] },
+    "ansible-playbook -K site.yml",
+    "printf '\\n    - name: backup directory\\n      file:\\n        path: /srv/backups\\n        state: directory\\n        owner: deploy\\n        group: deploy\\n        mode: \"0750\"\\n' > /tmp/task.yml",
+    "sed -i '/shell: \\/bin\\/bash/r /tmp/task.yml' site.yml",
+    { input = ["letslinux"] },
+    "ansible-playbook -K site.yml",
+    ":answer 2",
+]
+
+[[solution]]
+name = "editor"
+steps = [
+    { input = ["letslinux"] },
+    { answer_with = "cd /home/learner/baseline && ansible-playbook --check site.yml | grep -o 'changed=[0-9]*' | cut -d= -f2" },
+    { input = ["letslinux"] },
+    "ansible-playbook -K ~/baseline/site.yml",
+    ":answer 2",
+    { input = ["letslinux"] },
+    "ansible-playbook -K ~/baseline/site.yml",
+    { edit = "---\n- name: Server baseline\n  hosts: localhost\n  become: true\n  vars:\n    banner: \"This system is property of Example Corp. Authorized use only.\"\n\n  tasks:\n    - name: admin tools are installed\n      apt:\n        name: [tree, rsync, sysstat]\n        state: present\n\n    - name: login banner\n      copy:\n        dest: /etc/motd\n        content: \"\\{{ banner }}\\n\"\n        mode: \"0644\"\n\n    - name: no root logins over SSH\n      lineinfile:\n        path: /etc/ssh/sshd_config\n        regexp: '^#?PermitRootLogin'\n        line: PermitRootLogin no\n      notify: restart ssh\n\n    - name: deploy account\n      user:\n        name: deploy\n        shell: /bin/bash\n\n    - name: backups go here\n      file:\n        path: /srv/backups\n        state: directory\n        owner: deploy\n        group: deploy\n        mode: \"0750\"\n\n    - name: ignore ICMP redirects\n      sysctl:\n        name: net.ipv4.conf.all.accept_redirects\n        value: \"0\"\n        sysctl_file: /etc/sysctl.d/90-baseline.conf\n\n  handlers:\n    - name: restart ssh\n      service:\n        name: ssh\n        state: restarted\n" },
+    "nano ~/baseline/site.yml",
+    "ansible-playbook --syntax-check ~/baseline/site.yml",
+    { input = ["letslinux"] },
+    "ansible-playbook -K ~/baseline/site.yml",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "by hand"
+steps = [
+    { input = ["letslinux"] },
+    { answer_with = "cd /home/learner/baseline && ansible-playbook --check site.yml | grep -o 'changed=[0-9]*' | cut -d= -f2" },
+    { input = ["letslinux"] },
+    "ansible-playbook -K ~/baseline/site.yml",
+    ":answer 2",
+    "sudo sed -i 's/^PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config",
+    "sudo mkdir -p /srv/backups && sudo chown deploy:deploy /srv/backups && sudo chmod 750 /srv/backups",
+    ":answer 2",
+]

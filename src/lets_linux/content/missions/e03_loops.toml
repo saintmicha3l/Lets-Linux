@@ -1,0 +1,139 @@
+schema = 1
+
+[mission]
+id = "e03-loops"
+title = "Let the Loop Do It"
+chapter = "E"
+kind = "lesson"
+order = 3
+difficulty = 3
+requires = ["e02-first-script", "c02-pipelines"]
+skills = ["e.loops", "e.read-input"]
+review_for = ["e.variables-expansion", "e.quoting", "e.brace-expansion"]
+xp = 140
+estimated_minutes = 25
+
+[briefing]
+context = """
+Three repetitive chores are waiting: a camera saved photos as .jpeg but the website wants
+.jpg, the reporting team needs twelve weekly report files, and the auditors ask for a command
+that lists the human accounts on a server. Nobody should do any of this one item at a time.
+"""
+concept = """
+for f in ~/photos/*.jpeg; do … "$f" …; done repeats commands for each word — with a glob, for
+each matching file (quote "$f": names can contain spaces). for i in {1..12} or
+for ((i=1; i<=12; i++)) count; printf '%02d' pads numbers. while IFS=: read -r a b c; do …;
+done < file reads a file line by line, splitting each line at IFS (here ':') into variables
+— the last variable gets the rest. ${f%.jpeg}.jpg changes an extension.
+"""
+objectives = ["Loop over files safely", "Loop over numbers", "Read a file line by line with while read", "Split lines into fields"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "files"
+dir = "~/photos"
+count = 6
+prefix = "IMG_00"
+size = 2048
+owner = "learner"
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "cd ~/photos && for f in IMG_00?; do mv \"$f\" \"$f.jpeg\"; done && echo beach > 'holiday beach.jpeg' && echo 'shot list' > notes.txt"
+
+[[environment.setup]]
+action = "user"
+name = "alice"
+uid = 1001
+
+[[environment.setup]]
+action = "user"
+name = "bob"
+uid = 1002
+
+[[task]]
+id = "rename"
+title = ".jpeg → .jpg"
+kind = "independent"
+instructions = "Rename every .jpeg file in ~/photos to .jpg (keep the rest of each name). Careful: one name contains a space."
+skills = { "e.loops" = 1.0, "e.quoting" = 0.5 }
+checks = [
+    { type = "tree_count", path = "~/photos", glob = "*.jpeg", count = 0 },
+    { type = "tree_count", path = "~/photos", glob = "*.jpg", count = 7 },
+    { type = "path_exists", path = "~/photos/holiday beach.jpg" },
+    { type = "path_exists", path = "~/photos/notes.txt" },
+]
+hints = ["for f in ~/photos/*.jpeg; do … done visits each file.", "${f%.jpeg} is the name without the extension; quote everything: mv \"$f\" \"${f%.jpeg}.jpg\"", "for f in ~/photos/*.jpeg; do mv \"$f\" \"${f%.jpeg}.jpg\"; done"]
+explanation = "The glob expanded to seven names, and \"$f\" kept 'holiday beach.jpeg' as one argument. Without quotes, mv would have received 'holiday' and 'beach.jpeg'."
+
+[[task]]
+id = "weeks"
+title = "Twelve files"
+kind = "independent"
+instructions = "Create ~/reports/week-01.txt to ~/reports/week-12.txt (two-digit numbers). Each file contains one line: 'Week N report' with N without the leading zero."
+skills = { "e.loops" = 1.0 }
+checks = [
+    { type = "tree_count", path = "~/reports", glob = "week-*.txt", count = 12 },
+    { type = "file_equals", path = "~/reports/week-01.txt", content = "Week 1 report\n" },
+    { type = "file_equals", path = "~/reports/week-12.txt", content = "Week 12 report\n" },
+]
+hints = ["Loop over the numbers 1 to 12; printf '%02d' gives the two-digit form.", "for i in {1..12}; do n=$(printf '%02d' \"$i\"); echo \"Week $i report\" > ~/reports/week-$n.txt; done", "mkdir -p ~/reports; for i in {1..12}; do echo \"Week $i report\" > ~/reports/week-$(printf '%02d' $i).txt; done"]
+explanation = "One loop, twelve files. {01..12} would also give padded numbers, but then 'Week 01' would need the zero removed again."
+
+[[task]]
+id = "humans"
+title = "Human accounts"
+kind = "independent"
+instructions = "Write the executable script ~/bin/humans.sh: it reads /etc/passwd line by line and prints the login name of every account with a UID of at least 1000 — except nobody (65534) — one per line, in file order."
+skills = { "e.read-input" = 1.0, "e.loops" = 1.0 }
+checks = [
+    { type = "command_result", command = "~/bin/humans.sh", status = 0, stdout_equals = "learner\nalice\nbob" },
+    { type = "command_result", user = "root", setup = ["useradd -u 1500 carol"], command = "/home/learner/bin/humans.sh", stdout_equals = "learner\nalice\nbob\ncarol" },
+]
+hints = [
+    "while IFS=: read -r name pass uid rest; do … done < /etc/passwd splits each line at the colons.",
+    "Inside the loop: if [ \"$uid\" -ge 1000 ] && [ \"$uid\" -ne 65534 ]; then echo \"$name\"; fi",
+    "printf '#!/bin/bash\\nwhile IFS=: read -r name pass uid rest; do\\n    if [ \"$uid\" -ge 1000 ] && [ \"$uid\" -ne 65534 ]; then\\n        echo \"$name\"\\n    fi\\ndone < /etc/passwd\\n' > ~/bin/humans.sh; chmod +x ~/bin/humans.sh",
+]
+explanation = "The check also ran your script after adding a new account: it reads the data instead of hard-coding names. (awk -F: '$3 >= 1000 && $3 != 65534 {print $1}' /etc/passwd does the same in one line.)"
+
+[debrief]
+summary = """
+for over globs (quote "$f"), for over numbers ({1..N}, ((i=…))), while IFS=… read -r over lines
+of a file. Loops plus parameter expansion replace a lot of manual work.
+"""
+alternatives = ["rename 's/\\.jpeg$/.jpg/' *.jpeg (Perl rename, not everywhere)", "seq -w 1 12 prints 01 … 12", "awk for field-based reports"]
+pitfalls = ["for f in $(ls) breaks on spaces — use globs.", "cat file | while read … runs the loop in a subshell: variables set inside are lost afterwards.", "Forgetting -r: read would eat backslashes."]
+next = "Next: case statements and checking input."
+
+[[solution]]
+name = "for and while"
+steps = [
+    "for f in ~/photos/*.jpeg; do mv \"$f\" \"${f%.jpeg}.jpg\"; done",
+    "ls ~/photos",
+    "mkdir -p ~/reports; for i in {1..12}; do echo \"Week $i report\" > ~/reports/week-$(printf '%02d' $i).txt; done",
+    "mkdir -p ~/bin",
+    "printf '#!/bin/bash\\nwhile IFS=: read -r name pass uid rest; do\\n    if [ \"$uid\" -ge 1000 ] && [ \"$uid\" -ne 65534 ]; then\\n        echo \"$name\"\\n    fi\\ndone < /etc/passwd\\n' > ~/bin/humans.sh",
+    "chmod +x ~/bin/humans.sh; ~/bin/humans.sh",
+]
+
+[[solution]]
+name = "C-style loop and awk"
+steps = [
+    "cd ~/photos; for f in *.jpeg; do mv -- \"$f\" \"${f/%.jpeg/.jpg}\"; done; cd",
+    "mkdir reports; for ((i = 1; i <= 12; i++)); do printf 'Week %d report\\n' $i > reports/week-$(printf %02d $i).txt; done",
+    "mkdir bin",
+    { edit = "#!/bin/sh\nawk -F: '$3 >= 1000 && $3 != 65534 { print $1 }' /etc/passwd\n" },
+    "nano bin/humans.sh",
+    "chmod 755 bin/humans.sh",
+]
+
+[[counterexample]]
+name = "unquoted loop and hard-coded names"
+steps = [
+    "for f in $(ls ~/photos/*.jpeg); do mv $f ${f%.jpeg}.jpg; done",
+    "mkdir -p ~/bin; printf '#!/bin/bash\\necho learner\\necho alice\\necho bob\\n' > ~/bin/humans.sh; chmod +x ~/bin/humans.sh",
+]

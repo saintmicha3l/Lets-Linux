@@ -1,0 +1,153 @@
+schema = 1
+
+[mission]
+id = "c03-grep"
+title = "Needles and Haystacks"
+chapter = "C"
+kind = "lesson"
+order = 3
+difficulty = 3
+requires = ["c02-pipelines"]
+skills = ["c.grep-basics", "c.regex-basics"]
+xp = 90
+estimated_minutes = 16
+
+[briefing]
+context = """
+The overnight batch failed and the system log is thousands of lines long. Security also
+suspects someone left plaintext passwords in the configs directory. grep finds both.
+"""
+concept = """
+grep PATTERN FILE prints matching lines. Useful options: -i ignore case, -v invert, -c count,
+-n line numbers, -r search directories, -l list matching files only, -E extended regular
+expressions. Regular expressions describe text: ^ start of line, $ end, . any character,
+[0-9] a digit, * zero or more of the previous item.
+"""
+objectives = ["Search, count and invert matches", "Search directory trees", "Use anchors and character classes"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+total = { range = [400, 520] }
+
+[[environment.setup]]
+action = "run"
+command = '''
+for i in $(seq 1 {{total}}); do
+  h=$((8 + i * 4 / {{total}}))
+  case $((RANDOM % 12)) in
+    0) lvl=ERROR; msg="disk quota exceeded for job $i";;
+    1) lvl=error; msg="retrying connection (attempt $((RANDOM % 5)))";;
+    2|3) lvl=WARN; msg="slow query took $((RANDOM % 900))ms";;
+    *) lvl=INFO; msg="job $i finished";;
+  esac
+  printf '%02d:%02d:%02d %s %s\n' $h $((i % 60)) $((RANDOM % 60)) $lvl "$msg"
+done > /home/learner/system.log
+sed -i "$(( {{total}} / 2 ))s/.*/1$(( {{total}} / 4 % 10 )):30:00 CRITICAL batch aborted: out of memory/" /home/learner/system.log
+mkdir -p /home/learner/configs/app /home/learner/configs/db
+printf 'user=app\npassword=hunter2\n' > /home/learner/configs/app/app.ini
+printf 'host=db1\nport=5432\n' > /home/learner/configs/db/db.ini
+printf '# set via vault\npassword_file=/run/secrets/db\n' > /home/learner/configs/db/secret.ini
+printf 'admin_password=changeme\n' > /home/learner/configs/legacy.conf
+chown -R learner:learner /home/learner/system.log /home/learner/configs
+'''
+
+[[task]]
+id = "find"
+title = "Find the errors"
+kind = "guided"
+instructions = "Show the lines of system.log that contain ERROR."
+skills = { "c.grep-basics" = 1.0 }
+checks = [{ type = "output_contains", text = "ERROR disk quota exceeded", command = "grep" }]
+hints = ["grep PATTERN FILE.", "The pattern is ERROR.", "Type: grep ERROR system.log"]
+explanation = "grep printed only the matching lines. Matching is case-sensitive by default."
+
+[[task]]
+id = "icount"
+title = "Count, ignoring case"
+kind = "independent"
+instructions = "Some messages say ERROR and others error. Count all lines containing 'error' in any case."
+skills = { "c.grep-basics" = 1.0 }
+question = { prompt = "How many lines contain 'error' (any case)?", type = "state", state = { command = "grep -ci error /home/learner/system.log" } }
+hints = ["One option ignores case, another counts.", "-i and -c can be combined.", "Run: grep -ci error system.log"]
+explanation = "-c counts matching lines; -i makes ERROR, Error and error equal."
+
+[[task]]
+id = "invert"
+title = "Everything but INFO"
+kind = "independent"
+instructions = "Count the lines that do NOT contain INFO."
+skills = { "c.grep-basics" = 1.0 }
+question = { prompt = "How many lines are not INFO lines?", type = "state", state = { command = "grep -vc INFO /home/learner/system.log" } }
+hints = ["grep can invert the match.", "-v selects non-matching lines.", "Run: grep -vc INFO system.log"]
+explanation = "-v inverts the selection: handy for filtering out noise, e.g. grep -v '^#' to drop comments."
+
+[[task]]
+id = "critical"
+title = "Where did it break?"
+kind = "independent"
+instructions = "Find the line number of the CRITICAL message."
+skills = { "c.grep-basics" = 1.0 }
+question = { prompt = "On which line of system.log is the CRITICAL message?", type = "state", state = { command = "grep -n CRITICAL /home/learner/system.log | cut -d: -f1" } }
+hints = ["grep can print line numbers.", "-n prefixes each match with its line number.", "Run: grep -n CRITICAL system.log"]
+explanation = "grep -n shows where a match is, so you can look at the lines around it (grep -C 3 shows context)."
+
+[[task]]
+id = "anchor"
+title = "Anchor the pattern"
+kind = "independent"
+instructions = "Count the log lines written during the 10 o'clock hour — lines that START with 10:."
+skills = { "c.regex-basics" = 1.0 }
+question = { prompt = "How many lines start with 10: ?", type = "state", state = { command = "grep -c '^10:' /home/learner/system.log" } }
+hints = ["A plain 10: would also match minutes and seconds like 08:10:22.", "^ anchors a pattern to the start of the line.", "Run: grep -c '^10:' system.log"]
+explanation = "^ and $ anchor patterns. Without ^, '10:' also matched times such as 09:10:45."
+
+[[task]]
+id = "secrets"
+title = "Plaintext passwords"
+kind = "independent"
+instructions = "Find which files anywhere under ~/configs contain a line starting with password= or ending a key name in _password=."
+skills = { "c.grep-basics" = 1.0, "c.regex-basics" = 0.5, "d.credential-hygiene" = 0.3 }
+question = { prompt = "How many files under ~/configs contain a plaintext password assignment (password= or *_password=)?", type = "number", accept = ["2"] }
+hints = ["Search the whole directory tree and list only file names.", "grep -rlE '(^|_)password=' ~/configs  — password_file= must not count.", "Two files: configs/app/app.ini and configs/legacy.conf."]
+explanation = "grep -r searches recursively and -l lists file names. A careful pattern avoided the false positive password_file=."
+
+[debrief]
+summary = """
+grep finds lines; -i, -v, -c, -n, -r and -l adapt it to almost any search. Anchors and
+character classes make patterns precise enough to avoid false positives.
+"""
+alternatives = ["grep -E 'ERROR|CRITICAL' system.log shows both", "grep -C 2 CRITICAL system.log shows context lines", "journalctl -g pattern searches the systemd journal"]
+pitfalls = ["Unquoted patterns are subject to shell globbing: quote them.", "grep -r follows the current directory if you forget the path."]
+next = "Next: working with columns."
+
+[[solution]]
+name = "grep options"
+steps = [
+    "grep ERROR system.log",
+    "grep -ci error system.log",
+    { answer_with = "grep -ci error /home/learner/system.log" },
+    "grep -vc INFO system.log",
+    { answer_with = "grep -vc INFO /home/learner/system.log" },
+    "grep -n CRITICAL system.log",
+    { answer_with = "grep -n CRITICAL /home/learner/system.log | cut -d: -f1" },
+    "grep -c '^10:' system.log",
+    { answer_with = "grep -c '^10:' /home/learner/system.log" },
+    "grep -rlE '(^|_)password=' configs",
+    ":answer 2",
+]
+
+[[solution]]
+name = "pipelines"
+steps = [
+    "grep 'ERROR' ~/system.log | head",
+    { answer_with = "grep -i error /home/learner/system.log | wc -l" },
+    { answer_with = "grep -v INFO /home/learner/system.log | wc -l" },
+    { answer_with = "awk '/CRITICAL/ {print NR}' /home/learner/system.log" },
+    { answer_with = "grep '^10:' /home/learner/system.log | wc -l" },
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "unanchored and too broad"
+steps = ["grep ERROR system.log", { answer_with = "grep -c error /home/learner/system.log" }]

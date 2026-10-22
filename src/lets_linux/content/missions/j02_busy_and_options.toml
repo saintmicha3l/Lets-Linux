@@ -1,0 +1,179 @@
+schema = 1
+
+[mission]
+id = "j02-busy-and-options"
+title = "Target Is Busy"
+chapter = "J"
+kind = "lesson"
+order = 2
+difficulty = 4
+requires = ["j01-new-disk", "g02-signals"]
+skills = ["j.mount-umount", "j.mount-options"]
+review_for = ["g.signals-kill", "j.fstab-persistence"]
+xp = 150
+estimated_minutes = 25
+
+[briefing]
+context = """
+Two storage chores today. The backup disk must be detached so the provider can move it, and
+the security team wants the upload area of the web application hardened: nothing uploaded
+there may ever be executed. (sudo password: letslinux)
+"""
+concept = """
+A filesystem cannot be unmounted while something uses it: a process whose working
+directory is inside it, an open file, an active swap file. umount then says "target is
+busy"; sudo lsof MOUNTPOINT or sudo fuser -vm MOUNTPOINT name the culprits. Mount options
+change how a filesystem behaves: noexec forbids running programs from it, nosuid ignores
+setuid bits, nodev ignores device files, ro makes it read-only. Put them in /etc/fstab (the
+fourth field) and apply them now with mount -o remount MOUNTPOINT, which re-reads fstab.
+"""
+objectives = ["Diagnose 'target is busy'", "End what holds a filesystem and unmount it", "Harden a mount with noexec, nosuid and nodev", "Verify the effect"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+tool = { choices = ["rsync", "tar", "borg"] }
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "8G"
+partitions = [
+    { size = "4G", fs = "ext4", label = "backup", mount = "/mnt/backup" },
+    { size = "rest", fs = "ext4", label = "uploads", mount = "/srv/uploads", fstab = true },
+]
+
+[[environment.setup]]
+action = "file"
+path = "/mnt/backup/{{tool}}-weekly.log"
+content = "weekly backup started\n"
+
+[[environment.setup]]
+action = "process"
+comm = "{{tool}}"
+argv = ["/usr/bin/{{tool}}", "--weekly", "/srv", "/mnt/backup/weekly"]
+user = "root"
+cwd = "/mnt/backup"
+open = ["/mnt/backup/{{tool}}-weekly.log"]
+age_minutes = 4300
+state = "S"
+pid_var = "tool_pid"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/uploads/avatar-17.sh"
+mode = "0755"
+content = "#!/bin/sh\necho \"pwned: running as $(whoami)\"\n"
+
+[[task]]
+id = "try"
+title = "Detach the backup disk"
+kind = "guided"
+instructions = "Unmount /mnt/backup. (It will not work yet — read the message.)"
+skills = { "j.mount-umount" = 1.0 }
+checks = [{ type = "command_used", command = "umount", failed = true }]
+hints = ["umount takes the mount point (or the device).", "As root: sudo umount /mnt/backup", "sudo umount /mnt/backup"]
+explanation = "\"target is busy\": the kernel refuses to detach a filesystem that is in use."
+
+[[task]]
+id = "who"
+title = "Who is using it?"
+kind = "troubleshooting"
+instructions = "Find the process that keeps /mnt/backup busy."
+skills = { "j.mount-umount" = 1.0 }
+question = { prompt = "Which program (name or PID) uses /mnt/backup?", type = "exact", accept = ["{{tool}}", "{{tool_pid}}"] }
+hints = ["lsof and fuser list the processes using a file or a filesystem — as root, to see other users' processes.", "sudo lsof /mnt/backup  or  sudo fuser -vm /mnt/backup", "It is {{tool}} (PID {{tool_pid}}): its working directory and its log file are on the disk."]
+explanation = "lsof shows two uses: the process's working directory (cwd) and an open log file (FD 3w)."
+
+[[task]]
+id = "detach"
+title = "Free it and unmount"
+kind = "troubleshooting"
+instructions = "The {{tool}} job is a weekly backup that hung three days ago. Stop it and unmount /mnt/backup."
+skills = { "j.mount-umount" = 1.0, "g.signals-kill" = 0.5 }
+checks = [
+    { type = "process_absent", comm = "{{tool}}" },
+    { type = "not", check = { type = "mounted", target = "/mnt/backup" } },
+]
+persistent = true
+hints = ["kill sends SIGTERM; the process belongs to root.", "sudo kill {{tool_pid}} — then umount again.", "sudo kill {{tool_pid}} && sudo umount /mnt/backup"]
+explanation = "With the process gone nothing uses the filesystem any more. (umount -l would have detached it lazily, but hiding a problem is rarely the right fix.)"
+
+[[task]]
+id = "harden"
+title = "Harden the upload area"
+kind = "independent"
+instructions = "Change the /etc/fstab entry of /srv/uploads so that it is mounted with noexec, nosuid and nodev, and apply the new options without unmounting."
+skills = { "j.mount-options" = 1.0, "j.fstab-persistence" = 0.5 }
+checks = [
+    { type = "fstab_entry", target = "/srv/uploads", options = ["noexec", "nosuid", "nodev"] },
+    { type = "fstab_valid" },
+    { type = "mounted", target = "/srv/uploads", options = ["noexec", "nosuid", "nodev"] },
+    { type = "after_reboot", checks = [{ type = "mounted", target = "/srv/uploads", options = ["noexec", "nosuid", "nodev"] }] },
+]
+persistent = true
+hints = ["The options are the fourth field of the fstab line (comma-separated, no spaces).", "Replace defaults with defaults,noexec,nosuid,nodev (sudo nano /etc/fstab, or sed -i), then sudo mount -o remount /srv/uploads.", "sudo sed -i '/\\/srv\\/uploads/s/defaults/defaults,noexec,nosuid,nodev/' /etc/fstab && sudo mount -o remount /srv/uploads && findmnt /srv/uploads"]
+explanation = "findmnt /srv/uploads shows the new options; the fstab line keeps them across reboots."
+
+[[task]]
+id = "verify"
+title = "Does it work?"
+kind = "prediction"
+instructions = "Someone uploaded /srv/uploads/avatar-17.sh, an executable script. Try to run it."
+skills = { "j.mount-options" = 1.0 }
+question = { prompt = "What happens when you run /srv/uploads/avatar-17.sh now?", type = "choice", choices = ["It runs, because its x bit is set", "Permission denied, although the x bit is set", "It runs, but only as root"], answer = 1 }
+hints = ["Run it: /srv/uploads/avatar-17.sh", "noexec applies to everybody, root included.", "(b)"]
+explanation = "noexec overrides the file's permission bits for every user. (sh /srv/uploads/avatar-17.sh still works — noexec stops direct execution, not interpreters reading a file; it is one layer of defence, not the only one.)"
+
+[debrief]
+summary = """
+"target is busy" → find the user (lsof MOUNTPOINT, fuser -vm MOUNTPOINT), fix the cause, then
+unmount. Mount options belong in fstab; mount -o remount applies them immediately.
+"""
+alternatives = ["fuser -km /mnt/backup kills every process using the filesystem (use with care)", "Editing fstab with sudoedit /etc/fstab", "mount -o remount,noexec,nosuid,nodev /srv/uploads applies options for now only — the fstab line is still needed"]
+pitfalls = ["Your own shell sitting in the mount point (cd / first).", "umount -l: the filesystem disappears from view but stays in use until the last user ends.", "Forgetting to remount: the fstab change alone only takes effect at the next mount."]
+next = "Next: a filesystem fills up."
+
+[[solution]]
+name = "lsof, kill, sed"
+steps = [
+    { input = ["letslinux"] },
+    "sudo umount /mnt/backup",
+    "sudo lsof /mnt/backup",
+    ":answer {{tool}}",
+    "sudo kill {{tool_pid}}",
+    "sudo umount /mnt/backup",
+    "sudo sed -i '/\\/srv\\/uploads/s/defaults/defaults,noexec,nosuid,nodev/' /etc/fstab",
+    "sudo mount -o remount /srv/uploads",
+    "findmnt /srv/uploads",
+    "/srv/uploads/avatar-17.sh",
+    ":answer b",
+]
+
+[[solution]]
+name = "fuser and an editor"
+steps = [
+    { input = ["letslinux"] },
+    "cd /mnt/backup",
+    "sudo umount /mnt/backup",
+    "cd",
+    "sudo fuser -vm /mnt/backup",
+    ":answer {{tool_pid}}",
+    "sudo fuser -km /mnt/backup",
+    "sudo umount /dev/sdb1",
+    "grep uploads /etc/fstab",
+    "sudo sh -c 'sed -i \"s|\\(/srv/uploads *ext4 *\\)defaults|\\1rw,noexec,nosuid,nodev|\" /etc/fstab'",
+    "sudo findmnt --verify",
+    "sudo mount -o remount /srv/uploads",
+    ":answer Permission denied, although the x bit is set",
+]
+
+[[counterexample]]
+name = "lazy unmount and options for now only"
+steps = [
+    { input = ["letslinux"] },
+    "sudo umount -l /mnt/backup",
+    ":answer {{tool}}",
+    "sudo mount -o remount,noexec,nosuid,nodev /srv/uploads",
+    ":answer b",
+]

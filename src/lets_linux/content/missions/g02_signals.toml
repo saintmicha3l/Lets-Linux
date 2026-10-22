@@ -1,0 +1,206 @@
+schema = 1
+
+[mission]
+id = "g02-signals"
+title = "Sending Signals"
+chapter = "G"
+kind = "lesson"
+order = 2
+difficulty = 3
+requires = ["g01-what-is-running", "d04-sudo-and-accounts"]
+skills = ["g.signals-kill", "g.process-states"]
+xp = 100
+estimated_minutes = 18
+
+[briefing]
+context = """
+Several of your own jobs are misbehaving on the build server, and one stuck process belongs
+to a colleague. Each needs a different kind of nudge: a polite request to quit, a pause, a
+resume, or — as a last resort — an order that cannot be refused.
+"""
+concept = """
+Processes are controlled with signals. kill PID sends SIGTERM (15): "please terminate", which a
+program may catch to clean up — or ignore. SIGKILL (9) cannot be caught or ignored: the kernel
+removes the process at once, with no clean-up. SIGSTOP (19) pauses a process (state T) and
+SIGCONT (18) resumes it. pkill and killall signal processes by name. You may only signal your
+own processes unless you are root.
+"""
+objectives = ["Terminate processes politely and forcefully", "Pause and resume a process", "Signal by name", "Respect ownership"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+colleague = { choices = ["ines", "omar", "lena"] }
+
+[[environment.setup]]
+action = "user"
+name = "{{colleague}}"
+
+[[environment.setup]]
+action = "process"
+comm = "stuck-export"
+argv = ["/home/learner/bin/stuck-export", "--to", "/srv/export"]
+user = "learner"
+pid_var = "export_pid"
+
+[[environment.setup]]
+action = "process"
+comm = "logwatch"
+argv = ["/home/learner/bin/logwatch", "--follow"]
+user = "learner"
+ignore = ["TERM", "INT", "HUP"]
+pid_var = "watch_pid"
+
+[[environment.setup]]
+action = "process"
+comm = "encoder"
+argv = ["/home/learner/bin/encoder", "video.mkv"]
+user = "learner"
+state = "R"
+cpu = 74.0
+pid_var = "enc_pid"
+
+[[environment.setup]]
+action = "process"
+comm = "render"
+argv = ["/home/learner/bin/render", "--frame", "1"]
+user = "learner"
+cpu = 12.0
+
+[[environment.setup]]
+action = "process"
+comm = "render"
+argv = ["/home/learner/bin/render", "--frame", "2"]
+user = "learner"
+cpu = 11.0
+
+[[environment.setup]]
+action = "process"
+comm = "render"
+argv = ["/home/learner/bin/render", "--frame", "3"]
+user = "learner"
+cpu = 13.0
+
+[[environment.setup]]
+action = "process"
+comm = "dbdump"
+argv = ["/usr/bin/dbdump", "--all"]
+user = "{{colleague}}"
+pid_var = "dump_pid"
+
+[[task]]
+id = "list"
+title = "Know your signals"
+kind = "guided"
+instructions = "List the signal names and numbers with `kill -l`."
+skills = { "g.signals-kill" = 1.0 }
+checks = [{ type = "output_contains", text = "SIGKILL", command = "kill" }]
+hints = ["kill has a list option.", "-l lists signals.", "Type: kill -l"]
+explanation = "Signals have numbers and names; kill -TERM, kill -15 and kill -s TERM are the same."
+
+[[task]]
+id = "term"
+title = "Ask politely"
+kind = "guided"
+instructions = "stuck-export (PID {{export_pid}}) hangs. End it with the default signal, SIGTERM."
+skills = { "g.signals-kill" = 1.0 }
+checks = [
+    { type = "process_absent", pid = "{{export_pid}}" },
+    { type = "not", check = { type = "command_used", command = ["kill", "pkill", "killall"], args_regex = "(^|\\s)-(9|KILL|SIGKILL|s\\s*(9|KILL|SIGKILL))\\b", scope = "history" } },
+]
+hints = ["kill without a signal option sends SIGTERM.", "kill PID", "Type: kill {{export_pid}}"]
+explanation = "SIGTERM lets a program close files and remove temporary data before exiting. Always try it first."
+
+[[task]]
+id = "stubborn"
+title = "When asking is not enough"
+kind = "independent"
+instructions = "logwatch (PID {{watch_pid}}) ignores SIGTERM. Try kill first and confirm it is still there, then make it go."
+skills = { "g.signals-kill" = 1.0, "g.process-states" = 0.5 }
+checks = [{ type = "process_absent", pid = "{{watch_pid}}" }, { type = "command_used", command = ["kill", "pkill", "killall"], args_regex = "-(9|KILL|SIGKILL)\\b|-s\\s*(9|KILL|SIGKILL)", scope = "history" }]
+hints = ["A program may catch or ignore SIGTERM. One signal cannot be caught.", "SIGKILL is number 9.", "Type: kill -9 {{watch_pid}}"]
+explanation = "SIGKILL always works (for processes you may signal), but the program gets no chance to clean up: use it last."
+
+[[task]]
+id = "pause"
+title = "Pause the encoder"
+kind = "independent"
+instructions = "encoder (PID {{enc_pid}}) is hogging the CPU, but its work must not be lost. Pause it without ending it."
+skills = { "g.signals-kill" = 1.0, "g.process-states" = 1.0 }
+checks = [{ type = "process_running", pid = "{{enc_pid}}", state = "T" }]
+hints = ["There is a signal that stops a process without killing it.", "SIGSTOP pauses; ps shows state T.", "Type: kill -STOP {{enc_pid}}"]
+explanation = "A stopped process keeps its memory and open files but receives no CPU time. STAT T in ps marks it."
+
+[[task]]
+id = "resume"
+title = "Resume it"
+kind = "independent"
+instructions = "The rush is over. Let the encoder continue where it left off."
+skills = { "g.signals-kill" = 1.0, "g.process-states" = 1.0 }
+checks = [{ type = "process_running", pid = "{{enc_pid}}" }, { type = "not", check = { type = "process_running", pid = "{{enc_pid}}", state = "T" } }]
+hints = ["The opposite of SIGSTOP.", "SIGCONT resumes a stopped process.", "Type: kill -CONT {{enc_pid}}"]
+explanation = "SIGCONT continues a stopped process. Ctrl+Z and fg/bg use SIGTSTP and SIGCONT behind the scenes."
+
+[[task]]
+id = "byname"
+title = "All at once"
+kind = "independent"
+instructions = "Three render processes are running. End all of them with a single command, without looking up their PIDs."
+skills = { "g.signals-kill" = 1.0 }
+checks = [{ type = "process_absent", comm = "render" }]
+hints = ["Some commands select processes by name.", "pkill render or killall render.", "Type: pkill render"]
+explanation = "pkill and killall signal every matching process. Be precise: pkill matches substrings, so pkill re would match render too."
+
+[[task]]
+id = "others"
+title = "Not yours"
+kind = "independent"
+instructions = "{{colleague}} asked you to stop their stuck dbdump (PID {{dump_pid}}). Try it as yourself, read the error, then do it properly. (sudo password: letslinux)"
+skills = { "g.signals-kill" = 1.0, "d.sudo-least-privilege" = 0.5 }
+checks = [{ type = "process_absent", pid = "{{dump_pid}}" }]
+hints = ["kill reports 'Operation not permitted' for other users' processes.", "Administrators use sudo to signal any process.", "Type: sudo kill {{dump_pid}}"]
+explanation = "Only a process's owner and root may signal it. Ask first: the owner may know why it is still running."
+
+[debrief]
+summary = """
+SIGTERM asks, SIGKILL forces, SIGSTOP/SIGCONT pause and resume; pkill/killall work by name;
+ownership limits who may signal what.
+"""
+alternatives = ["kill -s TERM PID", "killall -STOP encoder", "pkill -u learner render"]
+pitfalls = ["kill -9 as a first resort can corrupt files a program was writing.", "pkill matches part of the name; check with pgrep first."]
+next = "Next: job control in the shell."
+
+[[solution]]
+name = "by PID"
+steps = [
+    "kill -l",
+    "kill {{export_pid}}",
+    "kill {{watch_pid}}",
+    "ps -p {{watch_pid}}",
+    "kill -9 {{watch_pid}}",
+    "kill -STOP {{enc_pid}}",
+    "kill -CONT {{enc_pid}}",
+    "pkill render",
+    "kill {{dump_pid}}",
+    { input = ["letslinux"] },
+    "sudo kill {{dump_pid}}",
+]
+
+[[solution]]
+name = "by name and number"
+steps = [
+    "kill -l | head -3",
+    "pkill stuck-export",
+    "kill -s TERM {{watch_pid}}",
+    "kill -s KILL {{watch_pid}}",
+    "kill -19 {{enc_pid}}",
+    "ps -o stat= -p {{enc_pid}}",
+    "kill -18 {{enc_pid}}",
+    "killall render",
+    { input = ["letslinux"] },
+    "sudo pkill dbdump",
+]
+
+[[counterexample]]
+name = "kill -9 everything"
+steps = ["kill -l", "kill -9 {{export_pid}}", "kill -9 {{watch_pid}}"]

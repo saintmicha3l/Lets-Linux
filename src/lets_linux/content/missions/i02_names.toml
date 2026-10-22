@@ -1,0 +1,163 @@
+schema = 1
+
+[mission]
+id = "i02-names"
+title = "Names and Addresses"
+chapter = "I"
+kind = "lesson"
+order = 2
+difficulty = 3
+requires = ["i01-network-basics", "f01-installing-software"]
+skills = ["i.dns-resolution"]
+xp = 110
+estimated_minutes = 18
+
+[briefing]
+context = """
+Developers swear that "db.example.lan points to the wrong server" — but only on this machine.
+To settle it you need to see how names become addresses here: through /etc/hosts and through
+DNS, which are not the same thing. (sudo password: letslinux)
+"""
+concept = """
+Programs ask the system resolver, which follows /etc/nsswitch.conf ("hosts: files dns"):
+first /etc/hosts, then the DNS servers in /etc/resolv.conf. getent hosts NAME shows what
+programs get. DNS tools (dig, host, nslookup) ask DNS servers directly and ignore /etc/hosts.
+DNS has record types: A (IPv4), AAAA (IPv6), CNAME (alias), MX (mail), PTR (reverse).
+"""
+objectives = ["Install and use DNS tools", "Compare the system resolver with DNS", "Read A, CNAME, MX and PTR records", "Fix a stale /etc/hosts entry"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+wrong = { choices = ["10.0.2.31", "10.0.2.33", "10.0.2.39"] }
+
+[[environment.setup]]
+action = "file"
+path = "/etc/hosts"
+content = """127.0.0.1	localhost
+127.0.1.1	lab.example.lan	lab
+
+# temporary: database migration test (2024)
+{{wrong}}	db.example.lan db
+
+# The following lines are desirable for IPv6 capable hosts
+::1     localhost ip6-localhost ip6-loopback
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+"""
+
+[[task]]
+id = "install"
+title = "Get the tools"
+kind = "guided"
+instructions = "dig is not installed on this minimal Debian system. Find out which package provides it (the command-not-found message does not tell you here) and install it."
+skills = { "f.apt-basics" = 0.5 }
+checks = [{ type = "package_state", name = "bind9-dnsutils", state = "installed" }]
+hints = ["apt search dig is noisy; the BIND tools are in a dnsutils package.", "apt search dnsutils", "Type: sudo apt install bind9-dnsutils"]
+explanation = "bind9-dnsutils provides dig, host and nslookup (the older package name dnsutils is a transitional alias on Debian 12)."
+
+[[task]]
+id = "programs"
+title = "What programs see"
+kind = "guided"
+instructions = "Ask the system resolver for db.example.lan with `getent hosts db.example.lan`."
+skills = { "i.dns-resolution" = 1.0 }
+question = { prompt = "Which address do programs on this machine get for db.example.lan?", type = "exact", accept = ["{{wrong}}"] }
+hints = ["getent uses the same path as ping or curl.", "getent hosts db.example.lan", "{{wrong}}"]
+explanation = "getent follows nsswitch.conf, so it shows exactly what applications will use."
+
+[[task]]
+id = "dns"
+title = "What DNS says"
+kind = "independent"
+instructions = "Now ask the DNS server directly."
+skills = { "i.dns-resolution" = 1.0 }
+question = { prompt = "Which address does DNS return for db.example.lan?", type = "exact", accept = ["10.0.2.30"] }
+hints = ["dig asks DNS servers and ignores /etc/hosts.", "dig +short db.example.lan", "10.0.2.30"]
+explanation = "The two answers differ: an entry in /etc/hosts overrides DNS for every program on this machine."
+
+[[task]]
+id = "why"
+title = "Why the difference?"
+kind = "explanation"
+instructions = "Look at /etc/nsswitch.conf and /etc/hosts."
+skills = { "i.dns-resolution" = 1.0 }
+question = { prompt = "Why do programs get a different address than DNS?", type = "choice", choices = ["The DNS server is broken", "A stale entry in /etc/hosts is consulted before DNS (hosts: files dns)", "The DNS cache is stale", "getent is buggy"], answer = 1 }
+hints = ["What does 'hosts: files dns' mean?", "files = /etc/hosts, consulted first.", "The answer is (b)."]
+explanation = "Forgotten /etc/hosts entries are a classic cause of 'it only fails on this one machine'."
+
+[[task]]
+id = "fix"
+title = "Remove the stale entry"
+kind = "independent"
+instructions = "Remove the outdated db.example.lan entry from /etc/hosts so that programs use DNS again. Keep the other entries."
+skills = { "i.dns-resolution" = 1.0, "b.edit-files" = 0.3 }
+checks = [
+    { type = "name_resolves", name = "db.example.lan", address = "10.0.2.30" },
+    { type = "file_contains", path = "/etc/hosts", text = "localhost" },
+]
+persistent = true
+hints = ["Edit the file as root, or delete the line with sed.", "sudo sed -i '/db.example.lan/d' /etc/hosts", "Type: sudo sed -i '/db.example.lan/d' /etc/hosts && getent hosts db.example.lan"]
+explanation = "getent now returns 10.0.2.30, the same as DNS. There is no resolver cache to flush on this system."
+
+[[task]]
+id = "records"
+title = "Other record types"
+kind = "independent"
+instructions = "Which server handles mail for the domain example.lan?"
+skills = { "i.dns-resolution" = 1.0 }
+question = { prompt = "What is the mail exchanger (MX) for example.lan?", type = "exact", accept = ["mail.example.lan", "mail.example.lan."] }
+hints = ["Mail servers are published as MX records.", "dig example.lan MX (or host -t MX example.lan)", "mail.example.lan"]
+explanation = "dig NAME TYPE asks for a specific record type. dig -x ADDRESS does reverse (PTR) lookups."
+
+[debrief]
+summary = """
+Programs resolve through nsswitch.conf (/etc/hosts first), DNS tools ask servers directly.
+getent shows the application view, dig the DNS view; when they differ, look at /etc/hosts.
+"""
+alternatives = ["host db.example.lan", "nslookup db.example.lan", "dig -x 10.0.2.30 +short shows the reverse name"]
+pitfalls = ["Testing with dig and concluding 'DNS is fine' while applications use a stale /etc/hosts entry.", "Editing /etc/hosts without sudo: the change is not saved."]
+next = "Next: a network that broke."
+
+[[solution]]
+name = "sed and dig"
+steps = [
+    { input = ["letslinux"] },
+    "apt search dnsutils",
+    "sudo apt install -y bind9-dnsutils",
+    "getent hosts db.example.lan",
+    ":answer {{wrong}}",
+    "dig +short db.example.lan",
+    ":answer 10.0.2.30",
+    "cat /etc/nsswitch.conf",
+    ":answer b",
+    "sudo sed -i '/db.example.lan/d' /etc/hosts",
+    "dig +short example.lan MX",
+    ":answer mail.example.lan",
+]
+
+[[solution]]
+name = "host and the editor"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt-get install -y dnsutils",
+    "getent ahosts db",
+    ":answer {{wrong}}",
+    "host db.example.lan",
+    ":answer 10.0.2.30",
+    ":answer A stale entry in /etc/hosts is consulted before DNS (hosts: files dns)",
+    { edit = "127.0.0.1\tlocalhost\n127.0.1.1\tlab.example.lan\tlab\n\n::1     localhost ip6-localhost ip6-loopback\n" },
+    "sudo nano /etc/hosts",
+    "host -t MX example.lan",
+    ":answer mail.example.lan.",
+]
+
+[[counterexample]]
+name = "blaming DNS"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt install -y bind9-dnsutils",
+    ":answer {{wrong}}",
+    ":answer 10.0.2.30",
+    ":answer a",
+]

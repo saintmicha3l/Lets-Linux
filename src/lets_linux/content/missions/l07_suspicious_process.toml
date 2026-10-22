@@ -1,0 +1,190 @@
+schema = 1
+
+[mission]
+id = "l07-suspicious-process"
+title = "Not a Kernel Thread"
+chapter = "L"
+kind = "troubleshooting"
+order = 9
+difficulty = 6
+requires = ["l05-file-integrity", "g04-slow-server", "k01-cron-jobs", "i04-ports", "l01c-what-is-exposed"]
+skills = ["l.suspicious-processes", "g.ps-inspection", "g.proc-filesystem"]
+review_for = ["i.ports-sockets", "k.cron-basics"]
+xp = 230
+estimated_minutes = 35
+
+[briefing]
+context = """
+This Ubuntu web server's CPU has been at 100% for days. Something calling itself kswapd0 —
+the name of a real kernel thread — is at the top of the process list. Investigate it: who
+runs it, where it came from, whom it talks to. Keep a copy of the program for the analysts,
+then stop it for good: it must not come back. (sudo password: letslinux)
+"""
+concept = """
+Questions for any unknown process: Who? (ps -o user,pid,ppid,etime,args, the UID in
+/proc/PID/status) What? (ls -l /proc/PID/exe — '(deleted)' means the file was removed after
+starting, a classic hiding trick; /proc/PID/cwd, /proc/PID/cmdline) Talking to whom?
+(sudo ss -tnp, sudo lsof -p PID) Started by what? (the parent PID, cron, systemd units,
+shell profiles). Real kernel threads are children of kthreadd (PID 2), run as root, show in
+[brackets] and have no executable. A deleted executable can still be copied from
+/proc/PID/exe while the process runs. Persistence must be removed too, or the program
+returns.
+"""
+objectives = ["Recognise a disguised process", "Inspect it through /proc", "Find its network connections", "Preserve evidence", "Remove the process and its persistence"]
+
+[environment]
+profile = "ubuntu"
+packages = ["cron", "binutils"]
+[environment.vars]
+pool = { choices = ["203.0.113.66", "198.51.100.140", "192.0.2.210"] }
+port = { choices = ["3333", "4444", "5555"] }
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /tmp/.X25-unix/.rsync && cp /usr/bin/sleep /tmp/.X25-unix/.rsync/kswapd0 && printf '\\0stratum+tcp://{{pool}}:{{port}}\\0wallet 4AdUndXHHZ6cfufTMvppY6JwXNouMBzSkbLYfpAV5Usx3skxNgYeYTRj5UzqtReoS44qo9mtmXCqY45DJ852K5Jv2684Rge\\0' >> /tmp/.X25-unix/.rsync/kswapd0 && cp /tmp/.X25-unix/.rsync/kswapd0 /tmp/.X25-unix/.rsync/.k && chmod 755 /tmp/.X25-unix/.rsync/.k"
+
+[[environment.setup]]
+action = "file"
+path = "/tmp/.X25-unix/.rsync/a.sh"
+mode = "0755"
+content = """#!/bin/sh
+pgrep -u www-data kswapd0 >/dev/null && exit 0
+cp /tmp/.X25-unix/.rsync/.k /tmp/.X25-unix/.rsync/kswapd0
+/tmp/.X25-unix/.rsync/kswapd0 86400 >/dev/null 2>&1 &
+"""
+
+[[environment.setup]]
+action = "run"
+command = "chown -R www-data:www-data /tmp/.X25-unix && echo '*/10 * * * * /tmp/.X25-unix/.rsync/a.sh >/dev/null 2>&1' | crontab -u www-data -"
+
+[[environment.setup]]
+action = "process"
+comm = "kswapd0"
+argv = ["/tmp/.X25-unix/.rsync/kswapd0"]
+user = "www-data"
+cwd = "/tmp/.X25-unix/.rsync"
+cpu = 197.0
+cpu_time = 690000
+rss_kb = 2320000
+age_minutes = 5800
+exe = "/tmp/.X25-unix/.rsync/kswapd0"
+delete_exe = true
+connect = ["{{pool}}:{{port}}"]
+
+[[task]]
+id = "who"
+title = "Who is it?"
+kind = "troubleshooting"
+instructions = "Find the process that uses the CPU."
+skills = { "l.suspicious-processes" = 1.0, "g.ps-inspection" = 1.0 }
+question = { prompt = "Which user runs the busy kswapd0?", type = "exact", accept = ["www-data"] }
+hints = ["top, or ps aux sorted by CPU: ps aux --sort=-%cpu | head", "Look at the USER column — and compare with the real kswapd0 (ps -ef | grep kswapd).", "www-data — the web server's account. A kernel thread runs as root."]
+explanation = "The real kswapd0 is a kernel thread: root, parent kthreadd, shown as [kswapd0]. This one is a program run by the web server's user."
+
+[[task]]
+id = "talks"
+title = "Whom does it talk to?"
+kind = "troubleshooting"
+instructions = "Find the process's network connection."
+skills = { "l.suspicious-processes" = 1.0, "i.ports-sockets" = 0.5 }
+question = { prompt = "Remote address and port (ADDRESS:PORT)?", type = "exact", accept = ["{{pool}}:{{port}}"] }
+hints = ["ss without -l shows connections; -p shows the process (needs root for other users).", "sudo ss -tnp", "sudo lsof -p PID shows the same, as 'TCP local->remote (ESTABLISHED)'."]
+explanation = "Port {{port}} on an unknown Internet host: a typical cryptocurrency mining pool (stratum protocol)."
+
+[[task]]
+id = "evidence"
+title = "Keep the evidence"
+kind = "independent"
+instructions = "The program file has been deleted from disk — but the process still has it. Save a copy of the running program in /root/evidence/ before you stop anything."
+skills = { "l.suspicious-processes" = 1.0, "g.proc-filesystem" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "grep -rls 'stratum+tcp://{{pool}}' /root/evidence", stdout_contains = ["/root/evidence/"] },
+]
+hints = ["ls -l /proc/PID/exe shows '(deleted)'. What happens if you read /proc/PID/exe?", "/proc/PID/exe still leads to the program's contents.", "sudo mkdir -p /root/evidence && sudo cp /proc/$(pgrep -u www-data kswapd0)/exe /root/evidence/kswapd0.bin — then strings it: grep stratum"]
+explanation = "The copy contains the pool address and the wallet — evidence the analysts can use. Without /proc, it would have been gone with the process."
+
+[[task]]
+id = "remove"
+title = "Gone for good"
+kind = "independent"
+instructions = "Stop the miner and remove whatever would start it again, including the dropper directory. The web server's account itself stays."
+skills = { "l.suspicious-processes" = 1.0, "k.cron-basics" = 0.5 }
+checks = [
+    { type = "process_absent", comm = "kswapd0", user = "www-data" },
+    { type = "path_absent", path = "/tmp/.X25-unix/.rsync" },
+    { type = "command_result", user = "root", command = "crontab -u www-data -l 2>/dev/null", stdout_not_contains = ["X25", "a.sh"] },
+    { type = "command_result", user = "root", setup = ["sleep 3600"], command = "pgrep -u www-data -a .", stdout_not_contains = ["kswapd0", "X25"] },
+    { type = "user_exists", name = "www-data" },
+]
+hints = [
+    "What starts it? Look at cron: sudo crontab -u www-data -l (and /etc/cron.d, systemd units).",
+    "Order: remove the persistence, then kill, then delete the files — otherwise cron may start it again in between.",
+    "sudo crontab -u www-data -r; sudo pkill -9 -u www-data kswapd0; sudo rm -r /tmp/.X25-unix",
+]
+explanation = "The game let an hour pass on a copy of the machine: nothing came back. The next question is how the attacker got the web server's account to run commands — usually a vulnerable web application."
+
+[[task]]
+id = "kthread"
+title = "Spot the fake"
+kind = "explanation"
+instructions = "Summarise what gave it away."
+skills = { "l.suspicious-processes" = 1.0 }
+question = { prompt = "Which observation alone proves this kswapd0 is not the kernel thread?", type = "choice", choices = ["It uses a lot of CPU", "It has an executable file (/proc/PID/exe) and runs as www-data; kernel threads have neither", "Its name ends in a digit"], answer = 1 }
+hints = ["Compare /proc/9/exe (the real one) with the fake's.", "Kernel threads are part of the kernel: no program file, always root.", "(b)"]
+explanation = "High CPU happens to real kernel threads too; an executable and a non-root owner never do."
+
+[debrief]
+summary = """
+Who (user, parent, start time) → what (/proc/PID/exe, cwd, cmdline) → network (ss -tnp, lsof
+-p) → evidence (cp /proc/PID/exe) → persistence (cron, units, profiles) → remove persistence,
+kill, delete → verify over time.
+"""
+alternatives = ["kill -STOP first: freezes the process without destroying its memory for analysis", "Block the pool address in the firewall (outgoing) while investigating", "systemd-cgls / systemctl status PID shows which unit or session started a process"]
+pitfalls = ["Killing first: the deleted program is lost.", "Killing without removing the cron job: it is back within minutes.", "Trusting the process name: names are chosen by the attacker."]
+next = "Next: a full incident — from the first log line to recovery."
+
+[[solution]]
+name = "investigate, preserve, clean"
+steps = [
+    "ps aux --sort=-%cpu | head -5",
+    ":answer www-data",
+    { input = ["letslinux"] },
+    "sudo ss -tnp",
+    ":answer {{pool}}:{{port}}",
+    "pid=$(pgrep -u www-data kswapd0)",
+    "sudo ls -l /proc/$pid/exe",
+    "sudo mkdir -p /root/evidence",
+    "sudo cp /proc/$pid/exe /root/evidence/kswapd0.bin",
+    "sudo strings /root/evidence/kswapd0.bin | grep stratum",
+    "sudo crontab -u www-data -l",
+    "sudo crontab -u www-data -r",
+    "sudo kill -9 $pid",
+    "sudo rm -r /tmp/.X25-unix",
+    ":answer b",
+]
+
+[[solution]]
+name = "lsof and crontab -e style"
+steps = [
+    "top -b -n 1 | head -12",
+    ":answer www-data",
+    { input = ["letslinux"] },
+    "sudo lsof -p $(pgrep -u www-data kswapd0)",
+    ":answer {{pool}}:{{port}}",
+    "sudo sh -c 'mkdir -p /root/evidence && cat /proc/$(pgrep -u www-data kswapd0)/exe > /root/evidence/miner'",
+    "sudo sh -c 'crontab -u www-data -l | grep -v X25 | crontab -u www-data -'",
+    "sudo pkill -u www-data kswapd0",
+    "sudo rm -rf /tmp/.X25-unix/.rsync",
+    ":answer It has an executable file (/proc/PID/exe) and runs as www-data; kernel threads have neither",
+]
+
+[[counterexample]]
+name = "kill only"
+steps = [
+    ":answer www-data",
+    { input = ["letslinux"] },
+    ":answer {{pool}}:{{port}}",
+    "sudo pkill -u www-data kswapd0",
+    "sudo rm -rf /tmp/.X25-unix/.rsync/kswapd0",
+    ":answer b",
+]

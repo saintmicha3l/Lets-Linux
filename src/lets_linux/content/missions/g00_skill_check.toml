@@ -1,0 +1,217 @@
+schema = 1
+
+[mission]
+id = "g00-skill-check"
+title = "Skill Check G: Processes"
+chapter = "G"
+placement = "G"
+kind = "assessment"
+order = 0
+difficulty = 3
+requires = []
+skills = ["g.ps-inspection", "g.resource-monitoring", "g.signals-kill", "g.nice-priority", "g.process-concepts", "g.file-descriptors", "g.proc-filesystem", "g.process-states"]
+xp = 70
+estimated_minutes = 15
+sequential = false
+
+[briefing]
+context = """
+This skill check covers chapter G: inspecting processes, resource use, signals, priorities,
+parents and children, open files and process states. Tasks in any order, any commands; you
+have sudo (password: letslinux). Solve them all (one slip allowed) to test out of chapter G.
+Anything you cannot do is simply not counted — :submit ends the check.
+"""
+concept = "No hints: show what you can do on your own."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "debian"
+
+[environment.vars]
+hog = { choices = ["thumbnailer", "indexer", "reconcile"] }
+stub = { choices = ["sync-agent", "watchd", "pusher"] }
+batch = { choices = ["nightly-report", "archiver", "compactor"] }
+parentname = { choices = ["supervisor", "runner", "orchestra"] }
+child = { choices = ["worker-7", "job-alpha", "task-42"] }
+writer = { choices = ["collector", "tracer", "spooler"] }
+dstate = { choices = ["nfs-copy", "disk-scrub", "backup-dd"] }
+
+[[environment.setup]]
+action = "process"
+comm = "{{hog}}"
+argv = ["/usr/local/bin/{{hog}}", "--all"]
+user = "learner"
+cpu = 96.0
+pid_var = "hog_pid"
+
+[[environment.setup]]
+action = "process"
+comm = "render"
+argv = ["/usr/local/bin/render", "--frame", "9"]
+user = "learner"
+cpu = 21.0
+
+[[environment.setup]]
+action = "process"
+comm = "{{stub}}"
+argv = ["/usr/local/bin/{{stub}}", "--daemon"]
+user = "learner"
+ignore = ["TERM", "INT", "HUP"]
+
+[[environment.setup]]
+action = "process"
+comm = "{{batch}}"
+argv = ["/usr/local/bin/{{batch}}"]
+user = "learner"
+cpu = 30.0
+pid_var = "batch_pid"
+
+[[environment.setup]]
+action = "process"
+comm = "{{parentname}}"
+argv = ["/usr/local/bin/{{parentname}}", "--config", "/etc/{{parentname}}.conf"]
+user = "root"
+pid_var = "parent_pid"
+
+[[environment.setup]]
+action = "process"
+comm = "{{child}}"
+argv = ["/usr/local/bin/{{child}}"]
+user = "root"
+ppid = "{{parent_pid}}"
+
+[[environment.setup]]
+action = "file"
+path = "/var/tmp/.{{writer}}-buffer.dat"
+content = "buffered records\n"
+
+[[environment.setup]]
+action = "process"
+comm = "{{writer}}"
+argv = ["/usr/local/bin/{{writer}}"]
+user = "root"
+open = ["/var/tmp/.{{writer}}-buffer.dat"]
+
+[[environment.setup]]
+action = "process"
+comm = "{{dstate}}"
+argv = ["/usr/local/bin/{{dstate}}", "/mnt/share"]
+user = "root"
+state = "D"
+
+[[task]]
+id = "hog"
+title = "Who is busy"
+kind = "assessment"
+instructions = "Something is keeping a CPU core fully busy."
+skills = { "g.ps-inspection" = 1.0, "g.resource-monitoring" = 1.0 }
+question = { prompt = "The PID of the process using the most CPU?", type = "exact", accept = ["{{hog_pid}}"] }
+explanation = "top (sorted by %CPU), or ps -eo pid,pcpu,comm --sort=-pcpu | head."
+
+[[task]]
+id = "stop"
+title = "Stop it"
+kind = "assessment"
+instructions = "End the process {{hog}}."
+skills = { "g.signals-kill" = 1.0 }
+checks = [{ type = "process_absent", comm = "{{hog}}" }]
+explanation = "kill PID sends SIGTERM: the program may clean up. pkill {{hog}} matches by name."
+
+[[task]]
+id = "stubborn"
+title = "Not listening"
+kind = "assessment"
+instructions = "End the process {{stub}} too."
+skills = { "g.signals-kill" = 1.0 }
+checks = [{ type = "process_absent", comm = "{{stub}}" }]
+explanation = "It ignores TERM, INT and HUP. SIGKILL (kill -9) cannot be ignored — the last resort, since the program gets no chance to clean up."
+
+[[task]]
+id = "nice"
+title = "Lower priority"
+kind = "assessment"
+instructions = "{{batch}} may keep running, but at niceness 15 — without restarting it."
+skills = { "g.nice-priority" = 1.0 }
+checks = [{ type = "command_result", user = "root", command = "ps -o ni= -p {{batch_pid}} | tr -d ' '", stdout_equals = "15" }]
+explanation = "renice -n 15 -p PID (users may lower their own processes' priority; raising it needs root)."
+
+[[task]]
+id = "parent"
+title = "Who started it"
+kind = "assessment"
+instructions = "Find out which program started the process {{child}}."
+skills = { "g.process-concepts" = 1.0, "g.ps-inspection" = 0.5 }
+question = { prompt = "The command name of its parent?", type = "exact", accept = ["{{parentname}}"] }
+explanation = "ps -o ppid= -p PID gives the parent's PID; ps -fp that PID (or pstree -p) shows it."
+
+[[task]]
+id = "fd"
+title = "An open file"
+kind = "assessment"
+instructions = "The process {{writer}} keeps a file in /var/tmp open."
+skills = { "g.file-descriptors" = 1.0, "g.proc-filesystem" = 1.0 }
+question = { prompt = "That file's full path?", type = "exact", accept = ["/var/tmp/.{{writer}}-buffer.dat"] }
+explanation = "sudo ls -l /proc/PID/fd, or sudo lsof -p PID."
+
+[[task]]
+id = "state"
+title = "Waiting"
+kind = "assessment"
+instructions = "One process is in uninterruptible sleep — typically waiting for disk or network I/O, and immune to signals while it waits."
+skills = { "g.process-states" = 1.0 }
+question = { prompt = "Its command name?", type = "exact", accept = ["{{dstate}}"] }
+explanation = "ps -eo stat,pid,comm | awk '$1 ~ /^D/' — state D; it also counts towards the load average."
+
+[debrief]
+summary = """
+The check covered chapter G's core. Solved tasks are evidence for their skills; chapter G's
+missions stay open to replay.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "ps, kill, renice"
+steps = [
+    { input = ["letslinux"] },
+    "ps -eo pid,pcpu,comm --sort=-pcpu | head -3",
+    ":answer {{hog_pid}}",
+    "pkill {{hog}}",
+    "pkill {{stub}}; sleep 1; pkill -KILL {{stub}}",
+    "renice -n 15 -p {{batch_pid}}",
+    "ps -o ppid= -p $(pgrep {{child}})",
+    ":answer {{parentname}}",
+    "sudo ls -l /proc/$(pgrep {{writer}})/fd",
+    ":answer /var/tmp/.{{writer}}-buffer.dat",
+    "ps -eo stat,pid,comm | awk '$1 ~ /^D/'",
+    ":answer {{dstate}}",
+]
+
+[[solution]]
+name = "top, lsof and pstree"
+steps = [
+    { input = ["letslinux"] },
+    "ps aux | sort -k3 -rn | head -3",
+    "kill -9 $(pgrep {{stub}})",
+    "renice 15 $(pgrep {{batch}})",
+    "pstree -p",
+    ":answer {{parentname}}",
+    "sudo lsof -c {{writer}}",
+    ":answer /var/tmp/.{{writer}}-buffer.dat",
+    "ps -e -o pid,stat,cmd",
+    ":answer {{dstate}}",
+    ":answer {{hog_pid}}",
+    "kill {{hog_pid}}",
+]
+
+[[counterexample]]
+name = "TERM only and a restart"
+steps = [
+    { input = ["letslinux"] },
+    ":answer {{hog_pid}}",
+    "kill {{hog_pid}}",
+    "pkill {{stub}}",
+    "pkill {{batch}}; nice -n 15 /usr/local/bin/{{batch}} &",
+    ":answer {{parentname}}",
+    ":answer /var/tmp/.{{writer}}-buffer.dat",
+    ":answer {{dstate}}",
+]

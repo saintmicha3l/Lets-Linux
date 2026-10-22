@@ -1,0 +1,172 @@
+schema = 1
+
+[mission]
+id = "l01b-audit-toolkit"
+title = "The Auditor's Toolkit"
+chapter = "L"
+kind = "lesson"
+order = 2
+difficulty = 3
+requires = ["d04b-ownership-and-special-bits", "b06b-finding-files", "f02c-where-packages-come-from"]
+skills = ["l.permission-audit", "l.file-integrity", "l.secrets-management"]
+review_for = ["l.permission-audit", "l.file-integrity"]
+xp = 110
+estimated_minutes = 25
+
+[briefing]
+context = """
+Security audits ask the same questions on every server: which files grant extra rights, which
+can anyone change, which belong to nobody, which have changed since they were installed, and
+where secrets are lying around. This lesson builds the toolkit for the security missions that
+follow. (sudo password: letslinux)
+"""
+concept = """
+Permissions with find (add -xdev to stay on one filesystem, 2>/dev/null to hide noise):
+  find / -xdev -type f -perm -4000     setuid files (-2000: setgid)
+  find DIR -type f -perm -o+w          writable by everyone
+  find / -xdev -nouser -o -nogroup     owned by an account that no longer exists
+dpkg -S FILE names the package that installed FILE ("no path found" = not from a package).
+Integrity: sha256sum FILES > list records checksums; sha256sum -c list reports OK or FAILED for
+each file later. dpkg --verify compares installed files with the package's checksums
+(a 5 in the third column = contents changed); rpm -Va does the same on Fedora.
+Secrets: grep -rl PATTERN DIR finds files mentioning passwords or keys. Secret files get mode
+600 or 640 (owner, maybe a service group) — never readable by everyone.
+"""
+objectives = ["Find setuid, world-writable and ownerless files", "Tell packaged files from foreign ones", "Detect changed files with checksums", "Find and protect exposed secrets"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+tool = { choices = ["scanctl", "camsync", "lpquery"] }
+changed = { choices = ["app.conf", "users.list", "routes.conf"] }
+secretfile = { choices = ["db.ini", "billing.env", "api.conf"] }
+pw = { word = true }
+
+[[environment.setup]]
+action = "file"
+path = "/opt/vendor/bin/{{tool}}"
+content = "#!/bin/sh\necho vendor tool\n"
+owner = "root"
+group = "root"
+mode = "4755"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/reports/publish.sh"
+content = "#!/bin/sh\ncp /srv/reports/*.pdf /var/www/reports/\n"
+owner = "root"
+group = "root"
+mode = "0777"
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /srv/legacy && echo old > /srv/legacy/export-2019.csv && chown 2345:2345 /srv/legacy/export-2019.csv"
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /etc/myapp && cd /etc/myapp && printf 'port=8080\\n' > app.conf && printf 'alice\\nbob\\n' > users.list && printf 'default via 10.0.2.2\\n' > routes.conf && sha256sum /etc/myapp/app.conf /etc/myapp/users.list /etc/myapp/routes.conf > /root/myapp.sha256 && echo '# changed' >> /etc/myapp/{{changed}}"
+
+[[environment.setup]]
+action = "file"
+path = "/etc/myapp/{{secretfile}}"
+content = "user=shop\npassword={{pw}}\n"
+owner = "root"
+group = "root"
+mode = "0644"
+
+[[task]]
+id = "setuid"
+title = "Who grants root's rights?"
+kind = "guided"
+instructions = "List the setuid programs:  sudo find / -xdev -type f -perm -4000 2>/dev/null   Then ask the package database about each unusual one with  dpkg -S PATH"
+skills = { "l.permission-audit" = 1.0, "d.special-bits" = 0.5 }
+question = { prompt = "Which setuid program was NOT installed by any package? (its full path)", type = "exact", accept = ["/opt/vendor/bin/{{tool}}"] }
+hints = ["-perm -4000 matches files with the setuid bit, whatever the other bits are.", "Everything under /usr/bin belongs to a package; dpkg -S on the odd one out says 'no path found'.", "The answer is /opt/vendor/bin/{{tool}}."]
+explanation = "Setuid-root programs run as root for everyone. Each one must be accounted for; an unknown one is either a vendor tool to review — or a backdoor."
+
+[[task]]
+id = "writable"
+title = "Writable by anyone"
+kind = "guided"
+instructions = "Find regular files under /srv that everyone may change:  sudo find /srv -type f -perm -o+w"
+skills = { "l.permission-audit" = 1.0 }
+question = { prompt = "Which file is world-writable? (full path)", type = "exact", accept = ["/srv/reports/publish.sh"] }
+hints = ["-perm -o+w: the 'other' write bit is set.", "Only one file matches.", "The answer is /srv/reports/publish.sh."]
+explanation = "A world-writable script that root runs (from cron, a service) lets any user run commands as root: they only need to edit it."
+
+[[task]]
+id = "fix-writable"
+title = "Close it"
+kind = "independent"
+instructions = "Make /srv/reports/publish.sh changeable only by its owner (root), while everyone may still read and run it."
+skills = { "l.permission-audit" = 1.0, "d.chmod-octal" = 0.5 }
+checks = [{ type = "file_mode", path = "/srv/reports/publish.sh", mode = "755" }]
+persistent = true
+hints = ["Take away write for group and others; keep read and execute.", "rwxr-xr-x is 755.", "Run: sudo chmod 755 /srv/reports/publish.sh"]
+explanation = "755 is the right mode for a shared program or script: only the owner may change it."
+
+[[task]]
+id = "nouser"
+title = "Owned by nobody"
+kind = "guided"
+instructions = "Find files whose owner account no longer exists:  sudo find / -xdev -nouser 2>/dev/null"
+skills = { "l.permission-audit" = 1.0, "b.find-files" = 0.5 }
+question = { prompt = "Which file has no existing owner? (full path)", type = "exact", accept = ["/srv/legacy/export-2019.csv"] }
+hints = ["ls -l shows a number instead of a name for such files.", "-nouser matches files whose UID is in no /etc/passwd line.", "The answer is /srv/legacy/export-2019.csv."]
+explanation = "Ownerless files are left behind by deleted accounts. A new account that happens to get the old UID would silently own them."
+
+[[task]]
+id = "checksums"
+title = "What changed?"
+kind = "guided"
+instructions = "Checksums of /etc/myapp were recorded in /root/myapp.sha256 at deployment. Check them now:  sudo sha256sum -c /root/myapp.sha256"
+skills = { "l.file-integrity" = 1.0 }
+question = { prompt = "Which file has changed since the checksums were made? (the file name)", type = "exact", accept = ["{{changed}}", "/etc/myapp/{{changed}}"] }
+hints = ["sha256sum -c prints OK or FAILED per file.", "Look for FAILED.", "The answer is {{changed}}."]
+explanation = "A checksum list is a cheap integrity baseline. Store it where an attacker cannot rewrite it (another machine, read-only media) — otherwise they update it too."
+
+[[task]]
+id = "verify"
+title = "Ask the package database"
+kind = "prediction"
+instructions = "Think about what dpkg --verify (or rpm -Va) reports."
+skills = { "l.file-integrity" = 1.0 }
+question = { prompt = "dpkg --verify prints  ??5??????   /usr/bin/ps . What does that mean?", type = "choice", choices = ["ps is missing", "The contents of /usr/bin/ps differ from what its package installed", "ps has the wrong owner", "Everything is fine"], answer = 1 }
+hints = ["dpkg --verify prints only files that differ.", "The 5 stands for the MD5 checksum check failing.", "The answer is (b)."]
+explanation = "Changed configuration files are normal; a changed program in /usr/bin is not — it can mean a trojaned binary. Reinstall the package and investigate how it happened."
+
+[[task]]
+id = "secret"
+title = "Secrets in plain sight"
+kind = "independent"
+instructions = "A file in /etc/myapp holds a password and can be read by every account. Find it, and make it readable by root only."
+skills = { "l.secrets-management" = 1.0, "d.credential-hygiene" = 0.5 }
+checks = [
+    { type = "mode_lacks", path = "/etc/myapp/{{secretfile}}", bits = "044" },
+    { type = "file_contains", path = "/etc/myapp/{{secretfile}}", text = "password={{pw}}" },
+]
+persistent = true
+hints = ["grep -rl password /etc/myapp lists files that mention it.", "Then remove read for group and others.", "Run: sudo chmod 600 /etc/myapp/{{secretfile}}"]
+explanation = "Anyone who could read the file has seen the password, so a real audit would also rotate it. A service that needs the secret reads it as root or through a dedicated group (mode 640)."
+
+[debrief]
+summary = """
+find answers the audit questions (-perm -4000, -perm -o+w, -nouser), dpkg -S tells packaged
+from foreign files, checksums and dpkg --verify reveal changes, and grep -rl finds secrets
+that need tighter permissions.
+"""
+alternatives = ["find / -xdev -perm /6000 -type f finds setuid OR setgid files", "stat -c '%A %U %n' FILE... shows mode and owner together", "debsums -c (a separate package) checks every package's files"]
+pitfalls = ["Searching / without -xdev also walks /proc and network mounts.", "Keeping the checksum baseline on the machine it protects.", "Fixing a leaked secret's permissions without changing the secret."]
+next = "Next: what this server exposes to the network — and what is running on it."
+
+[[solution]]
+name = "as instructed"
+steps = [{ input = ["letslinux"] }, "sudo find / -xdev -type f -perm -4000 2>/dev/null", "dpkg -S /opt/vendor/bin/{{tool}}", ":answer /opt/vendor/bin/{{tool}}", "sudo find /srv -type f -perm -o+w", ":answer /srv/reports/publish.sh", "sudo chmod 755 /srv/reports/publish.sh", "sudo find / -xdev -nouser 2>/dev/null", ":answer /srv/legacy/export-2019.csv", "sudo sha256sum -c /root/myapp.sha256", ":answer {{changed}}", ":answer b", "grep -rl password /etc/myapp", "sudo chmod 600 /etc/myapp/{{secretfile}}"]
+
+[[solution]]
+name = "other forms"
+steps = [{ input = ["letslinux"] }, "sudo find /usr /opt -perm -u+s -type f", ":answer /opt/vendor/bin/{{tool}}", "find /srv -perm -002 -type f -ls", ":answer /srv/reports/publish.sh", "sudo chmod go-w /srv/reports/publish.sh", "sudo find /srv -nouser -ls", ":answer /srv/legacy/export-2019.csv", "sudo sha256sum --quiet -c /root/myapp.sha256", ":answer /etc/myapp/{{changed}}", ":answer 2", "sudo grep -l '^password' /etc/myapp/*", "sudo chmod go= /etc/myapp/{{secretfile}}"]
+
+[[counterexample]]
+name = "opening the script further and deleting the secret"
+steps = [{ input = ["letslinux"] }, ":answer /opt/vendor/bin/{{tool}}", ":answer /srv/reports/publish.sh", "sudo chmod 777 /srv/reports/publish.sh", ":answer /srv/legacy/export-2019.csv", ":answer {{changed}}", ":answer b", "sudo rm /etc/myapp/{{secretfile}}"]

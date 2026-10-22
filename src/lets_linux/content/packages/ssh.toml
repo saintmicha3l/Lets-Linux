@@ -1,0 +1,192 @@
+# Package catalogue: OpenSSH and rsync.
+
+schema = 1
+
+[[package]]
+name = "openssh-client"
+summary = "secure shell (SSH) client, for secure access to remote machines"
+section = "net"
+names = { fedora = "openssh-clients", arch = "openssh" }
+versions = { debian = "1:9.2p1-2+deb12u3", ubuntu = "1:9.6p1-3ubuntu13.5", fedora = "9.8p1-3.fc41", arch = "9.9p1-1", generic = "9.9p1" }
+bin = ["ssh", "scp", "ssh-keygen", "ssh-copy-id"]
+
+[[package]]
+name = "openssh-server"
+summary = "secure shell (SSH) server, for secure access from remote machines"
+section = "net"
+names = { arch = "openssh" }
+versions = { debian = "1:9.2p1-2+deb12u3", ubuntu = "1:9.6p1-3ubuntu13.5", fedora = "9.8p1-3.fc41", arch = "9.9p1-1", generic = "9.9p1" }
+depends = ["openssh-client"]
+sbin = ["sshd"]
+services = { debian = ["ssh.service"], generic = ["ssh.service"], fedora = ["sshd.service"], arch = ["sshd.service"] }
+
+[[package.file]]
+path = "/etc/ssh/sshd_config"
+families = ["debian", "generic", "arch"]
+conffile = true
+content = """
+# This is the sshd server system-wide configuration file.  See
+# sshd_config(5) for more information.
+
+# This sshd was compiled with PATH=/usr/local/bin:/usr/bin:/bin:/usr/games
+
+# The strategy used for options in the default sshd_config shipped with
+# OpenSSH is to specify options with their default value where
+# possible, but leave them commented.  Uncommented options override the
+# default value.
+
+Include /etc/ssh/sshd_config.d/*.conf
+
+#Port 22
+#AddressFamily any
+#ListenAddress 0.0.0.0
+#ListenAddress ::
+
+#HostKey /etc/ssh/ssh_host_rsa_key
+#HostKey /etc/ssh/ssh_host_ecdsa_key
+#HostKey /etc/ssh/ssh_host_ed25519_key
+
+# Logging
+#SyslogFacility AUTH
+#LogLevel INFO
+
+# Authentication:
+
+#LoginGraceTime 2m
+#PermitRootLogin prohibit-password
+#StrictModes yes
+#MaxAuthTries 6
+#MaxSessions 10
+
+#PubkeyAuthentication yes
+
+# Expect .ssh/authorized_keys2 to be disregarded by default in future.
+#AuthorizedKeysFile	.ssh/authorized_keys .ssh/authorized_keys2
+
+# To disable tunneled clear text passwords, change to no here!
+#PasswordAuthentication yes
+#PermitEmptyPasswords no
+
+# Change to yes to enable challenge-response passwords (beware issues with
+# some PAM modules and threads)
+KbdInteractiveAuthentication no
+
+UsePAM yes
+
+#AllowAgentForwarding yes
+#AllowTcpForwarding yes
+#GatewayPorts no
+X11Forwarding yes
+#PrintMotd yes
+PrintMotd no
+#PrintLastLog yes
+#TCPKeepAlive yes
+#UseDNS no
+#PidFile /run/sshd.pid
+#MaxStartups 10:30:100
+#PermitTunnel no
+#Banner none
+
+# Allow client to pass locale environment variables
+AcceptEnv LANG LC_*
+
+# override default of no subsystems
+Subsystem	sftp	/usr/lib/openssh/sftp-server
+"""
+
+[[package.file]]
+path = "/etc/ssh/sshd_config"
+families = ["fedora"]
+conffile = true
+content = """#	$OpenBSD: sshd_config,v 1.104 2021/07/02 05:11:21 dtucker Exp $
+
+# This is the sshd server system-wide configuration file.  See
+# sshd_config(5) for more information.
+
+# To modify the system-wide sshd configuration, create a  *.conf  file under
+#  /etc/ssh/sshd_config.d/  which will be automatically included below
+Include /etc/ssh/sshd_config.d/*.conf
+
+#Port 22
+#ListenAddress 0.0.0.0
+
+#PermitRootLogin prohibit-password
+#PubkeyAuthentication yes
+#PasswordAuthentication yes
+
+# override default of no subsystems
+Subsystem	sftp	/usr/libexec/openssh/sftp-server
+"""
+
+[[package.file]]
+path = "/etc/ssh/sshd_config.d"
+kind = "dir"
+mode = "755"
+
+[[package.file]]
+path = "/etc/ssh/sshd_config.d/50-redhat.conf"
+families = ["fedora"]
+content = """# This system is following system-wide crypto policy. The changes to
+# crypto properties (Ciphers, MACs, ...) will not have any effect in
+# this or following included files.
+
+SyslogFacility AUTHPRIV
+ChallengeResponseAuthentication no
+GSSAPIAuthentication yes
+UsePAM yes
+X11Forwarding yes
+PrintMotd no
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/ssh.service"
+families = ["debian", "generic"]
+content = """[Unit]
+Description=OpenBSD Secure Shell server
+Documentation=man:sshd(8) man:sshd_config(5)
+After=network.target auditd.service
+
+[Service]
+ExecStartPre=/usr/sbin/sshd -t
+ExecStart=/usr/sbin/sshd -D
+ExecReload=/usr/sbin/sshd -t
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=on-failure
+RestartPreventExitStatus=255
+Type=notify
+RuntimeDirectory=sshd
+RuntimeDirectoryMode=0755
+
+[Install]
+WantedBy=multi-user.target
+Alias=sshd.service
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/sshd.service"
+families = ["fedora", "arch"]
+content = """[Unit]
+Description=OpenSSH server daemon
+Documentation=man:sshd(8) man:sshd_config(5)
+After=network.target
+
+[Service]
+Type=notify
+ExecStartPre=/usr/sbin/sshd -t
+ExecStart=/usr/sbin/sshd -D
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=on-failure
+RestartSec=42s
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[package]]
+name = "rsync"
+summary = "fast, versatile, remote (and local) file-copying tool"
+section = "net"
+versions = { debian = "3.2.7-1+deb12u2", ubuntu = "3.2.7-1ubuntu1.2", fedora = "3.3.0-4.fc41", arch = "3.3.0-2", generic = "3.3.0" }
+bin = ["rsync"]

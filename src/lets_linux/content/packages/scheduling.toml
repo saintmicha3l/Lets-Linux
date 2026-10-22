@@ -1,0 +1,162 @@
+# Package catalogue: job scheduling.
+
+schema = 1
+
+[[package]]
+name = "cron"
+summary = "process scheduling daemon"
+section = "admin"
+names = { fedora = "cronie", arch = "cronie" }
+versions = { debian = "3.0pl1-162", ubuntu = "3.0pl1-184ubuntu2", fedora = "1.7.2-6.fc41", arch = "1.7.2-1", generic = "3.0pl1" }
+sbin = ["cron", "crond"]
+bin = ["crontab", "run-parts"]
+only = { cron = ["debian", "generic"], crond = ["fedora", "arch"], run-parts = ["fedora", "arch"] }
+services = ["cron.service"]
+
+# ---- Debian and Ubuntu ------------------------------------------------------
+
+[[package.file]]
+families = ["debian", "generic"]
+path = "/etc/crontab"
+content = """# /etc/crontab: system-wide crontab
+# Unlike any other crontab you don't have to run the `crontab'
+# command to install the new version when you edit this file
+# and files in /etc/cron.d. These files also have username fields,
+# that none of the other crontabs do.
+
+SHELL=/bin/sh
+# You can also override PATH, but by default, newer versions inherit it from the environment
+#PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+# Example of job definition:
+# .---------------- minute (0 - 59)
+# |  .------------- hour (0 - 23)
+# |  |  .---------- day of month (1 - 31)
+# |  |  |  .------- month (1 - 12) OR jan,feb,mar,apr ...
+# |  |  |  |  .---- day of week (0 - 6) (Sunday=0 or 7) OR sun,mon,tue,wed,thu,fri,sat
+# |  |  |  |  |
+# *  *  *  *  * user-name command to be executed
+17 *	* * *	root	cd / && run-parts --report /etc/cron.hourly
+25 6	* * *	root	test -x /usr/sbin/anacron || { cd / && run-parts --report /etc/cron.daily; }
+47 6	* * 7	root	test -x /usr/sbin/anacron || { cd / && run-parts --report /etc/cron.weekly; }
+52 6	1 * *	root	test -x /usr/sbin/anacron || { cd / && run-parts --report /etc/cron.monthly; }
+#
+"""
+
+[[package.file]]
+families = ["debian", "generic"]
+path = "/var/spool/cron/crontabs"
+kind = "dir"
+mode = "1730"
+group = "crontab"
+
+[[package.file]]
+families = ["debian", "generic"]
+path = "/usr/lib/systemd/system/cron.service"
+content = """[Unit]
+Description=Regular background program processing daemon
+Documentation=man:cron(8)
+After=remote-fs.target nss-user-lookup.target
+
+[Service]
+EnvironmentFile=-/etc/default/cron
+ExecStart=/usr/sbin/cron -f $EXTRA_OPTS
+IgnoreSIGPIPE=false
+KillMode=process
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+# ---- Fedora and Arch (cronie) -----------------------------------------------
+
+[[package.file]]
+families = ["fedora", "arch"]
+path = "/etc/crontab"
+content = """SHELL=/bin/bash
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+MAILTO=root
+
+# For details see man 4 crontabs
+
+# Example of job definition:
+# .---------------- minute (0 - 59)
+# |  .------------- hour (0 - 23)
+# |  |  .---------- day of month (1 - 31)
+# |  |  |  .------- month (1 - 12) OR jan,feb,mar,apr ...
+# |  |  |  |  .---- day of week (0 - 6) (Sunday=0 or 7) OR sun,mon,tue,wed,thu,fri,sat
+# |  |  |  |  |
+# *  *  *  *  * user-name  command to be executed
+"""
+
+[[package.file]]
+families = ["fedora", "arch"]
+path = "/etc/cron.d/0hourly"
+content = """# Run the hourly jobs
+SHELL=/bin/bash
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+MAILTO=root
+01 * * * * root run-parts /etc/cron.hourly
+"""
+
+[[package.file]]
+families = ["fedora", "arch"]
+path = "/var/spool/cron"
+kind = "dir"
+mode = "0700"
+
+[[package.file]]
+families = ["fedora", "arch"]
+path = "/etc/sysconfig/crond"
+content = """# Settings for the CRON daemon.
+# CRONDARGS= :  any extra command-line startup arguments for crond
+CRONDARGS=
+"""
+
+[[package.file]]
+families = ["fedora", "arch"]
+path = "/usr/lib/systemd/system/cron.service"
+content = """[Unit]
+Description=Command Scheduler
+After=auditd.service nss-user-lookup.target systemd-user-sessions.service time-sync.target ypbind.service autofs.service
+
+[Service]
+EnvironmentFile=-/etc/sysconfig/crond
+ExecStart=/usr/sbin/crond -n $CRONDARGS
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=on-failure
+RestartSec=30s
+
+[Install]
+WantedBy=multi-user.target
+Alias=crond.service
+"""
+
+# ---- every family -----------------------------------------------------------
+
+[[package.file]]
+path = "/etc/cron.d"
+kind = "dir"
+mode = "0755"
+
+[[package.file]]
+path = "/etc/cron.hourly"
+kind = "dir"
+mode = "0755"
+
+[[package.file]]
+path = "/etc/cron.daily"
+kind = "dir"
+mode = "0755"
+
+[[package.file]]
+path = "/etc/cron.weekly"
+kind = "dir"
+mode = "0755"
+
+[[package.file]]
+path = "/etc/cron.monthly"
+kind = "dir"
+mode = "0755"

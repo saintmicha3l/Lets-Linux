@@ -1,0 +1,215 @@
+# The default simulated network around every machine.
+#
+# The machine itself is 10.0.2.15/24 on the LAN (see distributions/image.py).
+# Public addresses use documentation ranges (RFC 5737) except example.com,
+# which IANA reserves for examples. Nothing here is ever contacted for real.
+
+schema = 1
+
+# ---------------------------------------------------------------- the LAN 10.0.2.0/24
+
+[[peer]]
+name = "gateway"
+addresses = ["10.0.2.2"]
+mac = "52:55:0a:00:02:02"
+router = true
+latency_ms = 0.3
+
+[[peer]]
+name = "dns"
+addresses = ["10.0.2.3"]
+mac = "52:55:0a:00:02:03"
+latency_ms = 0.3
+
+[[peer]]
+name = "intranet"
+addresses = ["10.0.2.20"]
+mac = "52:54:00:aa:02:14"
+[peer.services.80]
+kind = "http"
+server = "nginx"
+[peer.services.80.pages."/"]
+body = "<html><body><h1>Example Corp intranet</h1><p>Welcome back.</p></body></html>\n"
+[peer.services.80.pages."/status"]
+body = "ok\n"
+content_type = "text/plain"
+[peer.services.22]
+kind = "ssh"
+banner = "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u3"
+
+[[peer]]
+name = "db"
+addresses = ["10.0.2.30"]
+mac = "52:54:00:aa:02:1e"
+[peer.services.5432]
+kind = "tcp"
+banner = ""
+
+[[peer]]
+name = "files"
+addresses = ["10.0.2.40"]
+mac = "52:54:00:aa:02:28"
+# a host firewall drops ping and closed ports, but SSH works
+icmp = false
+closed = "drop"
+[peer.services.22]
+kind = "ssh"
+banner = "SSH-2.0-OpenSSH_9.6"
+
+[[peer]]
+name = "build"
+addresses = ["10.0.2.45"]
+mac = "52:54:00:aa:02:2d"
+[peer.services.22]
+kind = "ssh"
+banner = "SSH-2.0-OpenSSH_9.8"
+
+[[peer]]
+name = "printer"
+addresses = ["10.0.2.50"]
+mac = "52:54:00:aa:02:32"
+up = false
+
+[[peer]]
+name = "mail"
+addresses = ["10.0.2.25"]
+mac = "52:54:00:aa:02:19"
+[peer.services.25]
+kind = "tcp"
+banner = "220 mail.example.lan ESMTP Postfix"
+
+# ---------------------------------------------------------------- the Internet
+
+[[peer]]
+name = "example.com"
+addresses = ["93.184.215.14"]
+ttl = 52
+latency_ms = 11.5
+[peer.services.80]
+kind = "http"
+server = "ECAcc (lac/55B6)"
+[peer.services.80.pages."/"]
+body = "<!doctype html>\n<html>\n<head><title>Example Domain</title></head>\n<body>\n<h1>Example Domain</h1>\n<p>This domain is for use in illustrative examples in documents.</p>\n</body>\n</html>\n"
+[peer.services.443]
+kind = "https"
+server = "ECAcc (lac/55B6)"
+[peer.services.443.pages."/"]
+body = "<!doctype html>\n<html>\n<head><title>Example Domain</title></head>\n<body>\n<h1>Example Domain</h1>\n<p>This domain is for use in illustrative examples in documents.</p>\n</body>\n</html>\n"
+
+[[peer]]
+name = "mirror"
+addresses = ["198.51.100.10"]
+ttl = 55
+latency_ms = 18.2
+[peer.services.80]
+kind = "http"
+[peer.services.80.pages."/"]
+body = "<html><body><h1>Package mirror</h1></body></html>\n"
+[peer.services.80.pages."/forum/acme-key.asc"]
+body = "-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nmQEAeExldCdzIExpbnV4IHNpbXVsYXRlZCBzaWduaW5nIGtleTogdW5yZWxhdGVk\nIGtleSBmcm9tIGEgZm9ydW0gcG9zdABSZXBvIE1pcnJvciA8YWRtaW5AbWlycm9y\nLmludmFsaWQ+ADIwMjMtMDktMDIAcnNhNDA5Ng==\n=idSS\n-----END PGP PUBLIC KEY BLOCK-----\n"
+content_type = "text/plain"
+[peer.services.80.pages."/old"]
+status = 301
+location = "http://mirror.example.org/"
+body = ""
+
+[[peer]]
+name = "api"
+addresses = ["203.0.113.50"]
+ttl = 49
+latency_ms = 24.0
+closed = "drop"
+[peer.services.443]
+kind = "https"
+[peer.services.443.pages."/v1/health"]
+body = "{\"status\": \"ok\"}\n"
+content_type = "application/json"
+
+[[peer]]
+name = "public-dns"
+addresses = ["198.51.100.53"]
+ttl = 57
+latency_ms = 9.0
+
+[[peer]]
+name = "packages.acme.example"
+addresses = ["203.0.113.80"]
+ttl = 50
+latency_ms = 21.0
+closed = "drop"
+[peer.services.443]
+kind = "https"
+server = "nginx"
+[peer.services.443.pages."/apt/"]
+body = "Acme Packages — apt repository\n==============================\n\nRepository:   https://packages.acme.example/apt stable main\nSigning key:  https://packages.acme.example/apt/acme-archive-keyring.asc\nFingerprint:  2150 BF63 78CF 96A1 E96D 304A D38F C56B 17EB EE75\n\nSetup (Debian 12, Ubuntu 22.04 and later):\n\n  sudo install -d -m 0755 /etc/apt/keyrings\n  curl -fsSL https://packages.acme.example/apt/acme-archive-keyring.asc | sudo gpg --dearmor -o /etc/apt/keyrings/acme.gpg\n  echo \"deb [signed-by=/etc/apt/keyrings/acme.gpg] https://packages.acme.example/apt stable main\" | sudo tee /etc/apt/sources.list.d/acme.list\n  sudo apt update && sudo apt install acme-agent\n\nAlways compare the fingerprint (gpg --show-keys FILE) with the one above.\n"
+content_type = "text/plain"
+[peer.services.443.pages."/apt/README.txt"]
+body = "Acme Packages — apt repository\n==============================\n\nRepository:   https://packages.acme.example/apt stable main\nSigning key:  https://packages.acme.example/apt/acme-archive-keyring.asc\nFingerprint:  2150 BF63 78CF 96A1 E96D 304A D38F C56B 17EB EE75\n\nSetup (Debian 12, Ubuntu 22.04 and later):\n\n  sudo install -d -m 0755 /etc/apt/keyrings\n  curl -fsSL https://packages.acme.example/apt/acme-archive-keyring.asc | sudo gpg --dearmor -o /etc/apt/keyrings/acme.gpg\n  echo \"deb [signed-by=/etc/apt/keyrings/acme.gpg] https://packages.acme.example/apt stable main\" | sudo tee /etc/apt/sources.list.d/acme.list\n  sudo apt update && sudo apt install acme-agent\n\nAlways compare the fingerprint (gpg --show-keys FILE) with the one above.\n"
+content_type = "text/plain"
+[peer.services.443.pages."/apt/acme-archive-keyring.asc"]
+body = "-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nmQEAdkxldCdzIExpbnV4IHNpbXVsYXRlZCBzaWduaW5nIGtleTogQWNtZSBQYWNr\nYWdlcyBhcmNoaXZlIDIwMjQAQWNtZSBQYWNrYWdlcyA8cGFja2FnZXNAYWNtZS5l\neGFtcGxlPgAyMDI0LTAzLTExAHJzYTQwOTY=\n=o4lI\n-----END PGP PUBLIC KEY BLOCK-----\n"
+content_type = "application/pgp-keys"
+[peer.services.80]
+kind = "http"
+server = "nginx"
+[peer.services.80.pages."/"]
+status = 301
+location = "https://packages.acme.example/apt/"
+body = ""
+
+[[peer]]
+name = "registry-1.docker.io"
+addresses = ["198.51.100.70"]
+ttl = 52
+latency_ms = 19.0
+closed = "drop"
+[peer.services.443]
+kind = "https"
+[peer.services.443.pages."/v2/"]
+body = "{}\n"
+content_type = "application/json"
+
+[[peer]]
+name = "registry"
+addresses = ["10.0.2.60"]
+mac = "52:54:00:aa:02:3c"
+[peer.services.443]
+kind = "https"
+[peer.services.443.pages."/v2/"]
+body = "{}\n"
+content_type = "application/json"
+
+# ---------------------------------------------------------------- DNS
+
+[[dns]]
+address = "10.0.2.3"
+zones = ["example.lan", "2.0.10.in-addr.arpa"]
+recursive = true
+[dns.records]
+"gateway.example.lan" = [{ type = "A", value = "10.0.2.2" }]
+"intranet.example.lan" = [{ type = "A", value = "10.0.2.20" }]
+"www.example.lan" = [{ type = "CNAME", value = "intranet.example.lan" }]
+"db.example.lan" = [{ type = "A", value = "10.0.2.30" }]
+"files.example.lan" = [{ type = "A", value = "10.0.2.40" }]
+"build.example.lan" = [{ type = "A", value = "10.0.2.45" }]
+"printer.example.lan" = [{ type = "A", value = "10.0.2.50" }]
+"mail.example.lan" = [{ type = "A", value = "10.0.2.25" }]
+"lab.example.lan" = [{ type = "A", value = "10.0.2.15" }]
+"registry.example.lan" = [{ type = "A", value = "10.0.2.60" }]
+"example.lan" = [{ type = "MX", value = "mail.example.lan", priority = 10 }, { type = "TXT", value = "v=spf1 mx -all" }]
+
+[[dns]]
+address = "198.51.100.53"
+recursive = true
+
+[public]
+"example.com" = [{ type = "A", value = "93.184.215.14" }, { type = "AAAA", value = "2606:2800:21f:cb07:6820:80da:af6b:8b2c" }, { type = "MX", value = ".", priority = 0 }, { type = "TXT", value = "v=spf1 -all" }]
+"www.example.com" = [{ type = "CNAME", value = "example.com" }]
+"mirror.example.org" = [{ type = "A", value = "198.51.100.10" }]
+"packages.acme.example" = [{ type = "A", value = "203.0.113.80" }]
+"registry-1.docker.io" = [{ type = "A", value = "198.51.100.70" }]
+"docker.io" = [{ type = "CNAME", value = "registry-1.docker.io" }]
+"api.example.net" = [{ type = "A", value = "203.0.113.50" }]
+"dns.example.net" = [{ type = "A", value = "198.51.100.53" }]
+"deb.debian.org" = [{ type = "CNAME", value = "mirror.example.org" }]
+"archive.ubuntu.com" = [{ type = "CNAME", value = "mirror.example.org" }]

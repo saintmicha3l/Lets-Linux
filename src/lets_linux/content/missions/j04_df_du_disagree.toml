@@ -1,0 +1,175 @@
+schema = 1
+
+[mission]
+id = "j04-df-du-disagree"
+title = "Deleted, But Still There"
+chapter = "J"
+kind = "troubleshooting"
+order = 5
+difficulty = 5
+requires = ["j03-disk-full", "g02-signals"]
+skills = ["j.deleted-open-files", "g.file-descriptors", "m.hypothesis-method"]
+review_for = ["j.capacity", "h.systemctl-control"]
+xp = 170
+estimated_minutes = 22
+
+[briefing]
+context = """
+The log filesystem of the appd service was nearly full. A colleague "fixed" it last night by
+deleting the 900 MB log file. This morning df still says the filesystem is 95% full, and
+du says the directory is practically empty. Who is lying? Free the space — appd must keep
+running. (sudo password: letslinux)
+"""
+concept = """
+A file's space is freed only when its last name is removed AND no process has it open. rm
+removes a name; a program that still writes to the file keeps it (and its blocks) alive. du
+adds up the files it can find by name, df asks the filesystem how many blocks are in use —
+so they disagree. sudo lsof +L1 lists open files with no names left ("(deleted)"); each
+process shows them in /proc/PID/fd. Restarting the program closes the file; truncating it
+through /proc/PID/fd/N frees the space without a restart.
+"""
+objectives = ["Notice df and du disagree", "Find the process holding a deleted file", "Reclaim the space without breaking the service", "Empty logs safely in the future"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "1G"
+partitions = [{ size = "rest", fs = "ext4", label = "applogs", mount = "/var/log/appd", fstab = true }]
+
+[[environment.setup]]
+action = "file"
+path = "/var/log/appd/appd.log"
+content = "2026-03-01 23:59:59 appd: request served\n"
+size = 943718400
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/appd"
+mode = "0755"
+content = """#!/bin/bash
+# appd: the application server (logs to /var/log/appd/appd.log)
+echo "appd: listening for requests"
+while true; do sleep 600; done
+"""
+
+[[environment.setup]]
+action = "service"
+name = "appd.service"
+enable = true
+start = true
+content = """[Unit]
+Description=Application server
+
+[Service]
+ExecStart=/usr/local/bin/appd
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "hold"
+unit = "appd.service"
+path = "/var/log/appd/appd.log"
+
+[[environment.setup]]
+action = "remove"
+path = "/var/log/appd/appd.log"
+
+[[task]]
+id = "measure"
+title = "Two opinions"
+kind = "troubleshooting"
+instructions = "Compare what df and du say about /var/log/appd."
+skills = { "j.deleted-open-files" = 1.0 }
+question = { prompt = "df -h /var/log/appd reports about 95% used. What does du -sh /var/log/appd report?", type = "choice", choices = ["About the same as df", "Almost nothing (a few kilobytes)", "More than df"], answer = 1 }
+hints = ["Run both: df -h /var/log/appd and du -sh /var/log/appd", "du only sees files that still have a name in a directory.", "(b): du finds a few KB, df counts about 900 MB."]
+explanation = "~900 MB are in use, but no file name leads to them."
+
+[[task]]
+id = "holder"
+title = "Who holds it?"
+kind = "troubleshooting"
+instructions = "Find the program that still has the deleted log file open."
+skills = { "j.deleted-open-files" = 1.0, "g.file-descriptors" = 1.0 }
+question = { prompt = "Which program keeps the deleted appd.log open?", type = "exact", accept = ["appd", "/usr/local/bin/appd", "appd.service"] }
+hints = ["lsof can list open files whose link count is zero.", "sudo lsof +L1   (or: sudo ls -l /proc/*/fd | grep deleted)", "appd itself: its file descriptor 3 still points to '/var/log/appd/appd.log (deleted)'."]
+explanation = "lsof +L1 shows appd with FD 3w on /var/log/appd/appd.log (deleted) and its size: the 900 MB are still allocated."
+
+[[task]]
+id = "reclaim"
+title = "Get the space back"
+kind = "troubleshooting"
+instructions = "Free the space held by the deleted file. appd must be running afterwards."
+skills = { "j.deleted-open-files" = 1.0, "j.disk-full-incident" = 0.5 }
+checks = [
+    { type = "filesystem_free", mount = "/var/log/appd", min_percent = 50 },
+    { type = "unit_state", unit = "appd.service", active = "active", sub = "running" },
+]
+persistent = true
+hints = [
+    "The space is freed when appd closes the file — or when the file is truncated through the descriptor appd holds.",
+    "Either restart the service (sudo systemctl restart appd) or empty the file through /proc: the PID comes from systemctl show -p MainPID --value appd (or pidof appd).",
+    "sudo systemctl restart appd && df -h /var/log/appd",
+]
+explanation = "When the last reference to the inode went away, the filesystem released its blocks: df and du agree again."
+
+[[task]]
+id = "lesson"
+title = "Next time"
+kind = "explanation"
+instructions = "The colleague asks how to empty a log file that a running program writes to."
+skills = { "j.deleted-open-files" = 1.0 }
+question = { prompt = "What should they do?", type = "choice", choices = ["rm it — the program will create a new one", "Truncate it in place: truncate -s 0 FILE (or : > FILE)", "mv it to /tmp"], answer = 1 }
+hints = ["Which of these frees the blocks while the program keeps its descriptor?", "Removing or moving a name does not touch the open file.", "(b)"]
+explanation = "Truncating keeps the inode the program writes to and frees its blocks. Better still: let logrotate (with copytruncate or a reload) or the journal manage logs."
+
+[debrief]
+summary = """
+df > du means blocks without names: files deleted while open. sudo lsof +L1 finds them;
+restarting the program or truncating /proc/PID/fd/N frees the space. Empty open logs with
+truncate, never with rm.
+"""
+alternatives = ["sudo truncate -s 0 /proc/$(pidof appd)/fd/3 keeps appd running without a restart", "find /proc/*/fd -lname '*(deleted)' lists deleted open files without lsof"]
+pitfalls = ["Deleting more files because df still looks full.", "Killing the service instead of restarting it.", "Truncating the wrong descriptor: check with ls -l /proc/PID/fd first."]
+next = "Next: a filesystem with free space that is still full."
+
+[[solution]]
+name = "lsof and restart"
+steps = [
+    "df -h /var/log/appd",
+    "du -sh /var/log/appd",
+    ":answer b",
+    { input = ["letslinux"] },
+    "sudo lsof +L1",
+    ":answer appd",
+    "sudo systemctl restart appd",
+    "df -h /var/log/appd",
+    ":answer b",
+]
+
+[[solution]]
+name = "/proc and truncate"
+steps = [
+    "du -sh /var/log/appd; df -h /var/log/appd",
+    ":answer Almost nothing (a few kilobytes)",
+    { input = ["letslinux"] },
+    "sudo ls -l /proc/$(pidof appd)/fd",
+    ":answer /usr/local/bin/appd",
+    "sudo truncate -s 0 /proc/$(pidof appd)/fd/3",
+    "df -h /var/log/appd",
+    ":answer Truncate it in place: truncate -s 0 FILE (or : > FILE)",
+]
+
+[[counterexample]]
+name = "stopping the service"
+steps = [
+    ":answer b",
+    ":answer appd",
+    { input = ["letslinux"] },
+    "sudo systemctl stop appd",
+    ":answer a",
+]

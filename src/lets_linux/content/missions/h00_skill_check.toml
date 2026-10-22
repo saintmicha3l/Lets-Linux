@@ -1,0 +1,262 @@
+schema = 1
+
+[mission]
+id = "h00-skill-check"
+title = "Skill Check H: Services and Logs"
+chapter = "H"
+placement = "H"
+kind = "assessment"
+order = 0
+difficulty = 4
+requires = []
+skills = ["h.failed-services", "h.systemctl-control", "h.enable-disable", "h.journalctl", "h.unit-files", "h.restart-policies", "h.service-dependencies", "h.timers", "h.targets-boot", "h.traditional-logs"]
+xp = 80
+estimated_minutes = 18
+sequential = false
+
+[briefing]
+context = """
+This skill check covers chapter H: failed services, starting and enabling units, the journal,
+writing unit files, restart policies, dependencies, timers, boot targets and log files. Tasks
+in any order; you have sudo (password: letslinux). Solve them all (one slip allowed) to test
+out of chapter H. Anything you cannot do is simply not counted — :submit ends the check.
+"""
+concept = "No hints: show what you can do on your own."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "debian"
+
+[environment.vars]
+svc = { choices = ["ledger", "stockd", "billing"] }
+noisy = { choices = ["mailrelay", "imgproc", "queue"] }
+cfg = { choices = ["relay.yml", "secrets.env", "routes.conf"] }
+app = { choices = ["webshop", "portal", "dashboard"] }
+db = { choices = ["pgdata", "mariadb-main", "redis-cache"] }
+
+[[environment.setup]]
+action = "user"
+name = "hello"
+system = true
+shell = "/usr/sbin/nologin"
+home = "/opt/hello"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/sbin/{{svc}}d"
+mode = "0755"
+content = "#!/bin/bash\n# {{svc}}d: a small daemon\necho \"{{svc}}d ready\"\nsleep 86400\n"
+
+[[environment.setup]]
+action = "service"
+name = "{{svc}}.service"
+start = true
+content = """[Unit]
+Description={{svc}} daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/{{svc}}d
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "journal"
+ago = 3600
+identifier = "{{noisy}}"
+priority = "err"
+message = "fatal: cannot open /etc/{{noisy}}/{{cfg}}: Permission denied"
+
+[[environment.setup]]
+action = "journal"
+ago = 3500
+identifier = "{{noisy}}"
+priority = "info"
+message = "shutting down after configuration error"
+
+[[environment.setup]]
+action = "file"
+path = "/opt/hello/run"
+mode = "0755"
+content = "#!/bin/bash\n# hello API\necho \"hello API listening\"\nsleep 86400\n"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/sbin/daemon-sleep"
+mode = "0755"
+content = "#!/bin/bash\nsleep 86400\n"
+
+[[environment.setup]]
+action = "service"
+name = "{{db}}.service"
+enable = true
+start = true
+content = "[Unit]\nDescription={{db}} database\n\n[Service]\nExecStart=/usr/local/sbin/daemon-sleep\n\n[Install]\nWantedBy=multi-user.target\n"
+
+[[environment.setup]]
+action = "service"
+name = "{{app}}.service"
+enable = true
+start = true
+content = "[Unit]\nDescription={{app}} web application\n\n[Service]\nExecStart=/usr/local/sbin/daemon-sleep\n\n[Install]\nWantedBy=multi-user.target\n"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/sbin/rotate-logs"
+mode = "0755"
+content = "#!/bin/bash\necho \"rotated $(date +%F)\" >> /var/log/rotate-logs.log\n"
+
+[[environment.setup]]
+action = "service"
+name = "rotate-logs.service"
+content = "[Unit]\nDescription=Rotate the application logs\n\n[Service]\nType=oneshot\nExecStart=/usr/local/sbin/rotate-logs\n"
+
+[[task]]
+id = "fix"
+title = "A service that will not start"
+kind = "assessment"
+instructions = "{{svc}}.service fails. Make it run — and start at every boot."
+skills = { "h.failed-services" = 1.0, "h.systemctl-control" = 1.0, "h.enable-disable" = 1.0, "h.unit-files" = 0.5 }
+checks = [
+    { type = "unit_state", unit = "{{svc}}.service", active = "active", sub = "running" },
+    { type = "unit_enabled", unit = "{{svc}}.service" },
+]
+explanation = "systemctl status {{svc}} shows status=203/EXEC: the program is in /usr/local/sbin. Fix ExecStart (an override with systemctl edit, or the unit), daemon-reload, then enable --now."
+
+[[task]]
+id = "journal"
+title = "Why it stopped"
+kind = "assessment"
+instructions = "The program {{noisy}} stopped about an hour ago after an error it logged to the journal."
+skills = { "h.journalctl" = 1.0 }
+question = { prompt = "Which file could it not open? (full path)", type = "exact", accept = ["/etc/{{noisy}}/{{cfg}}"] }
+explanation = "journalctl -t {{noisy}} (or -p err, --since '2 hours ago') shows its messages."
+
+[[task]]
+id = "unit"
+title = "A new service"
+kind = "assessment"
+instructions = """
+Create hello-api.service: it runs /opt/hello/run as the user hello, is restarted
+automatically when it crashes, starts at boot — and is running now.
+"""
+skills = { "h.unit-files" = 1.0, "h.restart-policies" = 1.0, "h.enable-disable" = 0.5 }
+checks = [
+    { type = "unit_state", unit = "hello-api.service", active = "active", sub = "running" },
+    { type = "unit_enabled", unit = "hello-api.service" },
+    { type = "unit_setting", unit = "hello-api.service", section = "Service", key = "User", value = "hello" },
+    { type = "unit_setting", unit = "hello-api.service", section = "Service", key = "Restart", regex = "^(on-failure|always|on-abnormal)$" },
+    { type = "unit_setting", unit = "hello-api.service", section = "Service", key = "ExecStart", regex = "^/opt/hello/run" },
+]
+explanation = "[Service] User=hello, ExecStart=/opt/hello/run, Restart=on-failure; [Install] WantedBy=multi-user.target — then daemon-reload and enable --now."
+
+[[task]]
+id = "order"
+title = "Start after the database"
+kind = "assessment"
+instructions = "{{app}}.service needs {{db}}.service: it must start after it, and must not run without it."
+skills = { "h.service-dependencies" = 1.0, "h.unit-files" = 0.5 }
+checks = [
+    { type = "unit_setting", unit = "{{app}}.service", section = "Unit", key = "After", regex = "(^|\\s){{db}}\\.service(\\s|$)" },
+    { type = "any_of", checks = [
+        { type = "unit_setting", unit = "{{app}}.service", section = "Unit", key = "Requires", regex = "(^|\\s){{db}}\\.service(\\s|$)" },
+        { type = "unit_setting", unit = "{{app}}.service", section = "Unit", key = "BindsTo", regex = "(^|\\s){{db}}\\.service(\\s|$)" },
+    ] },
+]
+explanation = "Ordering and requirement are separate: After={{db}}.service orders the start, Requires= pulls it in and stops {{app}} if it fails to start. Both in [Unit] (a drop-in is fine), then daemon-reload."
+
+[[task]]
+id = "timer"
+title = "Every night at three"
+kind = "assessment"
+instructions = "Run rotate-logs.service every day at 03:00 with a systemd timer that is active now and after reboots."
+skills = { "h.timers" = 1.0 }
+checks = [
+    { type = "unit_state", unit = "rotate-logs.timer", active = "active" },
+    { type = "unit_enabled", unit = "rotate-logs.timer" },
+    { type = "unit_setting", unit = "rotate-logs.timer", section = "Timer", key = "OnCalendar", regex = "^(\\*-\\*-\\* )?0?3:00(:00)?$" },
+]
+explanation = "rotate-logs.timer with [Timer] OnCalendar=*-*-* 03:00 and [Install] WantedBy=timers.target; enable --now; systemctl list-timers shows the next run."
+
+[[task]]
+id = "target"
+title = "How it boots"
+kind = "assessment"
+instructions = "Find out which systemd target this machine boots into by default."
+skills = { "h.targets-boot" = 1.0 }
+question = { prompt = "The default target?", type = "state", state = { command = "systemctl get-default" } }
+explanation = "systemctl get-default — multi-user.target for servers, graphical.target with a desktop."
+
+[[task]]
+id = "authlog"
+title = "The classic log files"
+kind = "assessment"
+instructions = "Besides the journal, rsyslog writes plain log files under /var/log on this Debian system."
+skills = { "h.traditional-logs" = 1.0 }
+question = { prompt = "Which file records sudo use and SSH logins?", type = "choice", choices = ["/var/log/syslog", "/var/log/auth.log", "/var/log/kern.log", "/var/log/dpkg.log"], answer = 1 }
+explanation = "auth.log receives the auth and authpriv facilities (on Fedora: /var/log/secure)."
+
+[debrief]
+summary = """
+The check covered chapter H's core. Solved tasks are evidence for their skills; chapter H's
+missions stay open to replay.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "units in /etc/systemd/system"
+steps = [
+    { input = ["letslinux"] },
+    "systemctl status {{svc}}.service --no-pager",
+    "sudo sed -i 's|/usr/local/bin/{{svc}}d|/usr/local/sbin/{{svc}}d|' /etc/systemd/system/{{svc}}.service",
+    "sudo systemctl daemon-reload && sudo systemctl enable --now {{svc}}.service",
+    "sudo systemctl restart {{svc}}.service",
+    "journalctl -t {{noisy}} --no-pager",
+    ":answer /etc/{{noisy}}/{{cfg}}",
+    { edit = "[Unit]\nDescription=Hello API\nAfter=network.target\n\n[Service]\nUser=hello\nExecStart=/opt/hello/run\nRestart=on-failure\n\n[Install]\nWantedBy=multi-user.target\n" },
+    "sudo nano /etc/systemd/system/hello-api.service",
+    "sudo mkdir -p /etc/systemd/system/{{app}}.service.d",
+    "printf '[Unit]\\nAfter={{db}}.service\\nRequires={{db}}.service\\n' | sudo tee /etc/systemd/system/{{app}}.service.d/database.conf",
+    "printf '[Unit]\\nDescription=Rotate logs nightly\\n\\n[Timer]\\nOnCalendar=*-*-* 03:00\\nPersistent=true\\n\\n[Install]\\nWantedBy=timers.target\\n' | sudo tee /etc/systemd/system/rotate-logs.timer",
+    "sudo systemctl daemon-reload",
+    "sudo systemctl enable --now hello-api.service rotate-logs.timer",
+    { answer_with = "systemctl get-default" },
+    ":answer 2",
+]
+
+[[solution]]
+name = "drop-ins and other forms"
+steps = [
+    { input = ["letslinux"] },
+    ":answer /var/log/auth.log",
+    "sudo -i",
+    "mkdir -p /etc/systemd/system/{{svc}}.service.d",
+    "printf '[Service]\\nExecStart=\\nExecStart=/usr/local/sbin/{{svc}}d\\n' > /etc/systemd/system/{{svc}}.service.d/path.conf",
+    "printf '[Unit]\\nDescription=Hello API\\n[Service]\\nExecStart=/opt/hello/run\\nUser=hello\\nRestart=always\\n[Install]\\nWantedBy=multi-user.target\\n' > /etc/systemd/system/hello-api.service",
+    "sed -i 's/^\\[Unit\\]$/[Unit]\\nAfter={{db}}.service\\nBindsTo={{db}}.service/' /etc/systemd/system/{{app}}.service",
+    "printf '[Timer]\\nOnCalendar=03:00\\n[Install]\\nWantedBy=timers.target\\n' > /etc/systemd/system/rotate-logs.timer",
+    "systemctl daemon-reload",
+    "systemctl enable {{svc}} hello-api rotate-logs.timer",
+    "systemctl restart {{svc}}; systemctl start hello-api rotate-logs.timer",
+    "journalctl -p err --no-pager | grep {{noisy}}",
+    "exit",
+    ":answer /etc/{{noisy}}/{{cfg}}",
+    { answer_with = "systemctl get-default" },
+]
+
+[[counterexample]]
+name = "started by hand, wrong order directive"
+steps = [
+    { input = ["letslinux"] },
+    "sudo sed -i 's|/usr/local/bin/{{svc}}d|/usr/local/sbin/{{svc}}d|' /etc/systemd/system/{{svc}}.service",
+    "sudo systemctl daemon-reload && sudo systemctl restart {{svc}}.service",
+    ":answer /etc/{{noisy}}/{{cfg}}",
+    "printf '[Unit]\\nDescription=Hello API\\n[Service]\\nUser=hello\\nExecStart=/opt/hello/run\\n[Install]\\nWantedBy=multi-user.target\\n' | sudo tee /etc/systemd/system/hello-api.service",
+    "printf '[Unit]\\nWants={{db}}.service\\n' | sudo mkdir -p /etc/systemd/system/{{app}}.service.d",
+    "printf '[Timer]\\nOnCalendar=daily\\n[Install]\\nWantedBy=timers.target\\n' | sudo tee /etc/systemd/system/rotate-logs.timer",
+    "sudo systemctl daemon-reload && sudo systemctl enable --now hello-api rotate-logs.timer",
+    { answer_with = "systemctl get-default" },
+    ":answer 2",
+]

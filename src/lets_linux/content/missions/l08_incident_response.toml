@@ -1,0 +1,232 @@
+schema = 1
+
+[mission]
+id = "l08-incident-response"
+title = "Someone Got In"
+chapter = "L"
+kind = "troubleshooting"
+order = 10
+difficulty = 7
+requires = ["l01-ssh-hardening", "l07-suspicious-process", "i07-firewall"]
+skills = ["l.incident-response", "l.audit-logging", "l.account-security"]
+review_for = ["l.firewall-hardening", "d.user-management", "i.ssh-keys"]
+xp = 300
+estimated_minutes = 45
+
+[briefing]
+context = """
+The intrusion detection system reports an outgoing connection from this Debian server to an
+unknown host on port 4444 — the default of many attack tools. Treat it as a break-in: find
+out how the attacker got in and what they changed, cut them off, remove every way back in,
+and answer the incident manager's questions. Do not reboot (memory evidence) and do not
+delete logs. (sudo password: letslinux)
+"""
+concept = """
+Incident response follows an order: identify (what happened, since when), contain (cut the
+attacker off: block their address, lock the abused account, end their processes), eradicate
+(remove what they left behind: accounts, keys, scheduled jobs, programs) and recover (secure
+the way they came in), documenting as you go. Evidence: lastb and last (/var/log/btmp,
+/var/log/wtmp), /var/log/auth.log with sshd's 'Accepted'/'Failed' lines and sudo's 'COMMAND='
+lines, ss -tnp for live connections, /etc/passwd (awk -F: '$3==0' finds every account with
+UID 0), authorized_keys files. Contain before you eradicate: an attacker who still has a
+shell watches you clean up.
+"""
+objectives = ["Reconstruct how and when the attacker got in", "Find what they changed as root", "Contain: block, lock, kill", "Eradicate backdoors", "Keep legitimate access working"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+attacker = { choices = ["203.0.113.77", "198.51.100.66", "192.0.2.143"] }
+
+[[environment.setup]]
+action = "run"
+command = "useradd -m -s /bin/bash -c 'Deployment' deploy && echo 'deploy:summer2024' | chpasswd && echo 'deploy ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/deploy && chmod 440 /etc/sudoers.d/deploy && mkdir -p /home/deploy/.ssh && echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOv7rJ1Nf0tq7cF2b9V3x0Bv1cI2c4u9pX5hD3eW0kQm ci@build' > /home/deploy/.ssh/authorized_keys && chown -R deploy:deploy /home/deploy/.ssh && chmod 700 /home/deploy/.ssh && chmod 600 /home/deploy/.ssh/authorized_keys"
+
+[[environment.setup]]
+action = "ssh_logins"
+entries = [
+    { user = "learner", from = "10.0.2.20", ago = 600, duration = 35 },
+    { user = "admin", from = "{{attacker}}", ago = 200, failures = 6, success = false },
+    { user = "test", from = "{{attacker}}", ago = 196, failures = 4, success = false },
+    { user = "root", from = "{{attacker}}", ago = 192, failures = 9, success = false },
+    { user = "deploy", from = "{{attacker}}", ago = 185, failures = 5, duration = 22, sudo = [
+        "/usr/bin/id",
+        "/usr/sbin/useradd -o -u 0 -g 0 -M -d /root -s /bin/bash sysupdate",
+        "/usr/bin/tee -a /root/.ssh/authorized_keys",
+        "/usr/bin/tee -a /home/deploy/.ssh/authorized_keys",
+    ] },
+]
+
+[[environment.setup]]
+action = "run"
+command = "useradd -o -u 0 -g 0 -M -d /root -s /bin/bash sysupdate && echo 'sysupdate:toor123' | chpasswd && mkdir -p /root/.ssh && chmod 700 /root/.ssh && echo 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDk3x9 root@kali' >> /root/.ssh/authorized_keys && echo 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDk3x9 root@kali' >> /home/deploy/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys"
+
+[[environment.setup]]
+action = "process"
+comm = "bash"
+argv = ["bash", "-i"]
+user = "deploy"
+cwd = "/home/deploy"
+age_minutes = 165
+connect = ["{{attacker}}:4444"]
+
+[[task]]
+id = "entry"
+title = "The way in"
+kind = "troubleshooting"
+instructions = "Find out which account the attacker used to log in."
+skills = { "l.audit-logging" = 1.0, "l.incident-response" = 0.5 }
+question = { prompt = "Which account?", type = "exact", accept = ["deploy"] }
+hints = [
+    "Failed logins: sudo lastb | head -30. Successful ones: last.",
+    "Which account has a successful login from the same address as the failures? grep 'Accepted' /var/log/auth.log",
+    "deploy — after five wrong guesses, the sixth password was right.",
+]
+explanation = "Password guessing over SSH: a list of user names first, then deploy with a weak password."
+
+[[task]]
+id = "when"
+title = "Since when?"
+kind = "troubleshooting"
+instructions = "Every later finding is measured against the time of the break-in."
+skills = { "l.audit-logging" = 1.0 }
+question = { prompt = "At what time (HH:MM) did the attacker log in?", type = "state", state = { command = "last -i deploy | awk '/{{attacker}}/ {print $7; exit}'" } }
+hints = ["last deploy shows deploy's sessions with their source.", "The session from {{attacker}}.", "Read the login time column (the fifth to seventh fields are the date)."]
+explanation = "Anything changed on the system after this time is suspect — logs, accounts, files (find / -newermt …)."
+
+[[task]]
+id = "changes"
+title = "What did they do as root?"
+kind = "troubleshooting"
+instructions = "deploy may run every command as root without a password. Find what the attacker did with that."
+skills = { "l.audit-logging" = 1.0, "l.account-security" = 0.5 }
+question = { prompt = "What is the name of the account the attacker created?", type = "exact", accept = ["sysupdate"] }
+hints = ["sudo logs every command: grep 'COMMAND=' /var/log/auth.log", "One command is useradd -o -u 0 …: a second account with UID 0, i.e. a second root.", "sysupdate. awk -F: '$3 == 0' /etc/passwd shows it next to root."]
+explanation = "A UID-0 account with its own password, plus SSH keys appended for root and deploy: three ways back in."
+
+[[task]]
+id = "contain"
+title = "Contain"
+kind = "independent"
+instructions = "Cut the attacker off: block all traffic from their address (it must stay blocked after a reboot), lock the deploy account, end the attacker's still-running shell, and take away deploy's passwordless root rights. Your own access must keep working."
+skills = { "l.incident-response" = 1.0, "l.account-security" = 1.0, "l.firewall-hardening" = 0.5 }
+checks = [
+    { type = "firewall_blocks", from = "{{attacker}}", port = 22 },
+    { type = "command_result", user = "root", command = "ss -tn", stdout_not_contains = ["{{attacker}}"] },
+    { type = "user_exists", name = "deploy", locked = true },
+    { type = "command_result", user = "root", command = "sudo -l -U deploy", stdout_not_contains = ["NOPASSWD"] },
+    { type = "port_open_from", from = "intranet", port = 22 },
+    { type = "after_reboot", checks = [{ type = "firewall_blocks", from = "{{attacker}}", port = 22 }, { type = "port_open_from", from = "intranet", port = 22 }] },
+]
+hints = [
+    "Block: nftables is installed — a table with an input chain and a rule 'ip saddr {{attacker}} drop'; save it in /etc/nftables.conf and enable nftables.service so it survives a reboot.",
+    "Lock: sudo usermod -L deploy (and sudo chage -E 0 deploy blocks key logins too). Kill: sudo ss -tnp shows the shell's PID; sudo pkill -KILL -u deploy. Sudo: sudo rm /etc/sudoers.d/deploy",
+    "sudo sh -c 'printf \"flush ruleset\\ntable inet filter {\\n chain input {\\n  type filter hook input priority filter; policy accept;\\n  ip saddr {{attacker}} drop\\n }\\n}\\n\" > /etc/nftables.conf' && sudo systemctl enable --now nftables",
+]
+explanation = "The attacker's address is dropped (now and after a reboot), their shell is gone and deploy can neither log in nor use sudo. Other hosts — the game tested from intranet — still reach SSH."
+
+[[task]]
+id = "eradicate"
+title = "Eradicate"
+kind = "independent"
+instructions = "Remove everything the attacker left to come back: the extra root account and their SSH keys (for root and for deploy). The build server's key in deploy's authorized_keys (ci@build) stays."
+skills = { "l.incident-response" = 1.0, "l.account-security" = 1.0, "i.ssh-keys" = 0.5 }
+checks = [
+    { type = "user_absent", name = "sysupdate" },
+    { type = "command_result", user = "root", command = "awk -F: '$3 == 0 {print $1}' /etc/passwd", stdout_equals = "root\n" },
+    { type = "command_result", user = "root", command = "grep -c sysupdate /etc/shadow", stdout_equals = "0\n" },
+    { type = "command_result", user = "root", command = "cat /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys 2>/dev/null", stdout_not_contains = ["kali"] },
+    { type = "file_contains", path = "/home/deploy/.ssh/authorized_keys", text = "ci@build" },
+    { type = "path_exists", path = "/root", kind = "dir" },
+    { type = "path_exists", path = "/root/.bashrc" },
+]
+hints = [
+    "userdel refuses ('currently used by process 1') because UID 0 is in use — by root. userdel -f removes the account anyway. Never userdel -r it: its home is /root!",
+    "sudo userdel -f sysupdate; check with awk -F: '$3 == 0' /etc/passwd and grep sysupdate /etc/shadow",
+    "Keys: sudo sed -i '/root@kali/d' /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys",
+]
+explanation = "No second root, no foreign keys; the legitimate key stays. Before deploy is unlocked again it needs a strong password (or none at all: keys only) and no blanket sudo rights."
+
+[[task]]
+id = "order"
+title = "Why this order?"
+kind = "explanation"
+instructions = "The incident manager asks why you did not start by deleting the backdoor account."
+skills = { "l.incident-response" = 1.0 }
+question = { prompt = "Why contain before eradicating?", type = "choice", choices = ["It is faster", "While the attacker still has a shell or a way in, they see the cleanup and can re-create backdoors or destroy evidence", "Eradication is optional"], answer = 1 }
+hints = ["The attacker's shell was still connected.", "What could they do while you delete sysupdate?", "(b)"]
+explanation = "Cut the attacker off first, then clean up — and keep the logs: they are the timeline of the report."
+
+[debrief]
+summary = """
+Identify (lastb, last, auth.log: Failed → Accepted → sudo COMMAND=, ss -tnp) → contain
+(firewall drop, usermod -L/chage -E 0, kill sessions, revoke sudo) → eradicate (UID-0
+accounts, authorized_keys, cron, units) → recover (strong authentication, least privilege)
+→ report with the timeline.
+"""
+alternatives = ["ufw deny from ADDRESS (Ubuntu) or firewall-cmd --add-rich-rule … drop (Fedora)", "Rebuilding the server from a known-good image is often the safer recovery after root compromise", "fail2ban automates blocking after repeated failures"]
+pitfalls = ["Rebooting or wiping first: running processes and their connections are evidence.", "userdel -r on an account whose home is /root.", "Blocking the attacker only at runtime: the next reboot opens the door again.", "Forgetting the second and third backdoor once the first is found."]
+next = "Chapter L ends with concepts: threat models and mandatory access control."
+
+[[solution]]
+name = "nftables and userdel -f"
+steps = [
+    { input = ["letslinux"] },
+    "sudo lastb | head",
+    "grep Accepted /var/log/auth.log",
+    ":answer deploy",
+    "last -i deploy",
+    { answer_with = "last -i deploy | grep {{attacker}} | head -1 | awk '{print $7}'" },
+    "grep 'COMMAND=' /var/log/auth.log",
+    ":answer sysupdate",
+    "sudo ss -tnp",
+    "sudo sh -c 'printf \"flush ruleset\\ntable inet filter {\\n\\tchain input {\\n\\t\\ttype filter hook input priority filter; policy accept;\\n\\t\\tip saddr {{attacker}} drop\\n\\t}\\n}\\n\" > /etc/nftables.conf'",
+    "sudo systemctl enable --now nftables",
+    "sudo usermod -L deploy",
+    "sudo chage -E 0 deploy",
+    "sudo pkill -KILL -u deploy",
+    "sudo rm /etc/sudoers.d/deploy",
+    "sudo userdel -f sysupdate",
+    "sudo sed -i '/root@kali/d' /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys",
+    ":answer b",
+]
+
+[[solution]]
+name = "nft commands and passwd -l"
+steps = [
+    { input = ["letslinux"] },
+    "last | head",
+    ":answer deploy",
+    { answer_with = "grep 'Accepted password for deploy from {{attacker}}' /var/log/auth.log | cut -c12-16" },
+    "sudo awk -F: '$3 == 0' /etc/passwd",
+    ":answer sysupdate",
+    "sudo nft add table inet filter",
+    "sudo nft add chain inet filter input '{ type filter hook input priority 0 ; policy accept ; }'",
+    "sudo nft add rule inet filter input ip saddr {{attacker}} drop",
+    "sudo sh -c 'echo \"flush ruleset\" > /etc/nftables.conf; nft list ruleset >> /etc/nftables.conf'",
+    "sudo systemctl enable nftables",
+    "sudo passwd -l deploy",
+    "sudo kill -9 $(sudo ss -tnp | grep {{attacker}} | grep -o 'pid=[0-9]*' | cut -d= -f2)",
+    "sudo sed -i 's/^deploy .*//' /etc/sudoers.d/deploy",
+    "sudo sed -i '/^sysupdate:/d' /etc/passwd /etc/shadow",
+    "sudo sed -i '/kali/d' /root/.ssh/authorized_keys",
+    "sudo sed -i '/kali/d' /home/deploy/.ssh/authorized_keys",
+    ":answer While the attacker still has a shell or a way in, they see the cleanup and can re-create backdoors or destroy evidence",
+]
+
+[[counterexample]]
+name = "runtime block, userdel -r"
+steps = [
+    { input = ["letslinux"] },
+    ":answer deploy",
+    ":answer 00:00",
+    ":answer sysupdate",
+    "sudo nft add table inet filter",
+    "sudo nft add chain inet filter input '{ type filter hook input priority 0 ; policy accept ; }'",
+    "sudo nft add rule inet filter input ip saddr {{attacker}} drop",
+    "sudo usermod -L deploy",
+    "sudo pkill -KILL -u deploy",
+    "sudo rm /etc/sudoers.d/deploy",
+    "sudo userdel -f -r sysupdate",
+    ":answer b",
+]

@@ -1,0 +1,137 @@
+schema = 1
+
+[mission]
+id = "a01-first-contact"
+title = "First Contact"
+chapter = "A"
+kind = "lesson"
+order = 1
+difficulty = 1
+skills = ["a.terminal-vs-shell", "a.identity-basics", "a.echo-printf"]
+xp = 40
+estimated_minutes = 6
+
+[briefing]
+context = """
+Welcome to Pinecone Analytics! You are the newest member of the operations team, and this
+is your first login to one of our lab servers. Before you change anything, find your
+bearings: who are you on this machine, and which machine is it?
+"""
+concept = """
+The window you type into is a terminal. The program reading what you type is the shell
+(here, bash). The text before your cursor is the prompt: user@host:directory$. Type a
+command and press Enter; the shell runs it and prints the output.
+"""
+objectives = [
+    "Read the shell prompt",
+    "Identify your user name and the host name with whoami and hostname",
+    "Print text with echo",
+]
+
+[environment]
+profile = "debian"
+hostname = "pine-lab-{{n}}"
+[environment.vars]
+n = { range = [10, 99] }
+
+[[environment.setup]]
+action = "file"
+path = "~/WELCOME.txt"
+content = "Welcome to pine-lab-{{n}}. Your first task: find out who and where you are.\n"
+
+[[task]]
+id = "whoami"
+title = "Who are you?"
+kind = "guided"
+instructions = "Type `whoami` and press Enter. It prints the name of the user you are logged in as."
+skills = { "a.identity-basics" = 1.0 }
+checks = [{ type = "output_contains", text = "learner", command = ["whoami", "id"] }]
+hints = [
+    "Commands are typed after the prompt. This one takes no options.",
+    "The command is spelled w-h-o-a-m-i, as in 'who am I?'.",
+    "Type: whoami",
+]
+explanation = "whoami prints your effective user name. Every program you start runs as this user."
+
+[[task]]
+id = "hostname"
+title = "Which machine is this?"
+kind = "guided"
+instructions = "Use the `hostname` command to print the machine's name. Compare it with the prompt."
+skills = { "a.identity-basics" = 1.0 }
+checks = [{ type = "output_contains", text = "pine-lab-{{n}}", command = ["hostname", "uname", "cat", "hostnamectl"] }]
+hints = [
+    "There is a command named after exactly what you want to know.",
+    "Try the command `hostname`.",
+    "Type: hostname",
+]
+explanation = "The host name also appears in your prompt between @ and :. On a network of many servers, checking it before acting is a vital habit."
+
+[[task]]
+id = "prompt"
+title = "Read the prompt"
+kind = "prediction"
+instructions = "Look at your prompt carefully."
+skills = { "a.terminal-vs-shell" = 1.0 }
+question = { prompt = "In the prompt learner@pine-lab-{{n}}:~$ what does the ~ mean?", type = "choice", choices = [
+    "The command history is empty",
+    "You are in your home directory",
+    "You are the root user",
+    "The shell is waiting for more input",
+], answer = 1 }
+hints = [
+    "The part after the colon shows where you are in the filesystem.",
+    "~ is shorthand for a particular directory that belongs to you.",
+    "The answer is (b): ~ means your home directory, /home/learner.",
+]
+explanation = "The prompt shows user@host:current-directory. ~ is shorthand for your home directory. A prompt ending in $ means an ordinary user; # means root."
+
+[[task]]
+id = "echo"
+title = "Say something"
+kind = "guided"
+instructions = "The `echo` command prints its arguments. Make the shell print the exact text: Hello, Linux"
+skills = { "a.echo-printf" = 1.0 }
+checks = [{ type = "output_contains", text = "Hello, Linux", command = ["echo", "printf"] }]
+hints = [
+    "echo prints whatever words you give it, separated by spaces.",
+    "Put the text after the command name: echo followed by the words.",
+    "Type: echo Hello, Linux",
+]
+explanation = "echo prints its arguments separated by single spaces, followed by a newline. You will use it constantly to show values and write text into files."
+
+[[task]]
+id = "welcome"
+title = "Read the welcome note"
+kind = "independent"
+instructions = "There is a file named WELCOME.txt in your home directory. Display its contents."
+skills = { "a.terminal-vs-shell" = 0.5, "b.view-files" = 0.5 }
+checks = [{ type = "output_contains", text = "Your first task: find out who and where you are", command = ["cat", "less", "more", "head", "tail", "grep", "nl", "sed", "awk"] }]
+hints = [
+    "There is a command that prints the contents of files to the terminal.",
+    "The cat command prints files: cat FILENAME",
+    "Type: cat WELCOME.txt",
+]
+explanation = "cat (short for concatenate) prints files. head, tail, less and others would have worked too: what matters is that you saw the content."
+
+[debrief]
+summary = """
+You identified yourself (whoami), the machine (hostname), read the prompt, printed text with
+echo and displayed a file. These small checks are what experienced administrators do first on
+any unfamiliar system.
+"""
+alternatives = ["id shows your user name plus numeric IDs and groups", "uname -n also prints the host name", "less WELCOME.txt shows a file one screen at a time"]
+pitfalls = ["Linux is case-sensitive: Whoami is not the same command as whoami."]
+next = "Next: the anatomy of a command — options, arguments and operands."
+
+[[solution]]
+name = "the commands named in the instructions"
+steps = ["whoami", "hostname", ":answer b", "echo Hello, Linux", "cat WELCOME.txt"]
+
+[[solution]]
+name = "alternative tools"
+steps = ["id", "uname -n", ":answer You are in your home directory", "printf 'Hello, Linux\\n'", "head WELCOME.txt"]
+
+[[counterexample]]
+name = "typing the expected text without running the right tools"
+steps = ["echo learner", "echo pine-lab", ":answer a"]

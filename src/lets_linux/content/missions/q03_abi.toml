@@ -1,0 +1,209 @@
+schema = 1
+
+[mission]
+id = "q03-abi"
+title = "It Works on My Machine"
+chapter = "Q"
+kind = "troubleshooting"
+order = 7
+difficulty = 6
+requires = ["q02-shared-libraries"]
+skills = ["q.abi-environment", "q.shared-libraries"]
+review_for = ["q.toolchain", "r.distro-families"]
+xp = 220
+estimated_minutes = 30
+
+[briefing]
+context = """
+A developer built the invoicing tool on the team's Fedora 41 build machine and copied the
+program to ~/bin on this Debian 12 server. "It works on my machine!" — here it does not
+start. The source is in ~/invoice. Find out why, and give this server a working
+invoice-tool without upgrading the operating system.
+"""
+concept = """
+A program is compiled against the C library of the machine that builds it. glibc versions
+its symbols: a program records the newest version of each function it uses (objdump -p,
+"Version References": GLIBC_2.34, GLIBC_2.38 …), and the loader refuses to start it where
+the installed glibc is older: "version `GLIBC_2.38' not found". ldd --version shows the
+installed glibc. The compatibility runs one way: glibc keeps every old symbol version, so a
+program built on an older system runs on newer ones — never reliably the other way round.
+Fixes: build on the oldest system you must support (or in a container of it), or rebuild
+on the target — adapting the code when it uses functions the older library lacks (strlcpy
+arrived in glibc 2.38).
+"""
+objectives = ["Read a glibc version error", "Compare required and installed symbol versions", "Rebuild for the target system", "Explain glibc's backward compatibility"]
+
+[environment]
+profile = "debian"
+packages = ["build-essential", "binutils"]
+
+[[environment.setup]]
+action = "remote"
+host = "build"
+profile = "fedora"
+user = "dev"
+password = "fedora-dev"
+packages = ["gcc", "make"]
+fetch = [{ from = "~/invoice/invoice-tool", to = "/home/learner/bin/invoice-tool", mode = "0755", owner = "learner" }]
+
+[[environment.setup.steps]]
+action = "file"
+path = "~/invoice/invoice.c"
+content = """/* invoice-tool: print an invoice header */
+#include <stdio.h>
+#include <string.h>
+
+int main(int argc, char *argv[])
+{
+    char customer[16];
+
+    if (argc < 2) {
+        fprintf(stderr, "usage: invoice-tool CUSTOMER\\n");
+        return 1;
+    }
+    strlcpy(customer, argv[1], sizeof customer);
+    printf("INVOICE for %s: 3 items, total 129.90 EUR\\n", customer);
+    return 0;
+}
+"""
+
+[[environment.setup.steps]]
+action = "run"
+command = "cd /home/dev/invoice && gcc -Wall -O2 -o invoice-tool invoice.c"
+
+[[environment.setup]]
+action = "dir"
+path = "/home/learner/invoice"
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/invoice/invoice.c"
+owner = "learner"
+group = "learner"
+content = """/* invoice-tool: print an invoice header */
+#include <stdio.h>
+#include <string.h>
+
+int main(int argc, char *argv[])
+{
+    char customer[16];
+
+    if (argc < 2) {
+        fprintf(stderr, "usage: invoice-tool CUSTOMER\\n");
+        return 1;
+    }
+    strlcpy(customer, argv[1], sizeof customer);
+    printf("INVOICE for %s: 3 items, total 129.90 EUR\\n", customer);
+    return 0;
+}
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/invoice/Makefile"
+owner = "learner"
+group = "learner"
+content = """CC = gcc
+CFLAGS = -Wall -O2
+PREFIX = $(HOME)
+
+invoice-tool: invoice.c
+\t$(CC) $(CFLAGS) -o $@ $<
+
+install: invoice-tool
+\tmkdir -p $(PREFIX)/bin
+\tcp invoice-tool $(PREFIX)/bin/
+
+.PHONY: install
+"""
+
+[[task]]
+id = "need"
+title = "What does it want?"
+kind = "troubleshooting"
+instructions = "Run ~/bin/invoice-tool ACME and read the loader's complaint."
+skills = { "q.abi-environment" = 1.0 }
+question = { prompt = "Which glibc symbol version does the program require that is missing here?", type = "exact", accept = ["GLIBC_2.38", "2.38", "glibc 2.38"] }
+hints = ["The message names the library and the version.", "objdump -p ~/bin/invoice-tool lists the Version References.", "GLIBC_2.38"]
+explanation = "The program was linked against Fedora 41's glibc 2.40 and uses strlcpy, which exists only since glibc 2.38 — so it records GLIBC_2.38 as a requirement."
+
+[[task]]
+id = "have"
+title = "What is here?"
+kind = "troubleshooting"
+instructions = "Find out which glibc this server has."
+skills = { "q.abi-environment" = 1.0 }
+question = { prompt = "Which glibc version is installed on this server?", type = "state", state = { command = "ldd --version | head -1 | awk '{print $NF}'" } }
+hints = ["ldd --version prints it on the first line.", "Or: /lib/x86_64-linux-gnu/libc.so.6 run as a program; dpkg -l libc6.", "2.36 (Debian 12)"]
+explanation = "glibc 2.36: everything up to GLIBC_2.36 is there, GLIBC_2.38 is not."
+
+[[task]]
+id = "rebuild"
+title = "Build it for this system"
+kind = "independent"
+instructions = "Give this server a working ~/bin/invoice-tool built here, from the source in ~/invoice (make install puts it into ~/bin). It must still cut customer names to 15 characters."
+skills = { "q.abi-environment" = 1.0, "q.toolchain" = 0.5 }
+checks = [
+    { type = "command_result", user = "learner", command = "~/bin/invoice-tool 'ACME Corporation International'", status = 0, stdout_equals = "INVOICE for ACME Corporatio: 3 items, total 129.90 EUR\n" },
+    { type = "command_result", user = "learner", command = "objdump -p ~/bin/invoice-tool", status = 0, stdout_not_contains = ["GLIBC_2.38"] },
+]
+hints = ["cd ~/invoice && make install — then read why it fails here.", "Debian's glibc 2.36 has no strlcpy. snprintf(customer, sizeof customer, \"%s\", argv[1]) copies and cuts the same way.", "sed -i 's/strlcpy(customer, argv\\[1\\], sizeof customer)/snprintf(customer, sizeof customer, \"%s\", argv[1])/' invoice.c; make install"]
+explanation = "Built against glibc 2.36 the program needs only versions this system has (GLIBC_2.34 for the start-up code). The source change keeps the behaviour: snprintf writes at most size-1 characters and always terminates the string."
+
+[[task]]
+id = "direction"
+title = "The other way round"
+kind = "explanation"
+instructions = "The developer asks whether your new build will run on their Fedora 41 machine."
+skills = { "q.abi-environment" = 1.0 }
+question = { prompt = "Will the program built on Debian 12 (glibc 2.36) run on Fedora 41 (glibc 2.40)?", type = "choice", choices = ["No: every glibc only runs programs built against exactly itself", "Yes: newer glibc keeps providing the old symbol versions, so programs built on older systems keep working", "Only if it is linked statically"], answer = 1 }
+hints = ["Is GLIBC_2.34 among the versions glibc 2.40 provides?", "Backward compatibility: old symbol versions stay.", "(b)"]
+explanation = "That is why vendors build on the oldest distribution they support. Other libraries are less careful than glibc: their soname changes (libssl.so.1.1 → libssl.so.3) when they break compatibility."
+
+[debrief]
+summary = """
+"version `GLIBC_2.xx' not found" = built against a newer glibc. objdump -p PROGRAM shows what
+it requires, ldd --version what is installed. Build on the oldest target (or in a container
+of it) or rebuild on the target, replacing functions the older library lacks.
+"""
+alternatives = ["Build inside a container of the target distribution: podman run -v ~/src:/src debian:12 make", "Static linking (gcc -static) avoids the dependency — at the cost of size and security updates", "Ship the program in a container image together with its libraries"]
+pitfalls = ["Copying a newer glibc onto an older system — that breaks everything else.", "Using LD_LIBRARY_PATH to load a different libc.so.6.", "Testing only on the build machine."]
+next = "Next: build systems — letting make decide what to rebuild."
+
+[[solution]]
+name = "sed and make"
+steps = [
+    "~/bin/invoice-tool ACME",
+    ":answer GLIBC_2.38",
+    "ldd --version",
+    { answer_with = "ldd --version | head -1 | awk '{print $NF}'" },
+    "cd ~/invoice",
+    "make install",
+    "sed -i 's/strlcpy(customer, argv\\[1\\], sizeof customer)/snprintf(customer, sizeof customer, \"%s\", argv[1])/' invoice.c",
+    "make install",
+    "~/bin/invoice-tool 'ACME Corporation International'",
+    ":answer b",
+]
+
+[[solution]]
+name = "objdump and gcc by hand"
+steps = [
+    "objdump -p ~/bin/invoice-tool",
+    ":answer 2.38",
+    "/lib/x86_64-linux-gnu/libc.so.6",
+    { answer_with = "ldd --version | head -1 | awk '{print $NF}'" },
+    "sed -i 's/strlcpy(customer, argv\\[1\\], sizeof customer);/strncpy(customer, argv[1], sizeof customer - 1); customer[sizeof customer - 1] = 0;/' ~/invoice/invoice.c",
+    "gcc -Wall -O2 -o ~/bin/invoice-tool ~/invoice/invoice.c",
+    ":answer Yes: newer glibc keeps providing the old symbol versions, so programs built on older systems keep working",
+]
+
+[[counterexample]]
+name = "no rebuild"
+steps = [
+    ":answer GLIBC_2.38",
+    { answer_with = "ldd --version | head -1 | awk '{print $NF}'" },
+    "cd ~/invoice && make",
+    ":answer b",
+]

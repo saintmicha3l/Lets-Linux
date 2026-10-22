@@ -1,0 +1,200 @@
+schema = 1
+
+[mission]
+id = "h06-order-of-things"
+title = "Order of Things"
+chapter = "H"
+kind = "troubleshooting"
+order = 7
+difficulty = 4
+requires = ["h04-wont-start", "h03-your-own-service", "h05b-boot-and-order"]
+skills = ["h.service-dependencies", "h.targets-boot", "h.service-concepts"]
+review_for = ["h.unit-files", "h.journalctl"]
+xp = 200
+estimated_minutes = 30
+
+[briefing]
+context = """
+After every reboot of this shop server, the storefront service is dead and someone starts it
+by hand — then it works. The storefront needs the shop database (shop-db.service). Also, the
+server was installed from a desktop image and still boots into the graphical target,
+although it has no screen. Make the boot do the right things in the right order.
+(sudo password: letslinux)
+"""
+concept = """
+systemd starts units in parallel unless told otherwise. Two separate kinds of dependency
+exist: requirement — Wants=X (start X too, carry on if it fails) and Requires=X (start X
+too; fail if it cannot start, and stop when X is stopped) — and ordering — After=X / Before=X
+(wait until X has started / start X later). They are independent: Requires= without After=
+starts both at the same time. A service that needs another one usually wants both lines.
+WantedBy=multi-user.target in [Install] is what systemctl enable turns into a link in
+multi-user.target.wants/. Targets group units into states of the system: multi-user.target
+(a server with network, no graphical login), graphical.target (multi-user plus a display
+manager), rescue.target, emergency.target; systemctl get-default / set-default choose the
+one booted into, systemctl list-dependencies shows what a unit pulls in.
+"""
+objectives = ["Diagnose a boot-order failure from the journal", "Add Requires= and After= with a drop-in", "Explain requirement versus ordering", "Choose the default boot target"]
+
+[environment]
+profile = "debian"
+packages = ["netcat"]
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/storefront"
+mode = "0755"
+content = """#!/bin/sh
+# storefront: the shop's web front end (simulated with nc)
+if ! nc -z 127.0.0.1 5432; then
+    echo "storefront: cannot connect to the shop database at 127.0.0.1:5432" >&2
+    exit 1
+fi
+echo "storefront: database reachable, serving on :8080"
+exec nc -lk 8080
+"""
+
+[[environment.setup]]
+action = "service"
+name = "shop-db.service"
+enable = true
+content = """[Unit]
+Description=Shop database (simulated with nc)
+
+[Service]
+ExecStart=/usr/bin/nc -lk 5432
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "service"
+name = "storefront.service"
+enable = true
+content = """[Unit]
+Description=Shop storefront
+
+[Service]
+ExecStart=/usr/local/bin/storefront
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "run"
+command = "systemctl set-default graphical.target"
+
+[[environment.setup]]
+action = "reboot"
+
+[[task]]
+id = "why"
+title = "What happened at boot?"
+kind = "troubleshooting"
+instructions = "Find out from the journal why storefront failed at this boot."
+skills = { "h.service-dependencies" = 1.0, "h.journalctl" = 0.5 }
+question = { prompt = "What could storefront not reach when it started?", type = "regex", accept = ["(?i).*(database|5432|shop-db).*"] }
+hints = ["systemctl status storefront shows the latest log lines.", "journalctl -b -u storefront -u shop-db shows both, in time order.", "The shop database on port 5432 — it was started after storefront, or at the same time."]
+explanation = "Both services were started in the same boot transaction without any ordering between them; storefront happened to run first and found nothing on port 5432."
+
+[[task]]
+id = "order"
+title = "Database first"
+kind = "independent"
+instructions = "Make storefront start only after shop-db is up, and only together with it (if the database is stopped, storefront must stop too). Keep the vendor's unit file as it is, and make it work at the next boot."
+skills = { "h.service-dependencies" = 1.0, "h.unit-files" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "systemctl show -p Requires -p After storefront.service", stdout_regex = "(?s)(?=.*Requires=[^\\n]*shop-db\\.service)(?=.*After=[^\\n]*shop-db\\.service)" },
+    { type = "command_result", user = "root", command = "systemctl start storefront shop-db >/dev/null 2>&1; systemctl stop shop-db; systemctl is-active storefront", stdout_equals = "inactive\n" },
+    { type = "after_reboot", checks = [{ type = "unit_state", unit = "storefront.service", active = "active" }] },
+]
+hints = ["Two settings: one for requirement, one for order. Put them in a drop-in (systemctl edit storefront).", "[Unit] Requires=shop-db.service and After=shop-db.service — then daemon-reload (systemctl edit does it).", "printf '[Unit]\\nRequires=shop-db.service\\nAfter=shop-db.service\\n' | sudo tee /etc/systemd/system/storefront.service.d/db.conf (after sudo mkdir -p the directory); sudo systemctl daemon-reload"]
+explanation = "Requires= makes shop-db part of every storefront start and stops storefront with it; After= makes systemd wait for shop-db before starting storefront. Either one alone would not have been enough."
+
+[[task]]
+id = "who"
+title = "Who starts it?"
+kind = "troubleshooting"
+instructions = "Find out which target pulls storefront in at boot."
+skills = { "h.targets-boot" = 1.0, "h.service-concepts" = 0.5 }
+question = { prompt = "Which target wants storefront.service?", type = "exact", accept = ["multi-user.target", "multi-user"] }
+hints = ["systemctl enable created a symbolic link: find / -name storefront.service shows where.", "Or: systemctl list-dependencies multi-user.target | grep storefront; the [Install] section says WantedBy=.", "multi-user.target"]
+explanation = "/etc/systemd/system/multi-user.target.wants/storefront.service is the link enable created from WantedBy=. graphical.target in turn requires multi-user.target."
+
+[[task]]
+id = "target"
+title = "A server, not a desktop"
+kind = "independent"
+instructions = "Make the server boot into the multi-user target from now on."
+skills = { "h.targets-boot" = 1.0 }
+checks = [
+    { type = "after_reboot", checks = [{ type = "command_result", user = "root", command = "systemctl get-default", stdout_equals = "multi-user.target\n" }] },
+]
+hints = ["systemctl get-default shows the current choice.", "systemctl set-default TARGET changes the default.target link.", "sudo systemctl set-default multi-user.target"]
+explanation = "set-default replaces the symbolic link /etc/systemd/system/default.target. To switch the running system without a reboot, systemctl isolate multi-user.target would stop what the graphical target added."
+
+[[task]]
+id = "concepts"
+title = "Wants, Requires, After"
+kind = "explanation"
+instructions = "One question to sum up."
+skills = { "h.service-dependencies" = 1.0 }
+question = { prompt = "A unit has Wants=b.service but no After=. What does systemd do at start?", type = "choice", choices = ["Starts b first, then the unit", "Starts both (in parallel, no particular order) and carries on even if b fails", "Refuses to start the unit until b runs"], answer = 1 }
+hints = ["Wants is a weak requirement.", "Ordering is a separate setting.", "(b)"]
+explanation = "Wants/Requires say what is started; After/Before say in which order. Most real dependencies need both a requirement and an ordering line."
+
+[debrief]
+summary = """
+Requirement: Wants= (weak), Requires= (strong, stops with it), BindsTo=; ordering: After=,
+Before=. Put them in drop-ins (systemctl edit). systemctl list-dependencies UNIT, systemctl
+show -p Requires,After UNIT. Targets: get-default/set-default, multi-user vs graphical.
+"""
+alternatives = ["Make the client robust instead: Restart=on-failure with RestartSec=", "Socket activation lets clients connect before the server is ready", "systemd-analyze critical-chain shows what the boot waited for"]
+pitfalls = ["Requires= without After=: still started at the same time.", "After= alone: the dependency is not even started.", "Editing the vendor's unit in /usr/lib/systemd/system (overwritten by updates)."]
+next = "Chapter H is complete — next, scheduling."
+
+[[solution]]
+name = "systemctl edit"
+steps = [
+    { input = ["letslinux"] },
+    "systemctl status storefront",
+    "sudo journalctl -b -u storefront -u shop-db",
+    ":answer the database on port 5432",
+    { edit = "[Unit]\nRequires=shop-db.service\nAfter=shop-db.service\n" },
+    "sudo systemctl edit storefront",
+    "sudo systemctl start storefront",
+    "systemctl list-dependencies multi-user.target",
+    ":answer multi-user.target",
+    "sudo systemctl set-default multi-user.target",
+    ":answer b",
+]
+
+[[solution]]
+name = "drop-in by hand"
+steps = [
+    { input = ["letslinux"] },
+    "journalctl -u storefront --no-pager",
+    ":answer 5432",
+    "sudo mkdir -p /etc/systemd/system/storefront.service.d",
+    "printf '[Unit]\\nRequires=shop-db.service\\nAfter=shop-db.service\\n' | sudo tee /etc/systemd/system/storefront.service.d/db.conf",
+    "sudo systemctl daemon-reload",
+    "sudo systemctl restart storefront",
+    "ls /etc/systemd/system/multi-user.target.wants",
+    ":answer multi-user",
+    "sudo ln -sf /lib/systemd/system/multi-user.target /etc/systemd/system/default.target",
+    ":answer Starts both (in parallel, no particular order) and carries on even if b fails",
+]
+
+[[counterexample]]
+name = "only After"
+steps = [
+    { input = ["letslinux"] },
+    ":answer database",
+    "sudo mkdir -p /etc/systemd/system/storefront.service.d",
+    "printf '[Unit]\\nAfter=shop-db.service\\n' | sudo tee /etc/systemd/system/storefront.service.d/db.conf",
+    "sudo systemctl daemon-reload",
+    ":answer multi-user.target",
+    "sudo systemctl set-default multi-user.target",
+    ":answer b",
+]

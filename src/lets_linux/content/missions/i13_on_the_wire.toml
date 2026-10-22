@@ -1,0 +1,244 @@
+schema = 1
+
+[mission]
+id = "i13-on-the-wire"
+title = "On the Wire"
+chapter = "I"
+kind = "troubleshooting"
+order = 13
+difficulty = 4
+requires = ["i03-no-connection", "i11-trust-issues"]
+skills = ["i.packet-capture-concepts", "i.net-troubleshooting", "i.ports-sockets"]
+review_for = ["i.ports-sockets", "i.tls-concepts"]
+xp = 190
+estimated_minutes = 30
+sequential = false
+
+[briefing]
+context = """
+Three things to look into on this server, and the logs alone do not explain them:
+inventory-sync keeps failing to reach the database, the security team wants to know whether
+the report uploader sends its credentials safely, and the switch shows odd traffic towards
+this machine. You may capture on this server — it is yours, and the security team asked
+for it. (sudo password: letslinux)
+"""
+concept = """
+tcpdump shows the packets themselves. Each line names the time, the source and destination
+(address.port) and, for TCP, the flags: [S] opens a connection, [S.] accepts it, [.]
+acknowledges, [P.] carries data, [F.] closes, [R] or [R.] resets. A filter narrows the
+capture: tcpdump -nn -c 20 'tcp port 5432', 'host 10.0.2.66', 'udp port 53'. -A prints the
+data as text — readable for HTTP, not for TLS. In the foreground tcpdump waits for traffic;
+to watch your own commands, capture in the background to a file (-w), then read it (-r).
+"""
+objectives = ["Read TCP flags in a capture", "Find where a program really connects", "See what plain HTTP reveals", "Spot a port scan", "Know when capturing is appropriate"]
+
+[environment]
+profile = "debian"
+packages = ["tcpdump"]
+
+[environment.vars]
+password = { choices = ["Spring2026!", "Rep0rt-Tuesday", "Upl0ad#2026"] }
+
+[[environment.setup]]
+action = "file"
+path = "/etc/inventory-sync.conf"
+content = """# inventory-sync: push stock levels to the database
+db_host=db.example.lan
+db_port=5433
+interval=10
+"""
+
+[[environment.setup]]
+action = "process"
+comm = "inventory-sync"
+argv = ["/usr/local/bin/inventory-sync", "--config", "/etc/inventory-sync.conf"]
+user = "nobody"
+
+[[environment.setup]]
+action = "traffic"
+name = "inventory-sync"
+process = "inventory-sync"
+to = "db.example.lan"
+port_from = { file = "/etc/inventory-sync.conf", key = "db_port" }
+every = 10
+log = "inventory-sync"
+
+[[environment.setup]]
+action = "peer"
+name = "reports"
+addresses = ["10.0.2.23"]
+mac = "52:54:00:aa:02:17"
+services = { 80 = { kind = "http", pages = { "/upload" = { body = "{\"stored\": true}\n", content_type = "application/json" } } }, 443 = { kind = "https", tls = { names = ["reports.example.lan"] }, pages = { "/upload" = { body = "{\"stored\": true}\n", content_type = "application/json" } } } }
+
+[[environment.setup]]
+action = "dns"
+name = "reports.example.lan"
+value = "10.0.2.23"
+
+[[environment.setup]]
+action = "file"
+path = "/etc/report-uploader.conf"
+content = """# report-uploader: sends the nightly report summary
+url=http://reports.example.lan/upload
+user=svc-report
+"""
+
+[[environment.setup]]
+action = "process"
+comm = "report-uploader"
+argv = ["/usr/bin/python3", "/usr/local/bin/report-uploader"]
+user = "nobody"
+
+[[environment.setup]]
+action = "traffic"
+name = "report-uploader"
+process = "report-uploader"
+url_from = { file = "/etc/report-uploader.conf", key = "url" }
+user = "svc-report:{{password}}"
+body = "{\"report\": \"daily\", \"rows\": 1288}"
+every = 20
+first = 7
+
+[[environment.setup]]
+action = "peer"
+name = "laptop-17"
+addresses = ["10.0.2.66"]
+mac = "3c:52:82:4e:19:a7"
+
+[[environment.setup]]
+action = "traffic"
+name = "scan"
+from = "10.0.2.66"
+ports = [21, 22, 23, 25, 80, 110, 139, 443, 445, 3306, 3389, 5432, 8080]
+every = 30
+first = 12
+
+[[task]]
+id = "flags"
+title = "Reading the wire"
+kind = "guided"
+instructions = "Watch inventory-sync: `sudo tcpdump -nn -c 6 host db.example.lan`. What happens to its connection attempts?"
+skills = { "i.packet-capture-concepts" = 1.0 }
+question = { prompt = "A [S] from this server is answered by [R.] from db. What does that mean?", type = "choice", choices = ["The packets are dropped by a firewall", "db answers, but nothing listens on that port: the connection is refused", "The database rejected the password", "The connection worked and was closed normally"], answer = 1 }
+hints = ["[S] is the first packet of a TCP connection; [R] means reset.", "A reset in answer to a SYN is how a host says 'connection refused'. A firewall that drops would leave the SYNs unanswered."]
+explanation = "SYN → RST: the host is reachable and refuses — no listener on that port (or a firewall that rejects). SYN, SYN, SYN with no answer: dropped. SYN → SYN-ACK → ACK: connected."
+
+[[task]]
+id = "port"
+title = "Where it really goes"
+kind = "troubleshooting"
+instructions = "The database listens on PostgreSQL's port. Which port does inventory-sync try — and fix its configuration so that it connects."
+skills = { "i.packet-capture-concepts" = 1.0, "i.net-troubleshooting" = 1.0, "i.ports-sockets" = 0.5 }
+question = { prompt = "Which destination port does inventory-sync use?", type = "number", accept = ["5433"] }
+checks = [
+    { type = "command_result", user = "root", command = "grep -E '^db_port=' /etc/inventory-sync.conf", stdout_equals = "db_port=5432" },
+    { type = "can_reach", host = "db.example.lan", port = 5432 },
+]
+persistent = true
+hints = ["In tcpdump -nn output the destination is ADDRESS.PORT after the '>'.", "It tries 5433; PostgreSQL listens on 5432 (grep postgresql /etc/services). The port comes from /etc/inventory-sync.conf.", "Answer 5433; then: sudo sed -i 's/^db_port=5433/db_port=5432/' /etc/inventory-sync.conf"]
+explanation = "The capture shows what a program really does — whatever its documentation says. Here a typo in its configuration: the next attempts complete the handshake."
+
+[[task]]
+id = "password"
+title = "What everybody can read"
+kind = "troubleshooting"
+instructions = "Capture the report uploader's traffic with payloads (`-A`) and find out what an eavesdropper on the network would learn."
+skills = { "i.packet-capture-concepts" = 1.0 }
+question = { prompt = "Which password does the uploader send for svc-report?", type = "state", state = { value = "{{password}}" } }
+hints = [
+    "sudo tcpdump -nn -A -c 6 'tcp port 80 and host reports.example.lan' — look for the Authorization header.",
+    "'Basic' authentication is only base64: echo THE-STRING | base64 -d prints user:password.",
+    "The part after the colon of the decoded string is the password.",
+]
+explanation = "HTTP Basic authentication over plain HTTP sends the password in every request, merely base64-encoded — anyone on the path can read it. That password must now be considered compromised and changed."
+
+[[task]]
+id = "encrypt"
+title = "Not in clear text any more"
+kind = "independent"
+instructions = "The reports server also offers HTTPS. Make the uploader use it, so that its requests can no longer be read on the wire."
+skills = { "i.packet-capture-concepts" = 1.0, "i.tls-concepts" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "grep -E '^url=' /etc/report-uploader.conf", stdout_equals = "url=https://reports.example.lan/upload" },
+]
+persistent = true
+hints = ["The URL comes from /etc/report-uploader.conf.", "https:// instead of http:// — the port follows (443).", "sudo sed -i 's#^url=http://#url=https://#' /etc/report-uploader.conf"]
+explanation = "With TLS a capture still shows who talks to whom, when and how much — but not the request: -A prints unreadable bytes. (The leaked password still has to be rotated.)"
+
+[[task]]
+id = "scanner"
+title = "Knock, knock"
+kind = "troubleshooting"
+instructions = "Something on the LAN is trying one port after another on this server. Find it."
+skills = { "i.packet-capture-concepts" = 1.0, "i.net-troubleshooting" = 0.5 }
+question = { prompt = "Which address is scanning this server?", type = "regex", accept = ["\\s*10\\.0\\.2\\.66\\s*"] }
+hints = ["Capture incoming connection attempts that are not your own traffic: sudo tcpdump -nn -c 30 'tcp and not host db.example.lan and not host reports.example.lan'", "One source sends SYNs to many different ports within milliseconds — and gets resets back for the closed ones.", "10.0.2.66"]
+explanation = "A SYN to port after port is a port scan (here a laptop, probably infected or someone curious). The resets show the closed ports; a SYN-ACK — port 22 — an open one. Next steps: tell the security team; a firewall with a drop policy would leave the scanner guessing."
+
+[[task]]
+id = "ethics"
+title = "When to capture"
+kind = "explanation"
+instructions = "A colleague wants to keep a capture of all traffic on the office LAN running 'in case we need it'."
+skills = { "i.packet-capture-concepts" = 1.0 }
+question = { prompt = "What is right?", type = "choice", choices = ["Fine: captures are harmless metadata", "Capture only with authorisation, as narrowly as the question needs (filter, -c, duration); captures can contain passwords and personal data — store them protected and delete them when done", "Captures are only a problem on wireless networks", "Encrypt the traffic first, then capture everything"], answer = 1 }
+hints = ["Think about what you just read in the uploader's packets.", "Captures contain whatever the traffic contains.", "Answer (b)."]
+explanation = "Packet capture is a diagnostic tool with privacy and legal weight: get permission, filter to what you need, protect the files (they may contain credentials) and delete them afterwards."
+
+[debrief]
+summary = """
+tcpdump -nn -c N 'FILTER' shows what really happens: SYN→RST refused, SYN repeated dropped,
+SYN→SYN-ACK connected; -A reads unencrypted payloads (including credentials); TLS hides the
+content but not the metadata. Capture narrowly, with permission, and protect the files.
+"""
+alternatives = ["tcpdump -w FILE in the background, then tcpdump -r FILE (or Wireshark on a workstation)", "ss -tnp shows the sockets a program has — but not failed attempts or payloads", "tshark -i enp0s3 -f 'port 53' (Wireshark's command line)"]
+pitfalls = ["Forgetting -n: name lookups slow tcpdump down and add DNS traffic of their own", "Capturing without a filter on a busy server", "Leaving capture files with credentials lying around"]
+next = "Chapter I is complete."
+
+[[solution]]
+name = "tcpdump in the foreground"
+steps = [
+    { input = ["letslinux"] },
+    "sudo tcpdump -nn -c 6 host db.example.lan",
+    ":answer 2",
+    ":answer 5433",
+    "sudo sed -i 's/^db_port=5433/db_port=5432/' /etc/inventory-sync.conf",
+    "sudo tcpdump -nn -A -c 6 'tcp port 80 and host reports.example.lan'",
+    ":answer {{password}}",
+    "sudo sed -i 's#^url=http://#url=https://#' /etc/report-uploader.conf",
+    "sudo tcpdump -nn -c 20 'tcp and not host db.example.lan and not host reports.example.lan'",
+    ":answer 10.0.2.66",
+    ":answer 2",
+]
+
+[[solution]]
+name = "a capture file"
+steps = [
+    { input = ["letslinux"] },
+    "sudo tcpdump -nn -w /root/all.pcap &",
+    "sleep 60",
+    "sudo kill %1",
+    "sudo tcpdump -nn -r /root/all.pcap 'port 5433' | head",
+    ":answer 2",
+    ":answer 5433",
+    { edit = "# inventory-sync: push stock levels to the database\ndb_host=db.example.lan\ndb_port=5432\ninterval=10\n" },
+    "sudo nano /etc/inventory-sync.conf",
+    "sudo tcpdump -nn -A -r /root/all.pcap 'port 80' | grep Authorization",
+    ":answer {{password}}",
+    "sudo sed -i 's#http://reports#https://reports#' /etc/report-uploader.conf",
+    "sudo tcpdump -nn -r /root/all.pcap 'host 10.0.2.66' | head -5",
+    ":answer 10.0.2.66",
+    "sudo rm /root/all.pcap",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "wrong port, no encryption"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    ":answer 5432",
+    ":answer {{password}}",
+    ":answer 10.0.2.66",
+    ":answer 2",
+]

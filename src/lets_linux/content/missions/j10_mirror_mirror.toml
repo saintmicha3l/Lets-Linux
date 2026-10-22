@@ -1,0 +1,190 @@
+schema = 1
+
+[mission]
+id = "j10-mirror-mirror"
+title = "Mirror, Mirror"
+chapter = "J"
+kind = "troubleshooting"
+order = 12
+difficulty = 4
+requires = ["j01-new-disk", "h01-meet-the-services", "h02-reading-the-journal", "j06b-checking-filesystems"]
+skills = ["j.raid-concepts", "j.block-devices", "h.journalctl"]
+review_for = ["j.block-devices", "j.fstab-persistence"]
+xp = 200
+estimated_minutes = 30
+
+[briefing]
+context = """
+The team share /srv/shared lives on a software RAID 1: two 5 GB disks mirroring each other
+as /dev/md0. Monitoring sent a mail at night: "DegradedArray event on /dev/md0". The
+data-centre technician has already put a new disk into the free slot. Get the mirror back
+to full strength. (sudo password: letslinux)
+"""
+concept = """
+md (software RAID) combines disks into one device. RAID 1 writes everything to every
+member, so one disk can fail without losing data — the array keeps running "degraded".
+cat /proc/mdstat shows each array, its members ((F) = failed) and their state: [UU] both
+up, [U_] one missing. mdadm --detail /dev/md0 tells the story in full. Replacing a disk:
+mark it failed (if the kernel has not already), remove it from the array, add the new one —
+the array rebuilds (recovery) onto it while it stays in use.
+"""
+objectives = ["Read /proc/mdstat and mdadm --detail", "Find a failed disk", "Replace a member of a mirror", "Explain what RAID does not protect against"]
+
+[environment]
+profile = "debian"
+packages = ["mdadm"]
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "5G"
+
+[[environment.setup]]
+action = "disk"
+name = "sdc"
+size = "5G"
+
+[[environment.setup]]
+action = "run"
+command = "mdadm --create /dev/md0 --run --level=1 --raid-devices=2 /dev/sdb /dev/sdc"
+
+[[environment.setup]]
+action = "clock"
+seconds = 300
+
+[[environment.setup]]
+action = "run"
+command = "mkfs.ext4 -q /dev/md0 && mkdir -p /srv/shared && echo '/dev/md0 /srv/shared ext4 defaults 0 2' >> /etc/fstab && mount /srv/shared && mdadm --detail --scan >> /etc/mdadm/mdadm.conf"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/shared/projects/roadmap.txt"
+content = "Q3: migrate the build farm\nQ4: retire the old file server\n"
+
+[[environment.setup]]
+action = "clock"
+seconds = 21600
+
+[[environment.setup]]
+action = "disk_fail"
+name = "sdc"
+ago_minutes = 340
+
+[[environment.setup]]
+action = "disk"
+name = "sdd"
+size = "5G"
+
+[[task]]
+id = "which"
+title = "Which one?"
+kind = "troubleshooting"
+instructions = "Look at the array: `cat /proc/mdstat`, `sudo mdadm --detail /dev/md0` (and the kernel's messages)."
+skills = { "j.raid-concepts" = 1.0, "h.journalctl" = 0.5 }
+question = { prompt = "Which disk failed? (e.g. sdx)", type = "regex", accept = ["\\s*(/dev/)?sdc\\s*"] }
+hints = ["In /proc/mdstat, a failed member is marked (F).", "mdadm --detail lists it as 'faulty'; journalctl -k shows the I/O errors.", "sdc"]
+explanation = "[2/1] [U_]: two slots, one working. The kernel logged I/O errors on sdc, and md disabled it — the array runs on sdb alone."
+
+[[task]]
+id = "data"
+title = "Is anything lost?"
+kind = "guided"
+instructions = "Check /srv/shared."
+skills = { "j.raid-concepts" = 1.0 }
+question = { prompt = "What is the state of the data?", type = "choice", choices = ["Lost: the array stopped", "Intact and in use: the mirror runs degraded on the remaining disk — but one more failure would lose it", "Read-only until the disk is replaced", "Half of the files are missing"], answer = 1 }
+hints = ["ls /srv/shared/projects", "RAID 1 keeps a full copy on every member."]
+explanation = "Nothing is lost and nobody noticed — which is both the strength of RAID and its danger: until the mirror is rebuilt there is no redundancy left."
+
+[[task]]
+id = "replace"
+title = "Swap the disk"
+kind = "independent"
+instructions = "Take the failed disk out of the array and put the new disk (/dev/sdd) in its place."
+skills = { "j.raid-concepts" = 1.0, "j.block-devices" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "mdadm --detail /dev/md0", stdout_contains = "/dev/sdd", stdout_not_contains = "/dev/sdc" },
+    { type = "command_result", user = "root", command = "grep -c '(F)' /proc/mdstat", stdout_equals = "0" },
+]
+persistent = true
+hints = [
+    "Removing works only for members that are failed (or spare): mdadm /dev/md0 --remove …; the new disk joins with --add.",
+    "lsblk confirms /dev/sdd is the new, empty 5 GB disk.",
+    "sudo mdadm /dev/md0 --remove /dev/sdc; sudo mdadm /dev/md0 --add /dev/sdd",
+]
+explanation = "--add put sdd into the empty slot, and md started copying the data from sdb onto it (recovery)."
+
+[[task]]
+id = "rebuilt"
+title = "Whole again"
+kind = "independent"
+instructions = "Wait for the rebuild to finish, and make sure the mirror comes back complete — mounted on /srv/shared — after a reboot."
+skills = { "j.raid-concepts" = 1.0 }
+checks = [
+    { type = "command_result", command = "cat /proc/mdstat", stdout_contains = "[UU]" },
+    { type = "after_reboot", checks = [
+        { type = "command_result", command = "cat /proc/mdstat", stdout_regex = "md0 : active raid1 .*\\n.*\\[UU\\]" },
+        { type = "command_result", command = "findmnt -n -o SOURCE /srv/shared", stdout_contains = "/dev/md0" },
+    ] },
+]
+persistent = true
+hints = ["cat /proc/mdstat shows the progress and an estimate (finish=…).", "watch is not needed: sleep for a minute and look again.", "sleep 60; cat /proc/mdstat"]
+explanation = "The ARRAY line in /etc/mdadm/mdadm.conf names the array by its UUID, so it is assembled as md0 at boot, whichever disks it is made of now."
+
+[[task]]
+id = "backup"
+title = "Mirror is not backup"
+kind = "explanation"
+instructions = "Your manager says: 'Great, with RAID we can stop the nightly backups of /srv/shared.'"
+skills = { "j.raid-concepts" = 1.0 }
+question = { prompt = "What do you answer?", type = "choice", choices = ["Agreed: two copies are enough", "No: RAID protects against a disk failing, not against deletion, corruption, ransomware, a stolen server or a fire — the mirror copies those faithfully", "Only RAID 5 replaces backups", "Backups are only needed for databases"], answer = 1 }
+hints = ["What happens to the mirror when somebody runs rm -rf on the share?", "Both disks are deleted from at the same moment.", "Answer (b)."]
+explanation = "RAID is about availability: the system keeps running through a disk failure. Backups are about recoverability: getting yesterday's data back. You need both."
+
+[debrief]
+summary = """
+cat /proc/mdstat ([U_], (F)) and mdadm --detail show a degraded array; replace a member with
+mdadm /dev/mdX --fail/--remove OLD and --add NEW, then watch the recovery. Keep
+/etc/mdadm/mdadm.conf current (mdadm --detail --scan) so arrays keep their names. RAID is
+not a backup.
+"""
+alternatives = ["mdadm --manage /dev/md0 --replace /dev/sdc --with /dev/sdd (replace while the old disk still works)", "A hot spare (--add to a healthy array) takes over automatically when a member fails", "Monitoring: mdadm --monitor (mdmonitor.service) mails on DegradedArray"]
+pitfalls = ["Removing the healthy disk instead of the failed one", "Rebooting a degraded array before it is rebuilt", "Treating RAID as a backup"]
+next = "Next: a disk that is useless to a thief."
+
+[[solution]]
+name = "mdstat, remove, add, wait"
+steps = [
+    { input = ["letslinux"] },
+    "cat /proc/mdstat",
+    ":answer sdc",
+    "ls /srv/shared/projects",
+    ":answer 2",
+    "sudo mdadm /dev/md0 --remove /dev/sdc",
+    "sudo mdadm /dev/md0 --add /dev/sdd",
+    "sleep 90",
+    "cat /proc/mdstat",
+    ":answer 2",
+]
+
+[[solution]]
+name = "fail and remove in one go"
+steps = [
+    { input = ["letslinux"] },
+    "sudo mdadm --detail /dev/md0",
+    ":answer /dev/sdc",
+    ":answer 2",
+    "sudo mdadm --manage /dev/md0 --fail /dev/sdc --remove /dev/sdc",
+    "sudo mdadm --manage /dev/md0 --add /dev/sdd",
+    "sleep 120",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "added without removing, no waiting"
+steps = [
+    { input = ["letslinux"] },
+    ":answer sdc",
+    ":answer 2",
+    "sudo mdadm /dev/md0 --add /dev/sdd",
+    ":answer 2",
+]

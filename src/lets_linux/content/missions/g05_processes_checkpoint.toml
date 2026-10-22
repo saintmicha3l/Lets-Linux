@@ -1,0 +1,145 @@
+schema = 1
+
+[mission]
+id = "g05-processes-checkpoint"
+title = "Processes Check-up"
+chapter = "G"
+kind = "assessment"
+order = 6
+difficulty = 3
+requires = ["g04-slow-server"]
+skills = ["g.nohup-disown", "g.ps-inspection", "g.nice-priority", "g.signals-kill"]
+review_for = ["g.nohup-disown", "g.ps-inspection", "g.nice-priority", "g.signals-kill"]
+xp = 120
+estimated_minutes = 15
+sequential = false
+
+[briefing]
+context = """
+Four jobs on a busy machine, in any order and without instructions on how. The nightly
+export must be started now and keep running when you disconnect; a batch process hogs the
+CPU; and one process refuses to die.
+"""
+concept = "Use what you know: nohup / disown / setsid, ps and top, renice, kill and its signals."
+objectives = ["Keep a job running after logout", "Find and deprioritise a CPU hog", "Stop an unresponsive process"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/bin/nightly-export"
+owner = "learner"
+group = "learner"
+mode = "0755"
+content = """#!/bin/sh
+# nightly-export: copies the day's records (runs for about an hour)
+echo "export started"
+sleep 3600
+echo "export finished"
+"""
+
+[[environment.setup]]
+action = "process"
+comm = "{{hog}}"
+argv = ["/usr/local/bin/{{hog}}", "--all"]
+user = "learner"
+state = "R"
+cpu = 97.0
+pid_var = "hog_pid"
+
+[[environment.setup]]
+action = "process"
+comm = "sync-agent"
+argv = ["/usr/local/bin/sync-agent", "--watch", "/srv"]
+user = "learner"
+ignore = ["TERM", "INT", "HUP"]
+pid_var = "agent_pid"
+
+[environment.vars]
+hog = { choices = ["thumbnailer", "reindexer", "compressor", "transcoder"] }
+
+[[task]]
+id = "export"
+title = "Keep it running"
+kind = "independent"
+instructions = "Start ~/bin/nightly-export in the background so that it keeps running when your terminal disconnects."
+skills = { "g.nohup-disown" = 1.0 }
+checks = [
+    { type = "survives_hangup", args_regex = "nightly-export" },
+]
+hints = ["A background job (&) is still sent SIGHUP when the terminal hangs up.", "nohup makes the program ignore SIGHUP; disown removes a job from the shell's list (so the shell does not forward SIGHUP).", "nohup ~/bin/nightly-export &   (or: ~/bin/nightly-export &  then  disown)"]
+explanation = "nohup sets SIGHUP to ignored and sends terminal output to nohup.out; disown leaves the job out of the shell's hangup broadcast; setsid starts a new session without a terminal. tmux or screen keep a whole session alive."
+
+[[task]]
+id = "hog"
+title = "Who eats the CPU?"
+kind = "independent"
+instructions = "Find the process using the most CPU."
+skills = { "g.ps-inspection" = 1.0 }
+question = { prompt = "What is its PID?", type = "state", state = { pid_of = "{{hog}}" } }
+hints = ["top sorts by CPU; ps can too.", "ps -eo pid,pcpu,comm --sort=-pcpu | head", "It is {{hog}}."]
+explanation = "ps --sort=-pcpu (or top) answers it in one line."
+
+[[task]]
+id = "nice"
+title = "Lower its priority"
+kind = "independent"
+instructions = "The CPU hog may keep running, but it must give way to everything else: give it a niceness of at least 10."
+skills = { "g.nice-priority" = 1.0 }
+checks = [
+    { type = "process_running", comm = "{{hog}}", min_nice = 10 },
+]
+hints = ["renice changes the niceness of a running process.", "Higher niceness means lower priority; you may raise your own processes' niceness without sudo.", "renice -n 15 -p {{hog_pid}}"]
+explanation = "A nice 15 process still runs whenever the CPU has nothing better to do."
+
+[[task]]
+id = "stubborn"
+title = "It will not stop"
+kind = "independent"
+instructions = "sync-agent must be stopped. Ask it nicely first — then make sure it is gone."
+skills = { "g.signals-kill" = 1.0 }
+checks = [
+    { type = "process_absent", comm = "sync-agent" },
+    { type = "command_used", command = ["kill", "pkill", "killall"], args_regex = "^(?!.*(-9|-KILL|-SIGKILL|-s KILL)).*$", scope = "history" },
+]
+hints = ["Try the default signal (TERM) first: kill PID.", "It ignores TERM, INT and HUP. SIGKILL cannot be ignored.", "kill {{agent_pid}}; kill -9 {{agent_pid}}"]
+explanation = "SIGTERM lets a program clean up; only when it ignores that is SIGKILL (which cannot be caught) appropriate."
+
+[debrief]
+summary = "nohup/disown/setsid against hangups; ps --sort=-pcpu or top; renice -n N -p PID; kill (TERM) first, kill -9 last."
+alternatives = ["tmux new -s export, run it, detach with Ctrl-b d", "systemd-run --user --unit=export ~/bin/nightly-export"]
+pitfalls = ["Running a long job in the foreground of an SSH session.", "kill -9 as the first resort."]
+next = "Chapter G is complete."
+
+[[solution]]
+name = "nohup, ps, renice, kill"
+steps = [
+    "nohup ~/bin/nightly-export &",
+    "ps -eo pid,pcpu,comm --sort=-pcpu | head -3",
+    { answer_with = "pgrep -x {{hog}}" },
+    "renice -n 15 -p {{hog_pid}}",
+    "kill {{agent_pid}}",
+    "kill -9 {{agent_pid}}",
+]
+
+[[solution]]
+name = "disown, top, pkill"
+steps = [
+    "~/bin/nightly-export &",
+    "disown",
+    "top -b -n 1 | head -12",
+    { answer_with = "pgrep {{hog}}" },
+    "renice 19 {{hog_pid}}",
+    "pkill sync-agent",
+    "pkill -KILL sync-agent",
+]
+
+[[counterexample]]
+name = "plain background, straight to -9"
+steps = [
+    "~/bin/nightly-export &",
+    { answer_with = "pgrep -x {{hog}}" },
+    "renice -n 15 -p {{hog_pid}}",
+    "kill -9 {{agent_pid}}",
+]

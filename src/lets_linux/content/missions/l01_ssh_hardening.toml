@@ -1,0 +1,174 @@
+schema = 1
+
+[mission]
+id = "l01-ssh-hardening"
+title = "Someone Is Knocking"
+chapter = "L"
+kind = "lesson"
+order = 1
+difficulty = 4
+requires = ["i05-ssh", "h05-log-files"]
+skills = ["l.ssh-hardening", "l.audit-logging", "i.ssh-keys"]
+review_for = ["c.grep-basics", "c.sort-uniq"]
+xp = 180
+estimated_minutes = 30
+
+[briefing]
+context = """
+This server is reachable from the Internet on port 22, and its auth log is full of failed
+logins. Nobody has got in — yet. Find out what is happening, then harden the SSH server:
+no root logins, no passwords, only the accounts that need SSH. Careful: you are about to
+switch off passwords, so make sure your own key works first. (sudo password: letslinux)
+"""
+concept = """
+sshd logs every attempt (journalctl -u ssh, /var/log/auth.log on Debian): 'Failed password
+for invalid user …' are guesses of user names, 'Failed password for root' guesses root's
+password. Defences in sshd_config — best in a drop-in file under /etc/ssh/sshd_config.d/,
+which is read first (the first value found wins): PermitRootLogin no, PasswordAuthentication
+no (keys only — guessing becomes pointless), AllowUsers NAME…. Check with sudo sshd -t, apply
+with sudo systemctl reload ssh, verify with sudo sshd -T and a real login attempt.
+"""
+objectives = ["Read sshd's log", "Quantify an attack", "Switch to key login safely", "Harden sshd with a drop-in", "Verify the result"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+attacker = { choices = ["203.0.113.50", "198.51.100.23", "192.0.2.77"] }
+
+[[environment.setup]]
+action = "journal"
+identifier = "sshd"
+facility = "authpriv"
+transport = "syslog"
+priority = "info"
+message = "Failed password for invalid user admin from {{attacker}} port 41022 ssh2"
+repeat = 30
+ago = 3600
+
+[[environment.setup]]
+action = "journal"
+identifier = "sshd"
+facility = "authpriv"
+transport = "syslog"
+priority = "info"
+message = "Failed password for root from {{attacker}} port 41388 ssh2"
+repeat = 17
+ago = 1800
+
+[[environment.setup]]
+action = "journal"
+identifier = "sshd"
+facility = "authpriv"
+transport = "syslog"
+priority = "info"
+message = "Failed password for invalid user oracle from 198.18.0.9 port 55021 ssh2"
+repeat = 2
+ago = 600
+
+[[task]]
+id = "who"
+title = "Who is knocking?"
+kind = "troubleshooting"
+instructions = "Find the failed SSH logins in the log. One address is responsible for almost all of them."
+skills = { "l.audit-logging" = 1.0 }
+question = { prompt = "From which IP address do most failed logins come?", type = "exact", accept = ["{{attacker}}"] }
+hints = ["grep 'Failed password' /var/log/auth.log (you are in the adm group, which may read it).", "Extract the address: grep -o 'from [0-9.]*' … | sort | uniq -c | sort -rn", "grep 'Failed password' /var/log/auth.log | grep -o 'from [0-9.]*' | sort | uniq -c | sort -rn | head -3"]
+explanation = "Counting by address turns hundreds of lines into one fact: a single machine is guessing."
+
+[[task]]
+id = "count"
+title = "How hard?"
+kind = "troubleshooting"
+instructions = "Count the failed password attempts from that address."
+skills = { "l.audit-logging" = 1.0 }
+question = { prompt = "How many failed attempts came from {{attacker}}?", type = "number", accept = ["47"] }
+hints = ["grep for the address and count lines.", "grep -c 'Failed password.*{{attacker}}' /var/log/auth.log", "47 (30 guesses of user names, 17 of root's password)"]
+explanation = "47 tries in an hour is slow for a bot — they rotate through thousands of servers. With passwords allowed, a weak one is only a matter of time."
+
+[[task]]
+id = "keyfirst"
+title = "Your key first"
+kind = "guided"
+instructions = "Before passwords go: set up key login for your own account on this server (ssh learner@localhost) and check that it works without a password."
+skills = { "i.ssh-keys" = 1.0, "l.ssh-hardening" = 0.5 }
+checks = [{ type = "command_result", command = "ssh -o BatchMode=yes learner@localhost true", status = 0 }]
+persistent = true
+hints = ["ssh-keygen, then ssh-copy-id learner@localhost (it asks for your password once).", "BatchMode=yes forbids password prompts: ssh -o BatchMode=yes learner@localhost true must succeed.", "ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 && ssh-copy-id learner@localhost && ssh -o BatchMode=yes learner@localhost true"]
+explanation = "On a remote server this step is what keeps you from locking yourself out. (Keep a second session open while changing sshd, too.)"
+
+[[task]]
+id = "harden"
+title = "Harden sshd"
+kind = "independent"
+instructions = "Create /etc/ssh/sshd_config.d/10-hardening.conf so that root may not log in at all, password authentication is off, and only learner may log in over SSH. Check the configuration, apply it, and verify the effective values."
+skills = { "l.ssh-hardening" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "sshd -t && sshd -T", stdout_contains = ["permitrootlogin no", "passwordauthentication no", "allowusers learner"], stdout_not_contains = ["allowusers root"] },
+    { type = "command_result", command = "ssh -o BatchMode=yes learner@localhost true", status = 0 },
+    { type = "command_result", input = ["letslinux", "letslinux", "letslinux"], command = "ssh -o PubkeyAuthentication=no learner@localhost true", status = 255, stderr_contains = "Permission denied (publickey)" },
+    { type = "unit_state", unit = "ssh.service", active = "active" },
+    { type = "after_reboot", checks = [{ type = "unit_state", unit = "ssh.service", active = "active" }, { type = "command_result", user = "root", command = "sshd -T", stdout_contains = ["passwordauthentication no", "permitrootlogin no"] }] },
+]
+persistent = true
+hints = [
+    "Three lines in the drop-in: PermitRootLogin no, PasswordAuthentication no, AllowUsers learner.",
+    "Then: sudo sshd -t (silence = OK), sudo systemctl reload ssh, sudo sshd -T | grep -E 'permitroot|passwordauth|allowusers'",
+    "printf 'PermitRootLogin no\\nPasswordAuthentication no\\nAllowUsers learner\\n' | sudo tee /etc/ssh/sshd_config.d/10-hardening.conf && sudo sshd -t && sudo systemctl reload ssh",
+]
+explanation = "The running sshd now only accepts keys, and only for learner. The game also checked it survives a reboot and that a password login really is refused."
+
+[debrief]
+summary = """
+Read sshd's log, quantify the attack, then: key login first, a drop-in with PermitRootLogin no,
+PasswordAuthentication no, AllowUsers …; sshd -t, reload, sshd -T, and a real login test.
+"""
+alternatives = ["fail2ban (not simulated) to block addresses after repeated failures", "A firewall rule that allows port 22 only from known networks", "AllowGroups sshusers instead of a list of users"]
+pitfalls = ["Disabling passwords before your key works — on a remote server you lock yourself out.", "Editing the main sshd_config below an Include whose drop-in sets the opposite: the first value wins.", "Forgetting the reload: the file changed, the running sshd did not."]
+next = "Next: firewalls."
+
+[[solution]]
+name = "grep, ssh-copy-id, drop-in"
+steps = [
+    "grep 'Failed password' /var/log/auth.log | grep -o 'from [0-9.]*' | sort | uniq -c | sort -rn",
+    ":answer {{attacker}}",
+    "grep -c 'Failed password.*{{attacker}}' /var/log/auth.log",
+    ":answer 47",
+    "ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519",
+    { input = ["yes", "letslinux"] },
+    "ssh-copy-id learner@localhost",
+    "ssh -o BatchMode=yes learner@localhost true",
+    { input = ["letslinux"] },
+    "printf 'PermitRootLogin no\\nPasswordAuthentication no\\nAllowUsers learner\\n' | sudo tee /etc/ssh/sshd_config.d/10-hardening.conf",
+    "sudo sshd -t",
+    "sudo systemctl reload ssh",
+    "sudo sshd -T | grep -E 'permitroot|passwordauth|allowusers'",
+]
+
+[[solution]]
+name = "journalctl, manual authorized_keys, editor"
+steps = [
+    "journalctl -t sshd --no-pager | awk '/Failed password/ {print $(NF-3)}' | sort | uniq -c",
+    ":answer {{attacker}}",
+    "journalctl -t sshd --no-pager | grep -c '{{attacker}}'",
+    ":answer 47",
+    { input = ["", "", ""] },
+    "ssh-keygen",
+    "mkdir -p ~/.ssh && cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys",
+    { input = ["yes"] },
+    "ssh learner@localhost true",
+    { input = ["letslinux"] },
+    { edit = "# hardening: keys only, no root, only the admin account\nPermitRootLogin no\nPasswordAuthentication no\nAllowUsers learner\n" },
+    "sudo nano /etc/ssh/sshd_config.d/10-hardening.conf",
+    "sudo sshd -t && sudo systemctl restart ssh",
+]
+
+[[counterexample]]
+name = "passwords off before the key, edits after the Include"
+steps = [
+    ":answer {{attacker}}",
+    ":answer 47",
+    { input = ["letslinux"] },
+    "echo 'PasswordAuthentication yes' | sudo tee /etc/ssh/sshd_config.d/00-old.conf",
+    "echo 'PasswordAuthentication no' | sudo tee -a /etc/ssh/sshd_config",
+    "sudo systemctl reload ssh",
+]

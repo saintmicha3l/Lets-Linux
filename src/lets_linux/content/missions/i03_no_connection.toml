@@ -1,0 +1,133 @@
+schema = 1
+
+[mission]
+id = "i03-no-connection"
+title = "Nothing Works"
+chapter = "I"
+kind = "troubleshooting"
+order = 3
+difficulty = 4
+requires = ["i02-names", "c08-the-method", "f02c-where-packages-come-from"]
+skills = ["i.net-troubleshooting", "i.routing-gateways", "i.dns-resolution", "m.hypothesis-method"]
+review_for = ["i.routing-gateways", "i.dns-resolution", "i.ping-reachability"]
+xp = 150
+estimated_minutes = 22
+sequential = false
+
+[briefing]
+context = """
+After a colleague "tidied up the network settings", this server can no longer reach the
+package mirror or example.com. Work bottom-up — addresses, routes, gateway, names — and fix
+what is broken. The configuration files are not to be trusted. (sudo password: letslinux)
+"""
+concept = """
+Distinguish the error messages: "Temporary failure in name resolution" (no DNS server
+answered), "Name or service not known" (DNS answered: no such name), "Network is unreachable"
+(no route), "Destination Host Unreachable" (nothing answers on the local network),
+"Connection refused" (host reached, port closed). Each points to a different layer.
+"""
+objectives = ["Read network error messages precisely", "Fix name resolution", "Restore the default route", "Verify end to end"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+bad = { choices = ["10.0.2.99", "10.0.2.253", "192.168.1.1"] }
+
+[[environment.setup]]
+action = "file"
+path = "/etc/resolv.conf"
+content = "# edited by hand -- T.\nsearch example.lan\nnameserver {{bad}}\n"
+
+[[environment.setup]]
+action = "net"
+del_route = "default"
+
+[[task]]
+id = "symptom"
+title = "First symptom"
+kind = "troubleshooting"
+instructions = "Try `ping -c 1 example.com` and read the error carefully."
+skills = { "i.net-troubleshooting" = 1.0 }
+question = { prompt = "Which layer does the first error point to?", type = "choice", choices = ["No route to the network", "Name resolution: no DNS server answered", "The remote host refused the connection", "The network cable is unplugged"], answer = 1 }
+hints = ["Read the exact words after 'ping: example.com:'.", "'Temporary failure in name resolution' means no nameserver answered.", "The answer is (b)."]
+explanation = "The resolver tried the configured nameserver, got no answer and gave up. Note how long it took: each dead nameserver costs a timeout."
+
+[[task]]
+id = "dns"
+title = "Fix name resolution"
+kind = "troubleshooting"
+instructions = "Make the system use the network's real DNS server again."
+skills = { "i.dns-resolution" = 1.0, "i.net-troubleshooting" = 1.0 }
+checks = [{ type = "name_resolves", name = "example.com" }]
+persistent = true
+hints = ["Which DNS server does this network use? (The gateway's neighbour… or check what DHCP handed out in i01.)", "The working DNS server is 10.0.2.3: put it in /etc/resolv.conf.", "sudo sed -i 's/^nameserver .*/nameserver 10.0.2.3/' /etc/resolv.conf"]
+explanation = "Names resolve again. On a DHCP system the client would rewrite resolv.conf at the next lease renewal — hand edits are fragile."
+
+[[task]]
+id = "route"
+title = "The next layer"
+kind = "troubleshooting"
+instructions = "Names work, but example.com is still unreachable. Find out why and fix it."
+skills = { "i.routing-gateways" = 1.0, "i.net-troubleshooting" = 1.0 }
+checks = [
+    { type = "default_route", via = "10.0.2.2" },
+    { type = "can_reach", host = "example.com", port = 80 },
+]
+persistent = true
+hints = ["'Network is unreachable' means no route matches the destination.", "ip route shows no default route. The gateway is 10.0.2.2.", "sudo ip route add default via 10.0.2.2"]
+explanation = "Without a default route only the local network 10.0.2.0/24 is reachable — the intranet still worked, which was a clue."
+
+[[task]]
+id = "verify"
+title = "End to end"
+kind = "troubleshooting"
+instructions = "Prove the fix with an application, not just ping: fetch http://example.com/ with curl (install it if needed)."
+skills = { "i.net-troubleshooting" = 1.0, "m.verification" = 1.0 }
+checks = [{ type = "output_contains", text = "Example Domain", command = ["curl", "wget"] }]
+hints = ["curl is not installed on minimal Debian.", "sudo apt install curl — or use wget -O - (wget is installed).", "wget -qO- http://example.com/"]
+explanation = "Verify with the real thing: name resolution, routing and the service all working together."
+
+[debrief]
+summary = """
+Bottom-up and by error message: resolution failure → resolv.conf; network unreachable →
+routing table; then verify with the application itself.
+"""
+alternatives = ["resolvectl/systemd-resolved systems: resolvectl status", "dig @10.0.2.3 example.com tests a specific server", "ip route get 93.184.215.14 shows whether a route exists"]
+pitfalls = ["Fixing several things at once and never learning which one mattered.", "ip route changes are lost at reboot: fix the distribution's network configuration as well."]
+next = "Next: ports and services."
+
+[[solution]]
+name = "sed and ip route"
+steps = [
+    "ping -c 1 example.com",
+    ":answer b",
+    "cat /etc/resolv.conf",
+    { input = ["letslinux"] },
+    "sudo sed -i 's/^nameserver .*/nameserver 10.0.2.3/' /etc/resolv.conf",
+    "ping -c 1 example.com",
+    "ip route",
+    "sudo ip route add default via 10.0.2.2",
+    "wget -qO- http://example.com/",
+]
+
+[[solution]]
+name = "tee and curl"
+steps = [
+    "ping -c 1 example.com",
+    ":answer Name resolution: no DNS server answered",
+    { input = ["letslinux"] },
+    "printf 'search example.lan\\nnameserver 10.0.2.3\\n' | sudo tee /etc/resolv.conf",
+    "ip route get 93.184.215.14",
+    "sudo ip route replace default via 10.0.2.2 dev enp0s3",
+    "sudo apt-get install -y curl",
+    "curl -s http://example.com/",
+]
+
+[[counterexample]]
+name = "only DNS"
+steps = [
+    ":answer b",
+    { input = ["letslinux"] },
+    "sudo sed -i 's/^nameserver .*/nameserver 10.0.2.3/' /etc/resolv.conf",
+    "wget -qO- http://intranet/",
+]

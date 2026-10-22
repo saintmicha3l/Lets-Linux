@@ -1,0 +1,117 @@
+schema = 1
+
+[mission]
+id = "b08-archives"
+title = "Pack It Up"
+chapter = "B"
+kind = "lesson"
+order = 8
+difficulty = 2
+requires = ["b03-making-things"]
+skills = ["b.archives", "j.backup-restore"]
+xp = 70
+estimated_minutes = 12
+
+[briefing]
+context = """
+Before a risky change to the {{proj}} project, back it up into a single compressed file,
+check what is inside, and prove you can restore it.
+"""
+concept = """
+tar bundles files and directories into one archive: -c create, -x extract, -t list, -f FILE
+names the archive, -v is verbose and -z compresses with gzip. -C DIR extracts somewhere
+else. gzip FILE compresses a single file in place (FILE.gz); gunzip reverses it.
+"""
+objectives = ["Create a compressed archive", "List its contents", "Restore it elsewhere", "Compress a single file"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+proj = { choices = ["orchard", "harbor", "summit", "meadow"] }
+
+[[environment.setup]]
+action = "file"
+path = "~/{{proj}}/README.md"
+content = "# {{proj}}\n"
+
+[[environment.setup]]
+action = "file"
+path = "~/{{proj}}/src/main.sh"
+content = "#!/bin/bash\necho {{proj}}\n"
+mode = "0755"
+
+[[environment.setup]]
+action = "file"
+path = "~/{{proj}}/data/records.csv"
+content = "id,value\n1,10\n2,20\n"
+
+[[environment.setup]]
+action = "run"
+command = "seq 1 5000 > /home/learner/big.log && chown learner:learner /home/learner/big.log"
+
+[[task]]
+id = "create"
+title = "Create the backup"
+kind = "guided"
+instructions = "Create a gzip-compressed archive ~/{{proj}}-backup.tar.gz of the directory {{proj}} (run it from your home directory)."
+skills = { "b.archives" = 1.0, "j.backup-restore" = 0.5 }
+checks = [{ type = "archive_contains", path = "~/{{proj}}-backup.tar.gz", members = ["{{proj}}/README.md", "{{proj}}/src/main.sh", "{{proj}}/data/records.csv"] }]
+hints = ["tar needs to create (-c), compress (-z) and write to a file (-f).", "tar -czf ARCHIVE DIRECTORY; the archive name comes right after -f.", "Type: tar -czf ~/{{proj}}-backup.tar.gz {{proj}}"]
+explanation = "Running tar from the parent directory stores relative paths ({{proj}}/...), which restore cleanly anywhere."
+
+[[task]]
+id = "list"
+title = "Check what is inside"
+kind = "guided"
+instructions = "List the archive's contents without extracting it."
+skills = { "b.archives" = 1.0 }
+checks = [{ type = "output_contains", text = "{{proj}}/data/records.csv", command = "tar" }]
+hints = ["tar has a list mode.", "-t lists; you still need -f and the archive name (and -z for gzip, though GNU tar detects it).", "Type: tar -tzf ~/{{proj}}-backup.tar.gz"]
+explanation = "Always verify a backup: an archive you have never listed or restored is a hope, not a backup."
+
+[[task]]
+id = "restore"
+title = "Test restore"
+kind = "independent"
+instructions = "Restore the archive into a new directory ~/restore-test (the result should be ~/restore-test/{{proj}}/...)."
+skills = { "j.backup-restore" = 1.0, "b.archives" = 0.5 }
+checks = [
+    { type = "file_contains", path = "~/restore-test/{{proj}}/src/main.sh", text = "echo {{proj}}" },
+    { type = "path_exists", path = "~/{{proj}}/README.md" },
+]
+hints = ["Extract with -x; choose the destination with -C (it must exist).", "mkdir ~/restore-test first, then tar -xzf ... -C ~/restore-test", "Type: mkdir ~/restore-test && tar -xzf ~/{{proj}}-backup.tar.gz -C ~/restore-test"]
+explanation = "Restoring into a scratch directory proves the backup works without touching the original."
+
+[[task]]
+id = "gzip"
+title = "Compress a log"
+kind = "guided"
+instructions = "Compress ~/big.log with gzip so that it becomes ~/big.log.gz."
+skills = { "b.archives" = 1.0 }
+checks = [
+    { type = "path_exists", path = "~/big.log.gz", kind = "file" },
+    { type = "path_absent", path = "~/big.log" },
+]
+hints = ["gzip compresses a single file in place.", "gzip FILE replaces FILE with FILE.gz.", "Type: gzip ~/big.log"]
+explanation = "gzip replaced big.log with the much smaller big.log.gz; zcat big.log.gz reads it without decompressing to disk."
+
+[debrief]
+summary = """
+tar -czf creates, tar -tzf lists and tar -xzf -C restores; gzip compresses single files.
+A backup is only trustworthy once you have restored it.
+"""
+alternatives = ["tar -cvzf shows each file as it is archived", "gzip -k keeps the original file", "tar -cJf uses xz for better compression"]
+pitfalls = ["tar -czf {{proj}} backup.tar.gz (arguments swapped) would try to write the archive into a file named {{proj}}.", "Archiving with absolute paths makes restores overwrite the originals."]
+next = "Chapter C: redirection, pipelines and text tools."
+
+[[solution]]
+name = "separate options"
+steps = ["tar -czf ~/{{proj}}-backup.tar.gz {{proj}}", "tar -tzf ~/{{proj}}-backup.tar.gz", "mkdir ~/restore-test && tar -xzf ~/{{proj}}-backup.tar.gz -C ~/restore-test", "gzip ~/big.log"]
+
+[[solution]]
+name = "bundled options"
+steps = ["tar czvf {{proj}}-backup.tar.gz {{proj}}", "tar tvf {{proj}}-backup.tar.gz", "mkdir restore-test && cd restore-test && tar xf ../{{proj}}-backup.tar.gz && cd", "gzip -9 big.log"]
+
+[[counterexample]]
+name = "copy instead of archive"
+steps = ["cp -r {{proj}} {{proj}}-backup.tar.gz", "gzip -k big.log"]

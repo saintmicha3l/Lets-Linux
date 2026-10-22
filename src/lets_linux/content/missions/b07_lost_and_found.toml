@@ -1,0 +1,105 @@
+schema = 1
+
+[mission]
+id = "b07-lost-and-found"
+title = "Lost and Found"
+chapter = "B"
+kind = "challenge"
+order = 7
+difficulty = 3
+requires = ["b06b-finding-files"]
+skills = ["b.find-files"]
+review_for = ["b.find-files"]
+xp = 90
+estimated_minutes = 15
+sequential = false
+
+[briefing]
+context = """
+A former colleague left ~/archive in a mess: hundreds of nested directories. Somewhere in it
+is the {{target}}.conf file the team needs, a huge file eating disk space, and a scattering of
+.tmp files that should go. Tasks can be done in any order. No commands are given.
+"""
+concept = "find searches a directory tree: by -name, -type, -size, -mtime and more. It can also act on what it finds (-delete, -exec)."
+objectives = ["Locate files by name and size", "Remove files matching a pattern across a tree safely"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+target = { choices = ["billing", "gateway", "ledger", "mailer", "scheduler"] }
+bigname = { choices = ["old-vm.qcow2", "dump.sql", "video-raw.mov", "core.4471"] }
+d1 = { choices = ["2019", "2020", "2021"] }
+d2 = { choices = ["alpha", "beta", "gamma"] }
+
+[[environment.setup]]
+action = "run"
+command = "cd /home/learner && for y in 2019 2020 2021 2022; do for p in alpha beta gamma delta; do mkdir -p archive/$y/$p/misc; echo note > archive/$y/$p/readme.txt; echo scratch > archive/$y/$p/misc/build-$y.tmp; done; done && echo cache > archive/session.tmp && echo 'service={{target}}' > archive/{{d1}}/{{d2}}/misc/{{target}}.conf && echo x > archive/2022/delta/{{bigname}} && chown -R learner:learner archive"
+
+[[environment.setup]]
+action = "file"
+path = "~/archive/2022/delta/{{bigname}}"
+content = "x"
+size = 734003200
+
+[[guard]]
+type = "tree_count"
+path = "~/archive"
+glob = "readme.txt"
+kind = "file"
+count = 16
+message = "Files other than .tmp files were deleted. Use :reset — and test find expressions with -print before adding -delete."
+
+[[task]]
+id = "where"
+title = "Find the config file"
+kind = "independent"
+instructions = "Locate {{target}}.conf somewhere under ~/archive."
+skills = { "b.find-files" = 1.0 }
+question = { prompt = "What is the full path of {{target}}.conf?", type = "exact", accept = ["/home/learner/archive/{{d1}}/{{d2}}/misc/{{target}}.conf", "~/archive/{{d1}}/{{d2}}/misc/{{target}}.conf", "archive/{{d1}}/{{d2}}/misc/{{target}}.conf"] }
+hints = ["find searches recursively from a starting directory.", "find ~/archive -name '{{target}}.conf'", "The file is at ~/archive/{{d1}}/{{d2}}/misc/{{target}}.conf"]
+explanation = "find DIR -name PATTERN searches the whole tree. Quote the pattern so the shell does not expand it first."
+
+[[task]]
+id = "big"
+title = "The space hog"
+kind = "independent"
+instructions = "One file under ~/archive is larger than 500 MB."
+skills = { "b.find-files" = 1.0, "b.disk-usage-basics" = 0.5 }
+question = { prompt = "What is the name of the file larger than 500 MB?", type = "exact", accept = ["{{bigname}}", "~/archive/2022/delta/{{bigname}}", "/home/learner/archive/2022/delta/{{bigname}}", "archive/2022/delta/{{bigname}}"] }
+hints = ["find has a test for size.", "-size +500M means larger than 500 MiB.", "find ~/archive -size +500M finds {{bigname}}."]
+explanation = "find -size +500M lists big files; du -ah ~/archive | sort -h | tail is another approach."
+
+[[task]]
+id = "clean"
+title = "Delete the temporary files"
+kind = "independent"
+instructions = "Delete every file ending in .tmp anywhere under ~/archive — and nothing else."
+skills = { "b.find-files" = 1.0, "c.find-exec" = 0.5 }
+checks = [
+    { type = "tree_count", path = "~/archive", glob = "*.tmp", count = 0 },
+    { type = "tree_count", path = "~/archive", glob = "*", kind = "file", min = 18 },
+]
+persistent = true
+hints = ["rm *.tmp only covers one directory; you need to search the tree.", "find can delete what it matches: check the list first with -print, then add -delete.", "Type: find ~/archive -name '*.tmp' -delete"]
+explanation = "find -name '*.tmp' -delete removed 17 files in many directories. Always run the same find without -delete first."
+
+[debrief]
+summary = """
+find walks a tree and tests every entry: -name, -size, -type, -mtime and friends, combined
+with actions such as -delete and -exec. Print before you delete.
+"""
+alternatives = ["find ~/archive -name '*.tmp' -exec rm {} +", "find ~/archive -type f -size +500M -ls", "locate (where installed) searches a prebuilt index"]
+pitfalls = ["find ~/archive -delete -name '*.tmp' deletes everything: -delete is an action evaluated in order, so put tests first."]
+next = "Next: archives and compression."
+
+[[solution]]
+name = "find with -delete"
+steps = ["find ~/archive -name '{{target}}.conf'", ":answer /home/learner/archive/{{d1}}/{{d2}}/misc/{{target}}.conf", "find ~/archive -size +500M", ":answer {{bigname}}", "find ~/archive -name '*.tmp' -print", "find ~/archive -name '*.tmp' -delete"]
+
+[[solution]]
+name = "find with exec and du"
+steps = ["cd archive", "find . -type f -name '*.tmp' -exec rm {} +", "du -a | sort -n | tail -1", ":answer {{bigname}}", "find . -name '*.conf'", ":answer archive/{{d1}}/{{d2}}/misc/{{target}}.conf"]
+
+[[counterexample]]
+name = "only the top level"
+steps = ["rm ~/archive/*.tmp", ":answer {{target}}.conf"]

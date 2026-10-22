@@ -1,0 +1,181 @@
+schema = 1
+
+[mission]
+id = "g01-what-is-running"
+title = "What Is Running?"
+chapter = "G"
+kind = "lesson"
+order = 1
+difficulty = 2
+requires = ["c02-pipelines", "d01-who-owns-this"]
+skills = ["g.process-concepts", "g.ps-inspection"]
+xp = 80
+estimated_minutes = 15
+
+[briefing]
+context = """
+The build server feels sluggish and the team lead asks what is running on it. Before you can
+change anything you need to see the processes: who started them, what they are doing and how
+much they use.
+"""
+concept = """
+A process is a running program. Each has a PID (process ID), a parent (PPID), an owner, a
+state and resource usage. ps shows a snapshot: plain ps lists the processes of your
+terminal; ps aux (BSD style) and ps -ef (System V style) list everything. pgrep finds
+processes by name. $$ expands to the PID of your shell.
+"""
+objectives = ["List processes with ps", "Read PID, PPID, owner and CPU columns", "Find processes by name"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+dev = { choices = ["maria", "tomas", "aiko", "kwame"] }
+hog = { range = [86, 97] }
+
+[[environment.setup]]
+action = "user"
+name = "{{dev}}"
+
+[[environment.setup]]
+action = "process"
+comm = "datasync"
+argv = ["/usr/local/bin/datasync", "--master"]
+cpu = 1.5
+rss_kb = 21000
+age_minutes = 300
+pid_var = "sync_pid"
+
+[[environment.setup]]
+action = "process"
+comm = "datasync"
+argv = ["/usr/local/bin/datasync", "--worker", "1"]
+ppid = "{{sync_pid}}"
+rss_kb = 9000
+age_minutes = 299
+
+[[environment.setup]]
+action = "process"
+comm = "datasync"
+argv = ["/usr/local/bin/datasync", "--worker", "2"]
+ppid = "{{sync_pid}}"
+rss_kb = 9100
+age_minutes = 299
+
+[[environment.setup]]
+action = "process"
+comm = "datasync"
+argv = ["/usr/local/bin/datasync", "--worker", "3"]
+ppid = "{{sync_pid}}"
+rss_kb = 8900
+age_minutes = 299
+
+[[environment.setup]]
+action = "process"
+comm = "report-builder"
+argv = ["/opt/reports/report-builder", "--full", "--year=2025"]
+user = "{{dev}}"
+cpu = "{{hog}}"
+state = "R"
+rss_kb = 512000
+cpu_time = 5400
+age_minutes = 95
+pid_var = "hog_pid"
+
+[[environment.setup]]
+action = "process"
+comm = "backup-agent"
+argv = ["/usr/sbin/backup-agent", "--daemon"]
+cpu = 1.2
+rss_kb = 30000
+age_minutes = 4000
+
+[[task]]
+id = "mine"
+title = "Your terminal's processes"
+kind = "guided"
+instructions = "Run `ps` with no options."
+skills = { "g.ps-inspection" = 1.0 }
+checks = [{ type = "output_contains", regex = "\\bPID\\b", command = "ps" }]
+hints = ["The command is two letters.", "ps without options shows only processes on your terminal.", "Type: ps"]
+explanation = "Two processes: your shell (bash) and ps itself, which had just started to take the snapshot."
+
+[[task]]
+id = "shell"
+title = "Your shell's PID"
+kind = "guided"
+instructions = "Print the process ID of your shell. (Hint: the shell keeps it in a special parameter.)"
+skills = { "g.process-concepts" = 1.0 }
+checks = [{ type = "output_contains", regex = "(?m)^\\s*{{shell_pid}}\\s*$", command = ["echo", "printf", "ps"] }]
+hints = ["Special parameters start with $.", "$$ is the PID of the current shell.", "Type: echo $$"]
+explanation = "$$ is your shell's PID. Every command you run becomes a child process of that shell."
+
+[[task]]
+id = "everything"
+title = "Everything on the system"
+kind = "guided"
+instructions = "List every process on the system, with owners, using `ps aux` (or `ps -ef`)."
+skills = { "g.ps-inspection" = 1.0 }
+checks = [{ type = "output_contains", text = "report-builder", command = "ps" }]
+hints = ["Plain ps is limited to your terminal.", "a = all users, u = user-oriented format, x = also processes without a terminal.", "Type: ps aux"]
+explanation = "ps aux shows USER, PID, %CPU, %MEM, memory sizes, terminal, state, start time and the command."
+
+[[task]]
+id = "owner"
+title = "Who started it?"
+kind = "independent"
+instructions = "Something called report-builder is running. Find out which user it belongs to."
+skills = { "g.ps-inspection" = 1.0 }
+question = { prompt = "Which user owns the report-builder process?", type = "exact", accept = ["{{dev}}"] }
+hints = ["The USER column of ps aux.", "ps aux | grep report-builder", "It belongs to {{dev}}."]
+explanation = "The owner decides who may signal the process — and whom to ask before you stop it."
+
+[[task]]
+id = "cpu"
+title = "The heaviest process"
+kind = "independent"
+instructions = "Find the process using the most CPU."
+skills = { "g.ps-inspection" = 1.0, "g.resource-monitoring" = 0.3 }
+question = { prompt = "Which program uses the most CPU?", type = "exact", accept = ["report-builder", "/opt/reports/report-builder"] }
+hints = ["Sort by the %CPU column.", "ps aux --sort=-%cpu | head -5", "report-builder, at about {{hog}}% CPU."]
+explanation = "--sort=-%cpu sorts descending. top shows the same live (top is not simulated yet)."
+
+[[task]]
+id = "count"
+title = "Counting by name"
+kind = "independent"
+instructions = "How many datasync processes are running?"
+skills = { "g.ps-inspection" = 1.0 }
+question = { prompt = "How many datasync processes are there?", type = "number", accept = ["4"] }
+hints = ["pgrep finds processes by name.", "pgrep -c counts, or pgrep -l lists them.", "There are 4: one master and three workers."]
+explanation = "pgrep matches process names, and is more precise than ps | grep (which can match grep itself)."
+
+[[task]]
+id = "parent"
+title = "Family tree"
+kind = "independent"
+instructions = "The datasync workers were started by another datasync process. Find the PID of that parent."
+skills = { "g.process-concepts" = 1.0, "g.ps-inspection" = 1.0 }
+question = { prompt = "What is the PID of the parent of the datasync workers?", type = "number", accept = ["{{sync_pid}}"] }
+hints = ["The PPID column tells you a process's parent.", "ps -ef shows PPID, and ps -ef --forest draws the tree.", "The parent is PID {{sync_pid}} (datasync --master)."]
+explanation = "Daemons often run a master process that starts workers. Stopping the master usually stops the family."
+
+[debrief]
+summary = """
+Every program runs as a process with a PID, a parent, an owner and a state. ps shows a
+snapshot (ps aux, ps -ef, --sort, -o), pgrep finds by name, and $$ is your own shell.
+"""
+alternatives = ["ps -eo pid,ppid,user,%cpu,comm --sort=-%cpu", "pgrep -a datasync shows full command lines", "ps -ef --forest or pstree (not simulated) show the hierarchy"]
+pitfalls = ["ps aux | grep name also lists the grep itself.", "%CPU in ps is an average since the process started; top shows current usage."]
+next = "Next: sending signals."
+
+[[solution]]
+name = "BSD style"
+steps = ["ps", "echo $$", "ps aux", ":answer {{dev}}", "ps aux --sort=-%cpu | head -3", ":answer report-builder", "pgrep -c datasync", ":answer 4", "ps -ef --forest | grep datasync", ":answer {{sync_pid}}"]
+
+[[solution]]
+name = "System V style"
+steps = ["ps -f", "ps -o pid= -p $$", "ps -ef | grep report", ":answer {{dev}}", "ps -eo comm,%cpu --sort=-%cpu | head -2", ":answer /opt/reports/report-builder", "pgrep -l datasync", ":answer 4", "ps -o ppid= -C datasync", ":answer {{sync_pid}}"]
+
+[[counterexample]]
+name = "guessing"
+steps = ["ps", "echo $$", "ps aux", ":answer root", ":answer backup-agent", ":answer 3"]

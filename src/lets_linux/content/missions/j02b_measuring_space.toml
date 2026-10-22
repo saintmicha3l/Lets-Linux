@@ -1,0 +1,176 @@
+schema = 1
+
+[mission]
+id = "j02b-measuring-space"
+title = "Measuring Space"
+chapter = "J"
+kind = "lesson"
+order = 3
+difficulty = 3
+requires = ["j01-new-disk", "g03b-reading-the-load", "b06b-finding-files"]
+skills = ["j.capacity", "j.inodes", "j.deleted-open-files", "g.file-descriptors"]
+review_for = ["j.capacity", "j.deleted-open-files"]
+xp = 100
+estimated_minutes = 25
+
+[briefing]
+context = """
+"No space left on device" stops databases, logs and logins. The next missions are disk-full
+incidents; this lesson gives you the measurements first. A data disk is mounted on /srv/data,
+and something odd is going on with it. (sudo password: letslinux)
+"""
+concept = """
+df -h shows each mounted filesystem's size, used, available space and Use%; df -h PATH only
+the filesystem holding PATH. Space can also run out in another way: every file needs an inode
+and a filesystem has a fixed number of them — df -i shows inode use (millions of tiny files).
+du -xsh DIR/* | sort -h ranks directories by size; -x stays on one filesystem, so mounted
+disks below DIR are not counted.
+df and du can disagree: rm only removes a name. While a process still has the file open, its
+data stays on disk — counted by df, invisible to du. sudo lsof +L1 lists such deleted-but-open
+files (also visible as '(deleted)' in /proc/PID/fd). The space returns when the process closes
+the file — when it ends, or when you empty the file through the descriptor.
+"""
+objectives = ["Measure filesystems with df and directories with du", "Recognise inode exhaustion", "Explain and find deleted-but-open files"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+proj = { choices = ["renders", "exports", "snapshots"] }
+holder = { choices = ["old-export", "dump-agent", "replay-tool"] }
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "2G"
+partitions = [{ size = "rest", fs = "ext4", label = "data", mount = "/srv/data", fstab = true }]
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /srv/data/{{proj}} /srv/data/home /srv/data/tmp && echo notes > /srv/data/home/notes.txt"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/data/{{proj}}/batch-01.bin"
+content = "x\n"
+size = 600000000
+
+[[environment.setup]]
+action = "file"
+path = "/srv/data/home/archive.tar"
+content = "x\n"
+size = 150000000
+
+[[environment.setup]]
+action = "file"
+path = "/srv/data/tmp/scratch.dat"
+content = "x\n"
+size = 700000000
+
+[[environment.setup]]
+action = "process"
+comm = "{{holder}}"
+argv = ["/usr/local/bin/{{holder}}", "--out", "/srv/data/tmp/scratch.dat"]
+user = "root"
+open = ["/srv/data/tmp/scratch.dat"]
+pid_var = "holder_pid"
+
+[[environment.setup]]
+action = "remove"
+path = "/srv/data/tmp/scratch.dat"
+
+[[task]]
+id = "df"
+title = "How full is it?"
+kind = "guided"
+instructions = "Show the filesystem that holds /srv/data:  df -h /srv/data"
+skills = { "j.capacity" = 1.0 }
+question = { prompt = "What is its Use% (just the number)?", type = "state", state = { command = "df /srv/data | awk 'NR==2 {print $5}' | tr -d %" } }
+hints = ["df -h PATH reports the filesystem PATH lives on.", "Use% is the fifth column.", "Run df -h /srv/data and read the Use% column."]
+explanation = "df answers 'is this filesystem full?'. Above about 90%, act before programs start failing; many filesystems also keep about 5% reserved for root, so ordinary users hit the wall earlier."
+
+[[task]]
+id = "du"
+title = "Where did it go?"
+kind = "guided"
+instructions = "Rank what is stored on it:  sudo du -xsh /srv/data/* | sort -h"
+skills = { "j.capacity" = 1.0, "b.disk-usage-basics" = 0.5 }
+question = { prompt = "Which directory under /srv/data holds the most data according to du?", type = "exact", accept = ["{{proj}}", "/srv/data/{{proj}}"] }
+hints = ["du adds up the files it can see under each directory.", "sort -h puts the largest last.", "The answer is {{proj}}."]
+explanation = "du -xs per directory, sorted, is the standard way to find where space went. -x keeps du on this filesystem, which matters when you start at / and other disks are mounted below it."
+
+[[task]]
+id = "gap"
+title = "The numbers do not add up"
+kind = "prediction"
+instructions = "Compare: du counts about 750 MB of files, but df says much more is used."
+skills = { "j.deleted-open-files" = 1.0, "j.capacity" = 0.5 }
+question = { prompt = "What is the most likely explanation?", type = "choice", choices = ["df is wrong and needs a reboot", "A deleted file is still held open by a process: df counts its blocks, du cannot see it", "du ignores files larger than 500 MB", "The disk is broken"], answer = 1 }
+hints = ["du walks the directory tree; df asks the filesystem how many blocks are in use.", "A file without a name (deleted) but still open takes blocks but appears in no directory.", "The answer is (b)."]
+explanation = "When df and du disagree by a lot, look for deleted files held open — usually a log rotated or deleted while the program kept writing."
+
+[[task]]
+id = "lsof"
+title = "Find the holder"
+kind = "guided"
+instructions = "List deleted files that are still open:  sudo lsof +L1   (lsof +L1 /srv/data narrows it to that filesystem)"
+skills = { "j.deleted-open-files" = 1.0, "g.file-descriptors" = 1.0 }
+question = { prompt = "Which program still holds the deleted file?", type = "exact", accept = ["{{holder}}", "/usr/local/bin/{{holder}}"] }
+hints = ["+L1 means: files with fewer than 1 link, i.e. no name left.", "The COMMAND column names the program; NAME ends in (deleted).", "The answer is {{holder}}."]
+explanation = "The same information is in /proc/PID/fd: ls -l /proc/{{holder_pid}}/fd shows a link to /srv/data/tmp/scratch.dat (deleted)."
+
+[[task]]
+id = "release"
+title = "Release the space"
+kind = "independent"
+instructions = "{{holder}} is an abandoned job and may be stopped. Get the space back, and show with df that it is free."
+skills = { "j.deleted-open-files" = 1.0, "g.signals-kill" = 0.5 }
+checks = [
+    { type = "process_absent", comm = "{{holder}}" },
+    { type = "filesystem_free", mount = "/srv/data", min_percent = 55 },
+    { type = "command_used", command = ["df"], scope = "history" },
+]
+persistent = true
+hints = ["The blocks are freed when the last process closes the file.", "Stop the process (it runs as root), then run df again.", "Run sudo kill {{holder_pid}}, then df -h /srv/data"]
+explanation = "When the process ends, the kernel closes its files and frees the deleted file's blocks. A service that must keep running would instead have its file emptied through the descriptor — the next mission shows how."
+
+[[task]]
+id = "inodes"
+title = "Full, with space left"
+kind = "guided"
+instructions = "Every file uses one inode, and their number is fixed when the filesystem is made. Show inode use:  df -i /srv/data"
+skills = { "j.inodes" = 1.0, "j.capacity" = 0.5 }
+question = { prompt = "A filesystem shows 40% space used but IUse% 100%. Can you create a new empty file on it?", type = "choice", choices = ["Yes, there is plenty of space", "No: without a free inode no new file can exist, and the error is still 'No space left on device'", "Only as root", "Only files larger than 1 MB"], answer = 1 }
+hints = ["An empty file needs no data blocks — but it needs an inode.", "The kernel reports both kinds of exhaustion as ENOSPC.", "The answer is (b)."]
+explanation = "Millions of tiny files (sessions, cache entries, mail) can exhaust inodes long before space runs out. When 'No space left on device' appears with free space, run df -i."
+
+[[task]]
+id = "rm-or-empty"
+title = "Emptying a busy log"
+kind = "prediction"
+instructions = "A running service writes to a 5 GB log file."
+skills = { "j.deleted-open-files" = 1.0 }
+question = { prompt = "How do you free the space without restarting the service?", type = "choice", choices = ["rm the file", "Empty it in place: truncate -s 0 FILE (or : > FILE)", "mv it to /tmp", "gzip it"], answer = 1 }
+hints = ["rm, mv to the same filesystem and gzip all leave the open file's blocks in use.", "Making the file itself zero bytes long frees the blocks while the program keeps its descriptor.", "The answer is (b)."]
+explanation = "Truncating keeps the same file, now empty; the program goes on writing to it. Better still, logrotate's copytruncate or a reload signal (chapter K) prevents the problem."
+
+[debrief]
+summary = """
+df measures filesystems (space with -h, inodes with -i); du -xsh | sort -h finds where space
+went. When df and du disagree, a deleted file is still open: lsof +L1 finds the holder, and the
+space returns when the file is closed or truncated.
+"""
+alternatives = ["ncdu (not simulated) browses du results interactively", "find /srv/data -xdev -size +100M -exec ls -lh {} + lists the big files", "ls -l /proc/*/fd 2>/dev/null | grep deleted finds held files without lsof"]
+pitfalls = ["Deleting a big log that a service still writes: no space is freed.", "du / without -x counts other mounted disks too.", "Ignoring df -i when the error says 'No space left' but df -h shows free space."]
+next = "Next: a full disk that stopped a service."
+
+[[solution]]
+name = "as instructed"
+steps = ["df -h /srv/data", { answer_with = "df /srv/data | awk 'NR==2 {print $5}' | tr -d %" }, { input = ["letslinux"] }, "sudo du -xsh /srv/data/* | sort -h", ":answer {{proj}}", ":answer b", "sudo lsof +L1", ":answer {{holder}}", "sudo kill {{holder_pid}}", "df -h /srv/data", "df -i /srv/data", ":answer b", ":answer b"]
+
+[[solution]]
+name = "/proc and pkill"
+steps = ["df /srv/data", { answer_with = "df /srv/data | awk 'NR==2 {print $5}' | tr -d %" }, { input = ["letslinux"] }, "sudo du -xs /srv/data/* | sort -n", ":answer /srv/data/{{proj}}", ":answer 2", "sudo ls -l /proc/{{holder_pid}}/fd", ":answer /usr/local/bin/{{holder}}", "sudo pkill {{holder}}", "df /srv/data", "df -i", ":answer 2", ":answer 2"]
+
+[[counterexample]]
+name = "deleting more files instead"
+steps = ["df -h /srv/data", { answer_with = "df /srv/data | awk 'NR==2 {print $5}' | tr -d %" }, { input = ["letslinux"] }, "sudo du -xsh /srv/data/* | sort -h", ":answer {{proj}}", ":answer b", ":answer {{holder}}", "sudo rm -rf /srv/data/tmp", "df -h /srv/data", ":answer b", ":answer b"]

@@ -1,0 +1,145 @@
+schema = 1
+
+[mission]
+id = "c04-columns"
+title = "Columns and Fields"
+chapter = "C"
+kind = "lesson"
+order = 4
+difficulty = 3
+requires = ["c02-pipelines"]
+skills = ["c.cut-paste-tr", "c.sort-uniq", "c.awk-fields"]
+xp = 90
+estimated_minutes = 16
+
+[briefing]
+context = """
+HR sent staff.csv and asked a few quick questions about salaries. Meanwhile the security
+team wants to know which accounts can log in with bash. Both files are tables: one with
+commas, one with colons.
+"""
+concept = """
+cut -d DELIM -f N extracts fields. sort -t DELIM -k N sorts by a field (-n numerically,
+-r reversed). awk splits each line into fields $1, $2, ... (-F sets the separator), can test
+them ($3 > 50000) and compute ({ s += $3 } END { print s }).
+"""
+objectives = ["Extract fields with cut and awk", "Sort by a column numerically", "Filter and sum with awk"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+s1 = { range = [42000, 95000] }
+s2 = { range = [42000, 95000] }
+s3 = { range = [42000, 95000] }
+s4 = { range = [42000, 95000] }
+s5 = { range = [42000, 95000] }
+s6 = { range = [42000, 95000] }
+s7 = { range = [42000, 95000] }
+
+[[environment.setup]]
+action = "file"
+path = "~/staff.csv"
+content = """name,department,salary,start_year
+Ada,Engineering,{{s1}},2019
+Bram,Sales,{{s2}},2021
+Chidi,Engineering,{{s3}},2017
+Dalia,Support,{{s4}},2022
+Emre,Engineering,{{s5}},2020
+Fatou,Sales,{{s6}},2018
+Goran,Support,{{s7}},2023
+"""
+
+[[environment.setup]]
+action = "user"
+name = "svc-backup"
+shell = "/usr/sbin/nologin"
+create_home = false
+
+[[environment.setup]]
+action = "user"
+name = "maria"
+
+[[task]]
+id = "names"
+title = "Account names"
+kind = "guided"
+instructions = "Print only the account names (field 1) from /etc/passwd, where fields are separated by colons."
+skills = { "c.cut-paste-tr" = 1.0 }
+checks = [{ type = "output_contains", regex = "(?m)^maria$", command = ["cut", "awk"] }]
+hints = ["cut needs the delimiter and the field number.", "-d: sets the delimiter, -f1 the first field.", "Type: cut -d: -f1 /etc/passwd"]
+explanation = "/etc/passwd has seven colon-separated fields; the first is the account name."
+
+[[task]]
+id = "bash-users"
+title = "Who can log in with bash?"
+kind = "independent"
+instructions = "Save the names of all accounts whose login shell (field 7) is exactly /bin/bash into ~/bash-users.txt, one per line."
+skills = { "c.awk-fields" = 1.0 }
+checks = [{ type = "file_equals_command", path = "~/bash-users.txt", command = "awk -F: '$7 == \"/bin/bash\" {print $1}' /etc/passwd", ignore_order = true }]
+hints = ["awk can test a field and print another.", "awk -F: '$7 == \"/bin/bash\" {print $1}' /etc/passwd", "Type: awk -F: '$7 == \"/bin/bash\" {print $1}' /etc/passwd > ~/bash-users.txt"]
+explanation = "awk compared field 7 exactly; grep bash would also have matched accounts whose names or comments contain 'bash'."
+
+[[task]]
+id = "top"
+title = "Highest salary"
+kind = "independent"
+instructions = "Using staff.csv, find who earns the most."
+skills = { "c.sort-uniq" = 1.0, "c.cut-paste-tr" = 0.5 }
+question = { prompt = "Who has the highest salary?", type = "state", state = { command = "tail -n +2 /home/learner/staff.csv | sort -t, -k3 -n | tail -1 | cut -d, -f1" } }
+hints = ["Sort numerically on the salary column, which is field 3 with comma separators.", "sort -t, -k3 -n staff.csv | tail -1 (the header sorts as 0).", "Run: sort -t, -k3 -n staff.csv | tail -1"]
+explanation = "-t, sets the field separator for sort, -k3 picks the salary and -n compares numbers rather than text."
+
+[[task]]
+id = "sum"
+title = "Department total"
+kind = "independent"
+instructions = "Compute the total of all Engineering salaries."
+skills = { "c.awk-fields" = 1.0 }
+question = { prompt = "What is the total of the Engineering salaries?", type = "state", state = { command = "awk -F, '$2 == \"Engineering\" {s += $3} END {print s}' /home/learner/staff.csv" } }
+hints = ["awk can filter lines by field and keep a running total.", "awk -F, '$2 == \"Engineering\" { s += $3 } END { print s }' staff.csv", "Run that awk command and answer with the number."]
+explanation = "awk variables start at 0; END runs after the last line. This pattern sums any column."
+
+[[task]]
+id = "numeric"
+title = "Text versus numbers"
+kind = "prediction"
+instructions = "Think about how sort compares lines."
+skills = { "c.sort-uniq" = 1.0 }
+question = { prompt = "What does plain sort (without -n) output for the lines 9, 10 and 100?", type = "choice", choices = ["9 10 100", "10 100 9", "100 10 9", "9 100 10"], answer = 1 }
+hints = ["Without -n, lines are compared character by character.", "'1' sorts before '9'.", "The answer is (b): 10, 100, 9."]
+explanation = "Text order compares the first character first, so 10 and 100 come before 9. Use -n for numbers, -h for sizes like 2K."
+
+[debrief]
+summary = """
+cut extracts fields, sort -t -k -n orders by a column, and awk filters and computes on
+fields. Choose exact field comparisons over loose text searches.
+"""
+alternatives = ["grep ':/bin/bash$' /etc/passwd | cut -d: -f1", "sort -t, -k3,3nr staff.csv | head -1", "getent passwd lists accounts from every configured source"]
+pitfalls = ["cut cannot handle repeated spaces as one separator; awk can (its default).", "Forgetting -n makes numeric sorts wrong in subtle ways."]
+next = "Next: editing streams with sed."
+
+[[solution]]
+name = "cut sort awk"
+steps = [
+    "cut -d: -f1 /etc/passwd",
+    "awk -F: '$7 == \"/bin/bash\" {print $1}' /etc/passwd > ~/bash-users.txt",
+    "sort -t, -k3 -n staff.csv | tail -1",
+    { answer_with = "sort -t, -k3 -n /home/learner/staff.csv | tail -1 | cut -d, -f1" },
+    "awk -F, '$2 == \"Engineering\" {s += $3} END {print s}' staff.csv",
+    { answer_with = "awk -F, '$2 == \"Engineering\" {s += $3} END {print s}' /home/learner/staff.csv" },
+    ":answer b",
+]
+
+[[solution]]
+name = "grep and loops"
+steps = [
+    "awk -F: '{print $1}' /etc/passwd",
+    "grep ':/bin/bash$' /etc/passwd | cut -d: -f1 > bash-users.txt",
+    { answer_with = "sort -t, -k3,3nr /home/learner/staff.csv | head -1 | cut -d, -f1" },
+    { answer_with = "total=0; for s in $(grep Engineering /home/learner/staff.csv | cut -d, -f3); do total=$((total + s)); done; echo $total" },
+    ":answer 10 100 9",
+]
+
+[[counterexample]]
+name = "loose matching"
+steps = ["cut -d: -f1 /etc/passwd", "grep bash /etc/passwd > ~/bash-users.txt"]

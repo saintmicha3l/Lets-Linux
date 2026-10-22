@@ -1,0 +1,222 @@
+schema = 1
+
+[mission]
+id = "b00-skill-check"
+title = "Skill Check B: Files and the Filesystem"
+chapter = "B"
+placement = "B"
+kind = "assessment"
+order = 0
+difficulty = 3
+requires = []
+skills = ["b.hidden-files", "b.ls-listing", "b.find-files", "b.globbing", "b.copy-move-rename", "b.create-files-dirs", "b.links-symbolic", "b.links-hard-inodes", "b.path-names", "b.remove-safely", "b.archives", "b.disk-usage-basics", "b.view-files", "b.fhs-layout", "b.absolute-relative-paths"]
+xp = 70
+estimated_minutes = 15
+sequential = false
+
+[briefing]
+context = """
+This skill check covers chapter B: listing and finding files, wildcards, creating, moving and
+removing safely, links, awkward names, archives, disk usage and the filesystem layout. Tasks
+in any order, any commands. Solve them all (one slip allowed) to test out of chapter B.
+Anything you cannot do is simply not counted — :submit ends the check.
+"""
+concept = "No hints: show what you can do on your own."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "debian"
+
+[environment.vars]
+hidden = { choices = ["stash", "notes-old", "draft"] }
+needle = { choices = ["mirror", "relay", "beacon"] }
+deep = { choices = ["2019/q3", "archive/old", "tmp/x/y"] }
+rel = { choices = ["2.4.1", "3.0.0", "1.9.7"] }
+twin = { choices = ["summary.txt", "copy-of-notes", "keep.txt"] }
+big = { choices = ["photos", "videos", "dumps"] }
+word = { choices = ["walnut", "pebble", "lantern"] }
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "mkdir -p ~/inbox && cd ~/inbox && for n in 1 2 3; do echo \"started $n\" > app-$n.log; done && echo keep > readme.txt && echo keep > data.csv && echo secret > .{{hidden}} && echo junk > '-rf report (copy).txt'"
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /srv/data/{{deep}} /srv/data/a /srv/releases/{{rel}} && echo 'listen 9000' > /srv/data/{{deep}}/{{needle}}.conf && echo 'same' > /srv/data/a/notes.txt && ln /srv/data/a/notes.txt /srv/data/{{twin}} && seq 1 200 | sed 's/^/line /' > /srv/data/big.txt && sed -i '42s/.*/the word is {{word}}/' /srv/data/big.txt && chmod -R a+rX /srv/data /srv/releases"
+
+[[environment.setup]]
+action = "files"
+dir = "/srv/data/{{big}}"
+count = 6
+prefix = "f"
+size = 2000000
+
+[[environment.setup]]
+action = "files"
+dir = "/srv/data/misc"
+count = 6
+prefix = "m"
+size = 20000
+
+[[task]]
+id = "hidden"
+title = "Hidden"
+kind = "assessment"
+instructions = "~/inbox contains one hidden file."
+skills = { "b.hidden-files" = 1.0, "b.ls-listing" = 0.5 }
+question = { prompt = "Its name?", type = "regex", accept = ["^(~/inbox/|/home/learner/inbox/)?\\.{{hidden}}$"] }
+explanation = "Names starting with a dot are hidden from ls; ls -a shows them."
+
+[[task]]
+id = "find"
+title = "Somewhere in /srv/data"
+kind = "assessment"
+instructions = "A configuration file called {{needle}}.conf is somewhere below /srv/data."
+skills = { "b.find-files" = 1.0, "b.absolute-relative-paths" = 0.5 }
+question = { prompt = "Its full (absolute) path?", type = "exact", accept = ["/srv/data/{{deep}}/{{needle}}.conf"] }
+explanation = "find /srv/data -name '{{needle}}.conf'"
+
+[[task]]
+id = "sort"
+title = "Tidy the inbox"
+kind = "assessment"
+instructions = "Move every .log file from ~/inbox into a new directory ~/logs. Everything else stays in ~/inbox."
+skills = { "b.globbing" = 1.0, "b.copy-move-rename" = 1.0, "b.create-files-dirs" = 0.5 }
+checks = [
+    { type = "dir_entries", path = "~/logs", names = ["app-1.log", "app-2.log", "app-3.log"], only = true },
+    { type = "dir_entries", path = "~/inbox", names = ["readme.txt", "data.csv", ".{{hidden}}"], absent = ["app-1.log", "app-2.log", "app-3.log"] },
+]
+explanation = "mkdir ~/logs && mv ~/inbox/*.log ~/logs/ — the shell expands the wildcard before mv runs."
+
+[[task]]
+id = "link"
+title = "The current release"
+kind = "assessment"
+instructions = "Create ~/current as a symbolic link to /srv/releases/{{rel}}."
+skills = { "b.links-symbolic" = 1.0 }
+checks = [
+    { type = "path_exists", path = "~/current", kind = "symlink" },
+    { type = "symlink_to", path = "~/current", target = "/srv/releases/{{rel}}" },
+]
+explanation = "ln -s /srv/releases/{{rel}} ~/current — a symlink stores a path; switching releases means re-pointing it."
+
+[[task]]
+id = "twin"
+title = "Two names, one file"
+kind = "assessment"
+instructions = "/srv/data/a/notes.txt has a second name elsewhere in /srv/data: the same file (same inode), not a copy."
+skills = { "b.links-hard-inodes" = 1.0 }
+question = { prompt = "Its other path?", type = "exact", accept = ["/srv/data/{{twin}}"] }
+explanation = "ls -li shows the link count and inode; find /srv/data -samefile /srv/data/a/notes.txt finds every name."
+
+[[task]]
+id = "awkward"
+title = "An awkward name"
+kind = "assessment"
+instructions = "Delete the file in ~/inbox whose name is: -rf report (copy).txt — and nothing else."
+skills = { "b.path-names" = 1.0, "b.remove-safely" = 1.0 }
+checks = [
+    { type = "path_absent", path = "~/inbox/-rf report (copy).txt" },
+    { type = "dir_entries", path = "~/inbox", names = ["readme.txt", "data.csv", ".{{hidden}}"] },
+]
+explanation = "rm -- '-rf report (copy).txt' (or rm './-rf report (copy).txt'): -- ends the options, quotes keep the spaces and parentheses."
+
+[[task]]
+id = "archive"
+title = "Pack the logs"
+kind = "assessment"
+instructions = "Create a gzip-compressed tar archive ~/logs.tar.gz of the directory ~/logs (members named logs/…)."
+skills = { "b.archives" = 1.0 }
+checks = [{ type = "archive_contains", path = "~/logs.tar.gz", members = ["logs/app-1.log", "logs/app-2.log", "logs/app-3.log"] }]
+explanation = "cd ~ && tar -czf logs.tar.gz logs — tar -tzf lists it."
+
+[[task]]
+id = "space"
+title = "Where the space went"
+kind = "assessment"
+instructions = "One directory directly under /srv/data uses far more disk space than the others."
+skills = { "b.disk-usage-basics" = 1.0 }
+question = { prompt = "Which one? (its name)", type = "regex", accept = ["^(/srv/data/)?{{big}}/?$"] }
+explanation = "du -sh /srv/data/* | sort -h"
+
+[[task]]
+id = "line"
+title = "Line 42"
+kind = "assessment"
+instructions = "/srv/data/big.txt has 200 lines."
+skills = { "b.view-files" = 1.0 }
+question = { prompt = "What word ends line 42?", type = "exact", accept = ["{{word}}"] }
+explanation = "sed -n 42p /srv/data/big.txt, or head -42 … | tail -1."
+
+[[task]]
+id = "fhs"
+title = "The right place"
+kind = "assessment"
+instructions = "A colleague asks where a program installed by the package manager keeps its system-wide configuration."
+skills = { "b.fhs-layout" = 1.0 }
+question = { prompt = "Which directory?", type = "choice", choices = ["/usr/share", "/etc", "/var/lib", "/opt"], answer = 1 }
+explanation = "/etc holds host-specific configuration; /var/lib holds state, /usr/share read-only data, /opt add-on software."
+
+[debrief]
+summary = """
+The check covered chapter B. Solved tasks are evidence for their skills; chapter B's missions
+stay open to replay.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "straight through"
+steps = [
+    "ls -a ~/inbox",
+    ":answer .{{hidden}}",
+    "find /srv/data -name '{{needle}}.conf'",
+    ":answer /srv/data/{{deep}}/{{needle}}.conf",
+    "mkdir ~/logs && mv ~/inbox/*.log ~/logs/",
+    "ln -s /srv/releases/{{rel}} ~/current",
+    "find /srv/data -samefile /srv/data/a/notes.txt",
+    ":answer /srv/data/{{twin}}",
+    "rm -- ~/inbox/'-rf report (copy).txt'",
+    "cd ~ && tar -czf logs.tar.gz logs",
+    "du -sh /srv/data/* | sort -h | tail -1",
+    ":answer {{big}}",
+    "sed -n 42p /srv/data/big.txt",
+    ":answer {{word}}",
+    ":answer b",
+]
+
+[[solution]]
+name = "other tools"
+steps = [
+    ":answer /etc",
+    "cd ~/inbox",
+    "rm './-rf report (copy).txt'",
+    "mkdir -p ../logs",
+    "for f in *.log; do mv \"$f\" ../logs/; done",
+    "ls -la",
+    ":answer ~/inbox/.{{hidden}}",
+    "cd ~ && tar -cf - logs | gzip > logs.tar.gz",
+    "cd ~ && ln -s /srv/releases/{{rel}} current",
+    "ls -li /srv/data /srv/data/a",
+    ":answer /srv/data/{{twin}}",
+    "du -s /srv/data/*",
+    ":answer /srv/data/{{big}}",
+    "head -42 /srv/data/big.txt | tail -1",
+    ":answer {{word}}",
+    "find / -name '*.conf' -path '/srv/*' 2>/dev/null",
+    ":answer /srv/data/{{deep}}/{{needle}}.conf",
+]
+
+[[counterexample]]
+name = "rm -rf by accident and a copied link"
+steps = [
+    ":answer .{{hidden}}",
+    ":answer /srv/data/{{deep}}/{{needle}}.conf",
+    "mkdir ~/logs && cp ~/inbox/*.log ~/logs/",
+    "cp -r /srv/releases/{{rel}} ~/current",
+    ":answer /srv/data/{{twin}}",
+    "cd ~ && tar -czf logs.tar.gz logs",
+    ":answer {{big}}",
+    ":answer {{word}}",
+    ":answer b",
+]

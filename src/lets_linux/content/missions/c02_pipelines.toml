@@ -1,0 +1,146 @@
+schema = 1
+
+[mission]
+id = "c02-pipelines"
+title = "Pipelines"
+chapter = "C"
+kind = "lesson"
+order = 2
+difficulty = 3
+requires = ["c01-redirection"]
+skills = ["c.pipelines", "c.sort-uniq", "c.cut-paste-tr", "c.wc-counting"]
+xp = 90
+estimated_minutes = 18
+
+[briefing]
+context = """
+The web server's access log has grown and marketing wants numbers: how many requests, how
+many different visitors, and who the busiest clients are. No spreadsheet required — small
+tools joined with pipes answer all of it.
+"""
+concept = """
+A pipe (|) connects one command's stdout to the next command's stdin, so data flows left
+to right through a chain of small tools: cut extracts columns, sort orders lines, uniq
+collapses adjacent duplicates (-c counts them), head/tail trim, wc counts. Build pipelines
+one stage at a time and look at the data after each stage.
+"""
+objectives = ["Think of pipelines as data flow", "Extract, sort, de-duplicate and count"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+lines = { range = [240, 320] }
+
+[[environment.setup]]
+action = "run"
+command = '''
+set -- 10.0.0.12 10.0.0.12 10.0.0.12 10.0.0.12 192.168.1.40 192.168.1.40 192.168.1.40 172.16.5.9 172.16.5.9 10.0.0.77 203.0.113.5 198.51.100.23
+for i in $(seq 1 {{lines}}); do
+  n=$((RANDOM % $# + 1)); eval ip=\${$n}
+  case $((RANDOM % 4)) in 0) p=/;; 1) p=/login;; 2) p=/api/items;; *) p=/static/app.js;; esac
+  s=200; [ $((RANDOM % 9)) -eq 0 ] && s=500; [ $((RANDOM % 7)) -eq 0 ] && s=404
+  printf '%s - - [02/Mar/2026:08:%02d:%02d +0000] "GET %s HTTP/1.1" %s %s\n' "$ip" $((i / 60 % 60)) $((i % 60)) "$p" "$s" $((RANDOM % 5000 + 100))
+done > /home/learner/access.log
+chown learner:learner /home/learner/access.log
+'''
+
+[[task]]
+id = "count"
+title = "How many requests?"
+kind = "guided"
+instructions = "Each line of ~/access.log is one request. Count them."
+skills = { "c.wc-counting" = 1.0 }
+question = { prompt = "How many requests are in access.log?", type = "state", state = { command = "wc -l < /home/learner/access.log" } }
+hints = ["One line = one request.", "wc -l counts lines.", "Run: wc -l access.log"]
+explanation = "wc -l < file prints just the number, without the file name."
+
+[[task]]
+id = "column"
+title = "Just the visitors"
+kind = "guided"
+instructions = "Print only the first column (the client IP) of every line: `cut -d' ' -f1 access.log | head`."
+skills = { "c.cut-paste-tr" = 1.0, "c.pipelines" = 1.0 }
+checks = [{ type = "output_contains", regex = "(?m)^\\d+\\.\\d+\\.\\d+\\.\\d+$", command = ["cut", "awk"] }]
+hints = ["cut -d sets the delimiter and -f picks fields.", "Fields are separated by spaces; the IP is field 1.", "Type: cut -d' ' -f1 access.log | head"]
+explanation = "cut turned each request into a single IP. head kept the screen readable — and showed the pipe in action."
+
+[[task]]
+id = "distinct"
+title = "How many visitors?"
+kind = "independent"
+instructions = "Count how many different client IPs appear in the log."
+skills = { "c.sort-uniq" = 1.0, "c.pipelines" = 1.0 }
+question = { prompt = "How many distinct client IPs made requests?", type = "state", state = { command = "cut -d' ' -f1 /home/learner/access.log | sort -u | wc -l" } }
+hints = ["Extract the IPs, remove duplicates, count what is left.", "uniq only removes adjacent duplicates, so sort first (or use sort -u).", "Run: cut -d' ' -f1 access.log | sort -u | wc -l"]
+explanation = "sort -u (or sort | uniq) collapses duplicates; wc -l counts the survivors."
+
+[[task]]
+id = "busiest"
+title = "The busiest client"
+kind = "independent"
+instructions = "Find the IP address that made the most requests."
+skills = { "c.sort-uniq" = 1.0, "c.pipelines" = 1.0 }
+question = { prompt = "Which IP made the most requests?", type = "state", state = { command = "cut -d' ' -f1 /home/learner/access.log | sort | uniq -c | sort -rn | head -1 | awk '{print $2}'" } }
+hints = ["Count how often each IP appears: uniq -c counts adjacent duplicates.", "sort | uniq -c | sort -rn puts the most frequent first.", "Run: cut -d' ' -f1 access.log | sort | uniq -c | sort -rn | head -1"]
+explanation = "sort | uniq -c | sort -rn is the classic frequency-count pipeline. It works on any column of any log."
+
+[[task]]
+id = "top3"
+title = "Top three report"
+kind = "independent"
+instructions = "Save the three most active IPs, each with its request count as printed by uniq -c (count first, then IP), into ~/top3.txt."
+skills = { "c.pipelines" = 1.0, "c.sort-uniq" = 1.0, "c.redirect-output" = 0.5 }
+checks = [{ type = "file_equals_command", path = "~/top3.txt", command = "cut -d' ' -f1 /home/learner/access.log | sort | uniq -c | sort -rn | head -3", ignore_order = true }]
+hints = ["Reuse the frequency pipeline and keep three lines.", "End the pipeline with head -3 and redirect to the file.", "Type: cut -d' ' -f1 access.log | sort | uniq -c | sort -rn | head -3 > top3.txt"]
+explanation = "A pipeline's final output can be redirected like any command's."
+
+[[task]]
+id = "flow"
+title = "What flows through the pipe?"
+kind = "prediction"
+instructions = "Reason about data flow."
+skills = { "c.pipelines" = 1.0 }
+question = { prompt = "In   cat access.log | grep ' 500 ' | wc -l   what does wc read?", type = "choice", choices = ["The whole of access.log", "Only the lines that grep printed", "The number of 500 errors", "Nothing: wc opens access.log itself"], answer = 1 }
+hints = ["Each command only sees what the previous one wrote.", "grep writes only matching lines to its stdout.", "The answer is (b)."]
+explanation = "wc counts the lines grep let through. (cat is unnecessary here: grep ' 500 ' access.log | wc -l does the same.)"
+
+[debrief]
+summary = """
+Pipelines turn small tools into a data-processing language: extract (cut, awk), filter
+(grep), order (sort), aggregate (uniq -c, wc), trim (head, tail). Build them stage by stage.
+"""
+alternatives = ["awk '{print $1}' access.log | sort | uniq -c | sort -rn | head -3", "sort -u replaces sort | uniq"]
+pitfalls = ["uniq without sort only merges adjacent duplicates.", "sort without -n orders 10 before 9."]
+next = "Next: searching with grep."
+
+[[solution]]
+name = "cut sort uniq"
+steps = [
+    "wc -l < access.log",
+    ":answer {{lines}}",
+    "cut -d' ' -f1 access.log | head",
+    "cut -d' ' -f1 access.log | sort -u | wc -l",
+    { answer_with = "cut -d' ' -f1 /home/learner/access.log | sort -u | wc -l" },
+    "cut -d' ' -f1 access.log | sort | uniq -c | sort -rn | head -1",
+    { answer_with = "cut -d' ' -f1 /home/learner/access.log | sort | uniq -c | sort -rn | head -1 | awk '{print $2}'" },
+    "cut -d' ' -f1 access.log | sort | uniq -c | sort -rn | head -3 > top3.txt",
+    ":answer b",
+]
+
+[[solution]]
+name = "awk variants"
+steps = [
+    "wc -l access.log",
+    ":answer {{lines}}",
+    "awk '{print $1}' access.log | tail -5",
+    "awk '{print $1}' access.log | sort | uniq | wc -l",
+    { answer_with = "awk '{print $1}' /home/learner/access.log | sort | uniq | wc -l" },
+    "awk '{c[$1]++} END {for (ip in c) print c[ip], ip}' access.log | sort -nr | head -1",
+    { answer_with = "awk '{c[$1]++} END {for (ip in c) print c[ip], ip}' /home/learner/access.log | sort -nr | head -1 | cut -d' ' -f2" },
+    "awk '{print $1}' access.log | sort | uniq -c | sort -nr | head -n 3 > ~/top3.txt",
+    ":answer Only the lines that grep printed",
+]
+
+[[counterexample]]
+name = "uniq without sort"
+steps = [":answer {{lines}}", "awk '{print $1}' access.log | head", "cut -d' ' -f1 access.log | uniq -c | sort -rn | head -3 > top3.txt"]

@@ -1,0 +1,156 @@
+schema = 1
+
+[mission]
+id = "j06b-checking-filesystems"
+title = "Checking Filesystems"
+chapter = "J"
+kind = "lesson"
+order = 8
+difficulty = 3
+requires = ["j02-busy-and-options", "h05b-boot-and-order"]
+skills = ["j.fs-integrity", "j.raid-concepts"]
+review_for = ["j.fs-integrity", "j.raid-concepts"]
+xp = 100
+estimated_minutes = 20
+
+[briefing]
+context = """
+Power cuts, failing cables and dying disks damage filesystems and arrays. Before the rescue
+missions that follow, practise the two routine checks: repairing a filesystem with fsck, and
+reading the health of a RAID mirror. (sudo password: letslinux)
+"""
+concept = """
+fsck (for ext4: e2fsck) checks and repairs a filesystem. Only ever run it on an UNMOUNTED
+filesystem — repairing a filesystem that is in use can destroy it, so e2fsck refuses.
+e2fsck -n DEV only looks (answers no to every repair); -f forces a full check; -y repairs
+without asking. Exit status: 0 clean, 1 errors corrected, 4 errors left uncorrected.
+The kernel reports damage it notices as 'EXT4-fs error' lines (journalctl -k, dmesg).
+RAID 1 (a mirror) writes everything to two or more disks, so the array survives a disk
+failure. cat /proc/mdstat summarises every array: [2/2] [UU] means both members are up;
+[2/1] [U_] means one is missing — the array is 'degraded' and has no redundancy left.
+mdadm --detail /dev/mdN shows each member's state. RAID protects against disk failure, not
+against deletion, corruption or ransomware: it is not a backup.
+"""
+objectives = ["Check and repair an unmounted filesystem", "Read e2fsck's exit status", "Read the health of a RAID array"]
+
+[environment]
+profile = "debian"
+packages = ["mdadm"]
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "2G"
+partitions = [{ size = "rest", fs = "ext4", label = "photos", mount = "/srv/photos", fstab = true, errors = true }]
+
+[[environment.setup]]
+action = "disk"
+name = "sdc"
+size = "4G"
+
+[[environment.setup]]
+action = "disk"
+name = "sdd"
+size = "4G"
+
+[[environment.setup]]
+action = "run"
+command = "mdadm --create /dev/md0 --run --level=1 --raid-devices=2 /dev/sdc /dev/sdd"
+
+[[environment.setup]]
+action = "clock"
+seconds = 600
+
+[[task]]
+id = "mounted"
+title = "Never on a mounted filesystem"
+kind = "guided"
+instructions = "The photos filesystem (/dev/sdb1) recorded errors. First see what happens if you check it while it is mounted:  sudo e2fsck -n /dev/sdb1"
+skills = { "j.fs-integrity" = 1.0 }
+checks = [{ type = "command_used", command = ["e2fsck", "fsck", "fsck.ext4"], as_root = true }]
+hints = ["Run it with sudo; read what e2fsck says about the mount.", "Even -n (look only) warns about a mounted filesystem.", "Type: sudo e2fsck -n /dev/sdb1"]
+explanation = "e2fsck warns or refuses because a mounted filesystem changes under its feet. Checks belong on unmounted filesystems — or happen at boot, before mounting."
+
+[[task]]
+id = "repair"
+title = "Unmount, check, repair"
+kind = "guided"
+instructions = "Unmount it, then force a full check that repairs everything:  sudo umount /srv/photos   then   sudo e2fsck -f -y /dev/sdb1"
+skills = { "j.fs-integrity" = 1.0 }
+checks = [{ type = "filesystem_on", device = "/dev/sdb1", fstype = "ext4", label = "photos", clean = true }]
+persistent = true
+hints = ["umount takes the mount point (or the device).", "-f forces the check even if the filesystem looks clean; -y answers yes to every repair.", "Type: sudo umount /srv/photos && sudo e2fsck -f -y /dev/sdb1"]
+explanation = "e2fsck walks every inode and directory and fixes inconsistencies. Damaged files may end up in lost+found at the top of the filesystem."
+
+[[task]]
+id = "status"
+title = "What the exit status says"
+kind = "prediction"
+instructions = "Think about e2fsck's exit statuses (echo $? after it)."
+skills = { "j.fs-integrity" = 1.0 }
+question = { prompt = "e2fsck -f -y just exited with status 1. What does that mean?", type = "choice", choices = ["It failed and nothing was repaired", "Errors were found and corrected; the filesystem is usable", "The device does not exist", "The filesystem is mounted"], answer = 1 }
+hints = ["0 means clean.", "Exit statuses are bit flags: 1 corrected, 2 reboot needed, 4 uncorrected, 8 operational error.", "The answer is (b)."]
+explanation = "Status 1 is good news after a repair. Status 4 means errors remain: look at the output, run it again, and suspect the disk itself (smartctl, kernel I/O errors)."
+
+[[task]]
+id = "remount"
+title = "Back in service"
+kind = "independent"
+instructions = "Mount the repaired photos filesystem again, using its /etc/fstab entry."
+skills = { "j.fs-integrity" = 0.5, "j.mount-umount" = 1.0 }
+checks = [{ type = "mounted", target = "/srv/photos" }]
+persistent = true
+hints = ["The entry already exists; mount needs only the mount point.", "mount /srv/photos (with sudo).", "Type: sudo mount /srv/photos"]
+explanation = "Given only the mount point, mount looks up the device, type and options in /etc/fstab — which also tests the entry."
+
+[[task]]
+id = "mdstat"
+title = "Read the array"
+kind = "guided"
+instructions = "Check the mirror:  cat /proc/mdstat   and   sudo mdadm --detail /dev/md0"
+skills = { "j.raid-concepts" = 1.0 }
+question = { prompt = "How many active member disks does md0 have?", type = "number", accept = ["2"] }
+hints = ["In /proc/mdstat, [2/2] means 2 devices configured, 2 active.", "mdadm --detail lists 'Active Devices'.", "The answer is 2."]
+explanation = "[UU] means every member is Up. Monitoring /proc/mdstat (or mdadm --monitor e-mails) is what tells you a disk died before the second one does."
+
+[[task]]
+id = "degraded"
+title = "One U missing"
+kind = "prediction"
+instructions = "Think about a mirror with a failed disk."
+skills = { "j.raid-concepts" = 1.0 }
+question = { prompt = "/proc/mdstat shows md0 with [2/1] [U_]. What is the situation?", type = "choice", choices = ["Everything is fine", "The array is degraded: one disk failed or is missing. Data is still there, but one more failure loses it", "The array is rebuilding faster", "Half of the data is lost"], answer = 1 }
+hints = ["_ marks a missing member.", "A mirror still has a full copy on the remaining disk — but only one.", "The answer is (b)."]
+explanation = "A degraded mirror keeps working, which is exactly why failures go unnoticed. Replace the failed disk and let the array rebuild — the next missions show how."
+
+[[task]]
+id = "capacity"
+title = "Mirror capacity"
+kind = "prediction"
+instructions = "md0 mirrors two 4 GiB disks."
+skills = { "j.raid-concepts" = 1.0 }
+question = { prompt = "How much space does md0 offer?", type = "choice", choices = ["8 GiB", "About 4 GiB", "2 GiB", "12 GiB"], answer = 1 }
+hints = ["Every block is stored on both disks.", "A mirror's capacity is that of its smallest member.", "The answer is (b)."]
+explanation = "RAID 1 trades capacity for redundancy. RAID 5 and 6 spread parity over 3+ disks to keep more capacity, at the cost of slower writes and long rebuilds."
+
+[debrief]
+summary = """
+Check filesystems only unmounted: e2fsck -n to look, -f -y to repair; exit status 1 means
+'corrected'. /proc/mdstat and mdadm --detail show array health: [UU] healthy, [U_] degraded.
+A mirror survives one disk failure — and is still no backup.
+"""
+alternatives = ["sudo fsck /dev/sdb1 calls the right checker (e2fsck) for the filesystem type", "tune2fs -l /dev/sdb1 | grep -i state shows whether ext4 recorded errors", "Checking the root filesystem: boot with fsck.mode=force, or from rescue media"]
+pitfalls = ["Running fsck -y on a mounted filesystem.", "Ignoring a degraded array because 'everything still works'.", "Treating RAID as a backup: deletions and corruption are mirrored instantly."]
+next = "Next: an /etc/fstab that went wrong, and a server stuck in emergency mode."
+
+[[solution]]
+name = "as instructed"
+steps = [{ input = ["letslinux"] }, "sudo e2fsck -n /dev/sdb1", "sudo umount /srv/photos", "sudo e2fsck -f -y /dev/sdb1", "echo $?", ":answer b", "sudo mount /srv/photos", "cat /proc/mdstat", "sudo mdadm --detail /dev/md0", ":answer 2", ":answer b", ":answer b"]
+
+[[solution]]
+name = "fsck front end"
+steps = [{ input = ["letslinux"] }, "sudo fsck -n /dev/sdb1", "sudo umount /dev/sdb1", "sudo fsck -f -y /dev/sdb1", ":answer 2", "sudo mount -a", "cat /proc/mdstat", ":answer 2", ":answer 2", ":answer 2"]
+
+[[counterexample]]
+name = "checking without unmounting"
+steps = [{ input = ["letslinux"] }, "sudo e2fsck -n /dev/sdb1", "sudo e2fsck -f -y /dev/sdb1", ":answer b", "cat /proc/mdstat", ":answer 2", ":answer b", ":answer b"]

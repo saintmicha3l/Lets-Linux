@@ -1,0 +1,122 @@
+schema = 1
+
+[mission]
+id = "c06-noisy-log"
+title = "The Noisy Log"
+chapter = "C"
+kind = "assessment"
+order = 6
+difficulty = 4
+requires = ["c05b-reading-logs"]
+skills = ["c.log-filtering", "c.pipelines", "c.grep-basics"]
+review_for = ["c.log-filtering", "c.pipelines", "c.grep-basics", "c.sort-uniq"]
+xp = 120
+estimated_minutes = 20
+sequential = false
+
+[briefing]
+context = """
+Customers reported failures on the shop website around 08:00 this morning. The access log
+is in ~/shop-access.log. Find out who and what is behind the errors, and preserve the
+evidence for the security team. Answer in any order; no commands are given.
+"""
+concept = "Combine grep, cut/awk, sort, uniq -c and head into pipelines; check intermediate results as you go."
+objectives = ["Investigate a log with pipelines", "Report findings from evidence", "Preserve evidence in a file"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+lines = { range = [350, 450] }
+bad = { choices = ["198.51.100.23", "203.0.113.77", "192.0.2.150"] }
+path = { choices = ["/checkout", "/cart/update", "/api/payment"] }
+
+[[environment.setup]]
+action = "run"
+command = '''
+set -- 10.1.0.5 10.1.0.5 10.1.0.9 10.1.0.12 172.20.3.4 172.20.3.4 192.168.7.21
+for i in $(seq 1 {{lines}}); do
+  if [ $((RANDOM % 5)) -eq 0 ]; then ip={{bad}}; p={{path}}; s=500
+  else
+    n=$((RANDOM % $# + 1)); eval ip=\${$n}
+    case $((RANDOM % 5)) in 0) p=/;; 1) p=/products;; 2) p={{path}};; 3) p=/search;; *) p=/static/site.css;; esac
+    s=200; [ $((RANDOM % 15)) -eq 0 ] && s=404
+  fi
+  printf '%s - - [02/Mar/2026:%02d:%02d:%02d +0000] "POST %s HTTP/1.1" %s %s\n' "$ip" $((7 + i * 2 / {{lines}})) $((i % 60)) $((RANDOM % 60)) "$p" "$s" $((RANDOM % 3000 + 200))
+done > /home/learner/shop-access.log
+chown learner:learner /home/learner/shop-access.log
+'''
+
+[[task]]
+id = "errors"
+title = "How many server errors?"
+kind = "independent"
+instructions = "Count the requests that ended with status 500."
+skills = { "c.grep-basics" = 1.0, "c.log-filtering" = 1.0 }
+question = { prompt = "How many requests returned status 500?", type = "state", state = { command = "awk '$9 == 500' /home/learner/shop-access.log | wc -l" } }
+hints = ["The status code is a column of its own; be careful not to match 500 inside sizes.", "awk '$9 == 500' selects by the status field; grep '\" 500 ' also works.", "Run: awk '$9 == 500' shop-access.log | wc -l"]
+explanation = "Matching the status column exactly avoids counting byte sizes such as 1500."
+
+[[task]]
+id = "who"
+title = "Who triggers them?"
+kind = "independent"
+instructions = "Identify the client IP responsible for most of the 500 errors."
+skills = { "c.log-filtering" = 1.0, "c.sort-uniq" = 1.0 }
+question = { prompt = "Which IP caused the most 500 responses?", type = "exact", accept = ["{{bad}}"] }
+hints = ["First keep only the 500 lines, then count by IP.", "awk '$9 == 500 {print $1}' shop-access.log | sort | uniq -c | sort -rn | head -3", "The IP is {{bad}}."]
+explanation = "Filter, then aggregate: the same frequency pipeline you used before, applied to a subset."
+
+[[task]]
+id = "what"
+title = "Which endpoint?"
+kind = "independent"
+instructions = "Find which URL path the failing requests are hitting."
+skills = { "c.log-filtering" = 1.0 }
+question = { prompt = "Which request path returns the 500 errors?", type = "exact", accept = ["{{path}}"] }
+hints = ["The path is field 7.", "awk '$9 == 500 {print $7}' shop-access.log | sort | uniq -c", "The path is {{path}}."]
+explanation = "Correlating who and what turns a pile of errors into a precise report."
+
+[[task]]
+id = "evidence"
+title = "Preserve the evidence"
+kind = "independent"
+instructions = "Save every log line from {{bad}} (in original order) into ~/evidence-{{bad}}.log for the security team."
+skills = { "c.log-filtering" = 1.0, "c.redirect-output" = 0.5 }
+checks = [{ type = "file_equals_command", path = "~/evidence-{{bad}}.log", command = "grep -F '{{bad}} ' /home/learner/shop-access.log" }]
+hints = ["Select lines by IP and redirect them to a file.", "Anchor or fix the match so that 198.51.100.230 would not also match: grep '^{{bad}} '.", "Type: grep '^{{bad}} ' shop-access.log > ~/evidence-{{bad}}.log"]
+explanation = "Keeping the original, unmodified lines (and the original file) matters if the incident is escalated."
+
+[debrief]
+summary = """
+You went from symptoms to specifics: how many errors, from whom, on which endpoint, with the
+evidence preserved — using nothing but grep, awk, sort, uniq and redirection.
+"""
+alternatives = ["grep ' 500 ' shop-access.log | cut -d' ' -f1 | sort | uniq -c", "awk '$9==500 {c[$1\" \"$7]++} END {for (k in c) print c[k], k}' shop-access.log"]
+pitfalls = ["grep 500 also matches sizes and IPs containing 500.", "Never edit the original log during an investigation: copy or extract instead."]
+next = "Chapter D: permissions, ownership and accounts."
+
+[[solution]]
+name = "awk pipelines"
+steps = [
+    { answer_with = "awk '$9 == 500' /home/learner/shop-access.log | wc -l" },
+    "awk '$9 == 500 {print $1}' shop-access.log | sort | uniq -c | sort -rn | head -3",
+    ":answer {{bad}}",
+    "awk '$9 == 500 {print $7}' shop-access.log | sort | uniq -c",
+    ":answer {{path}}",
+    "grep '^{{bad}} ' shop-access.log > ~/evidence-{{bad}}.log",
+]
+
+[[solution]]
+name = "grep and cut"
+steps = [
+    "grep -F '{{bad}} ' shop-access.log > evidence-{{bad}}.log",
+    "grep '\" 500 ' shop-access.log | cut -d' ' -f7 | sort | uniq -c | sort -rn",
+    ":answer {{path}}",
+    "grep '\" 500 ' shop-access.log | cut -d' ' -f1 | sort | uniq -c | sort -rn | head -1",
+    ":answer {{bad}}",
+    { answer_with = "grep -c '\" 500 ' /home/learner/shop-access.log" },
+]
+
+[[counterexample]]
+name = "evidence edited in place"
+steps = [":answer {{bad}}", ":answer {{path}}", "sed -i '/{{bad}}/!d' shop-access.log", "mv shop-access.log evidence-{{bad}}.log"]

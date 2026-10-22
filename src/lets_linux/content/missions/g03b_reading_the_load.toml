@@ -1,0 +1,204 @@
+schema = 1
+
+[mission]
+id = "g03b-reading-the-load"
+title = "Reading the Load"
+chapter = "G"
+kind = "lesson"
+order = 4
+difficulty = 3
+requires = ["g03-jobs", "b02b-the-map"]
+skills = ["g.resource-monitoring", "g.proc-filesystem", "g.file-descriptors", "g.nice-priority", "g.resource-exhaustion"]
+review_for = ["g.resource-monitoring", "g.nice-priority"]
+xp = 100
+estimated_minutes = 25
+
+[briefing]
+context = """
+"The server is slow" is the most common complaint an administrator hears. Before you fix
+anything you need numbers: how busy the CPUs are, how much memory is left, and which
+processes are responsible. This lesson teaches the instruments; the next mission is a real
+slow server.
+"""
+concept = """
+Load average (uptime, /proc/loadavg): the average number of processes running or waiting
+for a CPU over 1, 5 and 15 minutes. Compare it with the number of CPUs (nproc): a load of 4
+on 4 CPUs is fully busy; on 1 CPU, three processes are always waiting.
+Memory (free -h): 'available' is what programs can still get; swap in heavy use means RAM
+ran out. When RAM and swap are exhausted, the kernel's OOM killer ends a process.
+Ranking: ps aux --sort=-%cpu (or -%mem) | head; top -b -n 1 shows the same once.
+/proc/PID/ describes a running process: cmdline (arguments, separated by NUL bytes), status,
+cwd, and fd/ — one symbolic link per open file descriptor (lsof -p PID lists the same).
+Priority: niceness runs from -20 (greedy) to 19 (polite). nice -n N COMMAND starts a command
+politely; renice -n N -p PID changes a running one. Anyone may raise their own processes'
+niceness; only root may lower it.
+"""
+objectives = ["Interpret load average against the CPU count", "Read memory figures", "Rank processes by CPU and memory", "Inspect a process through /proc", "Change scheduling priority"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+conf = { choices = ["nightly.yml", "warmup.yml", "replay.yml"] }
+logname = { choices = ["import-2026-03.log", "sync-run.log", "batch-17.log"] }
+
+[[environment.setup]]
+action = "file"
+path = "/var/tmp/{{logname}}"
+content = "started\n"
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "process"
+comm = "report-cache"
+argv = ["/opt/reports/bin/report-cache", "--config", "/etc/reports/{{conf}}"]
+user = "learner"
+state = "S"
+cpu = 3.0
+rss_kb = 2400000
+age_minutes = 300
+open = ["/var/tmp/{{logname}}"]
+pid_var = "cache_pid"
+
+[[environment.setup]]
+action = "process"
+comm = "encoder"
+argv = ["/usr/local/bin/encoder", "--input", "/srv/media/raw"]
+user = "learner"
+state = "R"
+cpu = 96.0
+rss_kb = 90000
+age_minutes = 40
+pid_var = "enc_pid"
+
+[[environment.setup]]
+action = "process"
+comm = "sshd"
+argv = ["sshd: learner@pts/1"]
+user = "learner"
+cpu = 0.1
+rss_kb = 6000
+
+[[task]]
+id = "cpus"
+title = "Load versus CPUs"
+kind = "guided"
+instructions = "Look at the load average and the number of CPUs:  uptime   and   nproc"
+skills = { "g.resource-monitoring" = 1.0, "g.proc-filesystem" = 0.5 }
+question = { prompt = "How many CPUs does this machine have?", type = "state", state = { command = "nproc" } }
+hints = ["uptime prints three load averages: 1, 5 and 15 minutes.", "nproc prints the number of CPUs (also visible in /proc/cpuinfo).", "Run nproc."]
+explanation = "A load average means nothing on its own: always divide it by the number of CPUs. Below 1 per CPU there is spare capacity; above it, processes wait."
+
+[[task]]
+id = "meaning"
+title = "What the number means"
+kind = "prediction"
+instructions = "Interpret a load average."
+skills = { "g.resource-monitoring" = 1.0 }
+question = { prompt = "A 2-CPU server shows a 1-minute load average of 6.0. What does that mean?", type = "choice", choices = ["Each CPU is 6% busy", "On average about 6 processes wanted a CPU, so about 4 were waiting at any moment", "The server has 6 users", "6 GB of memory are in use"], answer = 1 }
+hints = ["Load counts processes running or waiting to run.", "2 can run at once; the rest queue.", "The answer is (b)."]
+explanation = "Load is a queue length, not a percentage. Load 6 on 2 CPUs means work is waiting — users feel that as slowness."
+
+[[task]]
+id = "memory"
+title = "How much memory is left?"
+kind = "guided"
+instructions = "Show memory in human-readable units:  free -h"
+skills = { "g.resource-monitoring" = 1.0, "g.resource-exhaustion" = 0.5 }
+question = { prompt = "Which column tells you how much memory programs can still get?", type = "choice", choices = ["free", "available", "shared", "buff/cache"], answer = 1 }
+hints = ["Linux uses spare RAM as a cache, so 'free' is always small on a healthy system.", "The cache is given back when programs need it; one column accounts for that.", "The answer is (b): available."]
+explanation = "'free' is RAM nobody uses at all; 'available' adds the cache the kernel can give back. Low available memory plus busy swap means the system is short of RAM."
+
+[[task]]
+id = "rank"
+title = "Who uses the most?"
+kind = "guided"
+instructions = "Rank processes by memory:  ps aux --sort=-%mem | head -5   (and by CPU with --sort=-%cpu)"
+skills = { "g.resource-monitoring" = 1.0 }
+question = { prompt = "Which program uses the most memory?", type = "exact", accept = ["report-cache", "/opt/reports/bin/report-cache"] }
+hints = ["--sort=-%mem sorts by memory, largest first (the - means descending).", "Look at the first line under the header: the RSS column is resident memory in KiB.", "The answer is report-cache."]
+explanation = "ps aux --sort=-%mem and --sort=-%cpu answer 'who is responsible' in one line. top shows the same, refreshed continuously."
+
+[[task]]
+id = "cmdline"
+title = "Look inside with /proc"
+kind = "guided"
+instructions = "Every process has a directory /proc/PID. report-cache's PID is {{cache_pid}}. Read its full command line:  tr '\\0' ' ' < /proc/{{cache_pid}}/cmdline; echo"
+skills = { "g.proc-filesystem" = 1.0 }
+question = { prompt = "Which configuration file was report-cache started with?", type = "exact", accept = ["/etc/reports/{{conf}}", "{{conf}}"] }
+hints = ["cmdline holds the arguments separated by NUL bytes; tr turns them into spaces.", "ps -o args= -p {{cache_pid}} shows the same.", "The answer is /etc/reports/{{conf}}."]
+explanation = "/proc/PID/cmdline shows exactly how a process was started — invaluable when the same program runs several times with different options."
+
+[[task]]
+id = "fds"
+title = "Open files"
+kind = "guided"
+instructions = "List the files report-cache has open:  ls -l /proc/{{cache_pid}}/fd   (or  lsof -p {{cache_pid}})"
+skills = { "g.file-descriptors" = 1.0, "g.proc-filesystem" = 1.0 }
+question = { prompt = "Which log file does report-cache keep open? (the file name)", type = "exact", accept = ["{{logname}}", "/var/tmp/{{logname}}"] }
+hints = ["Each entry in fd/ is a number (0 stdin, 1 stdout, 2 stderr, 3 and up: files it opened) pointing to a file.", "Look for the link that points to a .log file.", "The answer is {{logname}}."]
+explanation = "File descriptors are a process's handles on open files and sockets. They explain puzzles such as a deleted file whose space is not freed — it stays allocated while a process holds it open (chapter J)."
+
+[[task]]
+id = "renice"
+title = "Make it polite"
+kind = "guided"
+instructions = "encoder (PID {{enc_pid}}) is your own batch job and hogs a CPU. Let it use only spare CPU time:  renice -n 19 -p {{enc_pid}}"
+skills = { "g.nice-priority" = 1.0 }
+checks = [{ type = "process_running", comm = "encoder", min_nice = 19 }]
+persistent = true
+hints = ["renice changes the niceness of a running process.", "19 is the most polite value; the process keeps running.", "Type: renice -n 19 -p {{enc_pid}}"]
+explanation = "A niced process still gets every CPU cycle nobody else wants, so batch work finishes — just not at the expense of interactive users."
+
+[[task]]
+id = "start-nice"
+title = "Start politely"
+kind = "independent"
+instructions = "Start the command  sleep 600  in the background with a niceness of 10 from the beginning."
+skills = { "g.nice-priority" = 1.0, "g.jobs-control" = 0.5 }
+checks = [{ type = "process_running", comm = "sleep", min_nice = 10 }]
+persistent = true
+hints = ["One command starts a program with a given niceness.", "nice -n 10 COMMAND, and & to background it.", "Type: nice -n 10 sleep 600 &"]
+explanation = "nice sets the priority at start; renice changes it later. Long backups and builds are commonly started with nice (and ionice for disk)."
+
+[[task]]
+id = "lower"
+title = "Only root may be greedy"
+kind = "prediction"
+instructions = "Think about who may raise a process's priority."
+skills = { "g.nice-priority" = 1.0 }
+question = { prompt = "As learner, you run  renice -n -5 -p {{enc_pid}}  on your own process. What happens?", type = "choice", choices = ["It works: it is your process", "It fails with Permission denied: only root may lower niceness (raise priority)", "The process is restarted", "Nothing: negative values are ignored"], answer = 1 }
+hints = ["Making a process more polite is always allowed.", "Taking more CPU than others is a privilege.", "The answer is (b)."]
+explanation = "Otherwise any user could make their own jobs win against everyone else's. sudo renice is needed for negative values."
+
+[[task]]
+id = "oom"
+title = "When memory runs out"
+kind = "prediction"
+instructions = "Think about what the kernel does at the very end."
+skills = { "g.resource-exhaustion" = 1.0 }
+question = { prompt = "RAM and swap are completely full and a program asks for more. What does the Linux kernel do?", type = "choice", choices = ["It freezes until memory is free", "Its OOM killer ends a process (usually the biggest) to free memory, and logs it", "It writes memory to /tmp", "It reboots"], answer = 1 }
+hints = ["OOM stands for out of memory.", "The kernel picks a victim by a score that favours big processes; journalctl -k shows 'Out of memory: Killed process'.", "The answer is (b)."]
+explanation = "A process that vanished without a trace in its own log may have been OOM-killed: check journalctl -k (or dmesg) for 'Out of memory'. The fix is finding the memory hog before it gets that far."
+
+[debrief]
+summary = """
+Load average divided by CPUs says whether work is waiting; free's 'available' says how much
+memory is left. ps --sort ranks the culprits, /proc/PID shows how they were started and what
+they hold open, and nice/renice decide who gets the CPU first.
+"""
+alternatives = ["top -b -n 1 | head -15 combines load, memory and the process ranking", "cat /proc/loadavg and grep MemAvailable /proc/meminfo read the raw numbers", "pidof encoder | xargs renice -n 19 -p renices every encoder at once"]
+pitfalls = ["Reading load without the CPU count.", "Worrying about a small 'free' value: cache is good; look at 'available'.", "Killing the busiest process when it does legitimate work: renice it instead."]
+next = "Next: a slow server — find the causes with these instruments."
+
+[[solution]]
+name = "as instructed"
+steps = ["uptime", "nproc", { answer_with = "nproc" }, ":answer b", "free -h", ":answer available", "ps aux --sort=-%mem | head -5", ":answer report-cache", "tr '\\0' ' ' < /proc/{{cache_pid}}/cmdline; echo", ":answer /etc/reports/{{conf}}", "ls -l /proc/{{cache_pid}}/fd", ":answer {{logname}}", "renice -n 19 -p {{enc_pid}}", "nice -n 10 sleep 600 &", ":answer b", ":answer b"]
+
+[[solution]]
+name = "/proc and top"
+steps = ["cat /proc/loadavg", "grep -c ^processor /proc/cpuinfo", { answer_with = "nproc" }, ":answer 2", "grep -E 'MemTotal|MemAvailable' /proc/meminfo", ":answer b", "top -b -n 1 | head -15", ":answer /opt/reports/bin/report-cache", "ps -o args= -p {{cache_pid}}", ":answer {{conf}}", "lsof -p {{cache_pid}}", ":answer /var/tmp/{{logname}}", "renice 19 {{enc_pid}}", "nice -10 sleep 600 &", ":answer 2", ":answer 2"]
+
+[[counterexample]]
+name = "killing the busy job instead of renicing it"
+steps = ["nproc", { answer_with = "nproc" }, ":answer b", ":answer available", ":answer report-cache", ":answer /etc/reports/{{conf}}", ":answer {{logname}}", "kill {{enc_pid}}", "sleep 600 &", ":answer b", ":answer b"]

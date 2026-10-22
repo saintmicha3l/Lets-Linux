@@ -1,0 +1,154 @@
+schema = 1
+
+[mission]
+id = "q01d-debugging-basics"
+title = "Debugging Basics"
+chapter = "Q"
+kind = "lesson"
+order = 4
+difficulty = 4
+requires = ["q01c-make-basics", "n03b-watching-syscalls"]
+skills = ["q.debugging-tracing"]
+review_for = ["q.debugging-tracing"]
+xp = 100
+estimated_minutes = 25
+
+[briefing]
+context = """
+"Segmentation fault" and nothing else: when a compiled program crashes, a debugger shows where
+and why. gdb is the standard debugger on Linux; ltrace and strace show what a program asks of
+its libraries and of the kernel. Crash a small program on purpose and take it apart.
+"""
+concept = """
+Compile with -g so the program carries debugging information (source lines, variable names).
+An exit status above 128 means "killed by signal N-128": 139 = 128 + 11 = SIGSEGV (invalid
+memory access), 136 = SIGFPE, 134 = SIGABRT.
+gdb -q ./PROG starts the debugger; inside it:
+  run [ARGS]       start the program        bt (backtrace)   the chain of calls at the crash
+  break FUNC       stop when FUNC is called  info args / print EXPR   look at values
+  frame N / up     move to a caller          continue          run on       quit
+gdb ./PROG core (or coredumpctl debug on systemd systems) examines a crash after the fact.
+ltrace ./PROG shows calls into shared libraries (printf, getenv, fopen...); strace shows
+system calls. Pick the tool by the question: where did it crash (gdb), what did it ask its
+libraries (ltrace), what did it ask the kernel (strace).
+"""
+objectives = ["Read crash exit statuses", "Get a backtrace and inspect variables in gdb", "Use breakpoints", "Choose between gdb, ltrace and strace"]
+
+[environment]
+profile = "debian"
+packages = ["build-essential", "gdb", "ltrace"]
+[environment.vars]
+envvar = { choices = ["WC_MODE", "COUNT_STYLE", "WORDS_FORMAT"] }
+
+[[environment.setup]]
+action = "file"
+path = "~/wc/words.c"
+owner = "learner"
+group = "learner"
+content = """#include <stdio.h>
+#include <stdlib.h>
+
+int count_words(const char *line)
+{
+    int n = 1;
+    for (const char *p = line; *p; p++)
+        if (*p == ' ')
+            n++;
+    return n;
+}
+
+int main(int argc, char *argv[])
+{
+    const char *style = getenv("{{envvar}}");
+    char *text = argc > 1 ? argv[1] : NULL;
+    printf("style: %s\\n", style ? style : "plain");
+    printf("%d words\\n", count_words(text));
+    return 0;
+}
+"""
+
+[[task]]
+id = "crash"
+title = "A crash"
+kind = "guided"
+instructions = "Build with debugging information and run it without an argument:  cd ~/wc && gcc -g -o words words.c && ./words; echo $?"
+skills = { "q.debugging-tracing" = 1.0 }
+question = { prompt = "Which signal killed the program? (exit status minus 128 gives its number)", type = "choice", choices = ["SIGTERM (15)", "SIGSEGV (11): an invalid memory access", "SIGKILL (9)", "SIGINT (2)"], answer = 1 }
+hints = ["The shell printed the exit status after the crash.", "139 - 128 = 11.", "The answer is (b)."]
+explanation = "Statuses above 128 mean 'killed by a signal'. SIGSEGV is the classic crash: the program touched memory it may not use — very often a NULL pointer."
+
+[[task]]
+id = "bt"
+title = "Where did it crash?"
+kind = "guided"
+instructions = "Run it under gdb and ask for the backtrace:  gdb -q ./words   then at the (gdb) prompt:  run   bt   quit"
+skills = { "q.debugging-tracing" = 1.0 }
+question = { prompt = "In which function did the program crash?", type = "exact", accept = ["count_words", "count_words()"] }
+hints = ["bt lists frames: #0 is where it stopped, #1 its caller, and so on.", "Frame #0 names the function and its arguments.", "The answer is count_words."]
+explanation = "Frame #0 shows count_words (line=0x0): the function received a NULL pointer and dereferenced it. Frame #1 shows main called it — that is where the NULL came from."
+
+[[task]]
+id = "args"
+title = "Look at the values"
+kind = "guided"
+instructions = "Stop at the function before the crash and inspect its argument:  gdb -q ./words   then:  break count_words   run   info args   quit"
+skills = { "q.debugging-tracing" = 1.0 }
+question = { prompt = "What value does the argument line have?", type = "exact", accept = ["0x0", "NULL", "null", "0"] }
+hints = ["break stops the program when count_words is called.", "info args prints the function's arguments.", "The answer is 0x0 (a NULL pointer)."]
+explanation = "Breakpoints let you look at the state before things go wrong. Here main passed NULL because there was no argument: the bug is in main, which should check argc."
+
+[[task]]
+id = "ltrace"
+title = "What it asks its libraries"
+kind = "guided"
+instructions = "Watch the library calls of a run that works:  ltrace ./words 'one two three'"
+skills = { "q.debugging-tracing" = 1.0 }
+question = { prompt = "Which environment variable does the program read? (the name passed to getenv)", type = "exact", accept = ["{{envvar}}"], case_sensitive = true }
+hints = ["ltrace prints each library call with its arguments on standard error.", "Look for getenv(\"...\").", "The answer is {{envvar}}."]
+explanation = "ltrace answers 'which settings does this program look at?' without the source: every getenv, fopen and strcmp shows up with its arguments."
+
+[[task]]
+id = "fix"
+title = "Fix the real bug"
+kind = "independent"
+instructions = "Change words.c so that, without an argument, it prints a message containing 'usage' to standard error and exits with status 1 instead of crashing. Rebuild ~/wc/words."
+skills = { "q.debugging-tracing" = 0.5, "q.toolchain" = 1.0 }
+checks = [
+    { type = "command_result", command = "cd ~/wc && gcc -o words words.c && ./words", status = 1, stderr_contains = "usage" },
+    { type = "command_result", command = "cd ~/wc && gcc -o words words.c && ./words 'a b c'", status = 0, stdout_contains = "3 words" },
+]
+persistent = true
+hints = ["The bug is in main: it passes NULL when argc is 1.", "Check argc before using argv[1].", "Add at the start of main: if (argc < 2) { fprintf(stderr, \"usage: words TEXT\\n\"); return 1; }"]
+explanation = "The debugger showed where it crashed; the fix belongs where the bad value came from. Checking inputs at the boundary (here: the command line) prevents the whole class of crash."
+
+[[task]]
+id = "which-tool"
+title = "Which tool?"
+kind = "prediction"
+instructions = "Match the question to the tool."
+skills = { "q.debugging-tracing" = 1.0 }
+question = { prompt = "A program prints 'cannot open configuration' without saying which file. Which tool shows the file name fastest?", type = "choice", choices = ["gdb with a breakpoint on main", "strace -e trace=openat (or ltrace for fopen): every open attempt with its path and result", "objdump -d", "make -n"], answer = 1 }
+hints = ["The question is about a request to the system, not a crash.", "Opening a file is a system call.", "The answer is (b)."]
+explanation = "Crash → gdb; library behaviour (getenv, string comparisons) → ltrace; files, permissions, network → strace."
+
+[debrief]
+summary = """
+Exit statuses above 128 name the killing signal. gdb's run, bt, break, info args and print show
+where a program crashed and with which values; ltrace and strace show its library and system
+calls. Fix the bug where the bad value originates.
+"""
+alternatives = ["gdb -q -batch -ex run -ex bt --args ./words runs non-interactively", "ulimit -c unlimited then gdb ./words core examines a crash afterwards", "valgrind (not simulated) finds invalid memory use even without a crash"]
+pitfalls = ["Debugging a program built without -g: no line numbers, no variable names.", "Fixing the function that crashed instead of the caller that passed bad data.", "Forgetting that 139 means the program died, not that it reported an error."]
+next = "Next: a log summariser that crashes in production — find the line that kills it."
+
+[[solution]]
+name = "as instructed"
+steps = ["cd ~/wc && gcc -g -o words words.c && ./words; echo $?", ":answer b", { input = ["run", "bt", "quit"] }, "gdb -q ./words", ":answer count_words", { input = ["break count_words", "run", "info args", "quit"] }, "gdb -q ./words", ":answer 0x0", "ltrace ./words 'one two three'", ":answer {{envvar}}", "sed -i 's/^    const char \\*style = getenv/    if (argc < 2) { fprintf(stderr, \"usage: words TEXT\\\\n\"); return 1; }\\n&/' words.c", "gcc -g -o words words.c && ./words", ":answer b"]
+
+[[solution]]
+name = "batch gdb and a rewrite"
+steps = ["cd ~/wc", "gcc -g -o words words.c", "./words", "echo $?", ":answer 2", "gdb -q -batch -ex run -ex bt ./words", ":answer count_words()", "gdb -q -batch -ex 'break count_words' -ex run -ex 'print line' ./words", ":answer NULL", "ltrace ./words a 2>&1 | grep getenv", ":answer {{envvar}}", { edit = "#include <stdio.h>\n#include <stdlib.h>\n\nint count_words(const char *line)\n{\n    int n = 1;\n    for (const char *p = line; *p; p++)\n        if (*p == ' ')\n            n++;\n    return n;\n}\n\nint main(int argc, char *argv[])\n{\n    if (argc < 2) {\n        fprintf(stderr, \"usage: words TEXT\\n\");\n        return 1;\n    }\n    printf(\"%d words\\n\", count_words(argv[1]));\n    return 0;\n}\n" }, "nano words.c", "gcc -o words words.c", ":answer 2"]
+
+[[counterexample]]
+name = "hiding the crash"
+steps = ["cd ~/wc && gcc -g -o words words.c && ./words; echo $?", ":answer b", ":answer count_words", ":answer 0x0", ":answer {{envvar}}", "printf '#!/bin/sh\\nexit 0\\n' > words.sh", ":answer b"]

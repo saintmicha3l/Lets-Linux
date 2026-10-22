@@ -1,0 +1,193 @@
+schema = 1
+
+[mission]
+id = "a00-skill-check"
+title = "Skill Check A: Terminal Fundamentals"
+chapter = "A"
+placement = "A"
+kind = "assessment"
+order = 0
+difficulty = 2
+requires = []
+skills = ["a.identity-basics", "a.terminal-vs-shell", "a.exit-status", "a.env-vars-intro", "a.builtin-vs-external", "a.help-man", "a.history", "a.date-time", "a.echo-printf", "a.command-anatomy"]
+xp = 60
+estimated_minutes = 12
+sequential = false
+
+[briefing]
+context = """
+Already at home in a terminal? Prove it and skip ahead. This skill check covers chapter A:
+who and where you are, exit statuses, environment variables, built-ins and programs,
+finding help, history, dates and printing text. Do the tasks in any order, with whatever
+commands you like — the check looks at answers and results, not at how you got them.
+Solve every task (one slip is allowed) and you test out of chapter A's missions. Anything
+you cannot do is simply not counted: :submit ends the check.
+"""
+concept = "No hints and no instructions on commands: show what you can do on your own."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "debian"
+hostname = "{{host}}"
+
+[environment.vars]
+host = { choices = ["quartz-04", "basalt-11", "gneiss-27", "shale-09"] }
+code = { choices = ["3", "4", "5", "7"] }
+team = { choices = ["finance", "logistics", "research"] }
+cmd = { choices = ["uname", "sleep", "sort", "head"] }
+file = { choices = ["agent-2.4.1.tar.gz", "tools-0.9.tgz", "bundle-17.zip"] }
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/healthcheck"
+mode = "0755"
+content = "#!/bin/sh\n# healthcheck: prints nothing, reports through its exit status\nexit {{code}}\n"
+
+[[environment.setup]]
+action = "file"
+path = "~/.bash_history"
+owner = "learner"
+group = "learner"
+mode = "0600"
+content = "ls -la\ncd /tmp\ncurl -O https://downloads.example.lan/{{file}}\ntar -tf {{file}}\ncd\nclear\n"
+
+[[task]]
+id = "whereami"
+title = "Who and where"
+kind = "assessment"
+instructions = "Report your user name and this machine's host name."
+skills = { "a.identity-basics" = 1.0, "a.terminal-vs-shell" = 0.5 }
+question = { prompt = "Answer as user@host", type = "exact", accept = ["learner@{{host}}"] }
+explanation = "whoami and hostname — and both are in your prompt."
+
+[[task]]
+id = "status"
+title = "A silent program"
+kind = "assessment"
+instructions = "The program healthcheck prints nothing. Find out what it reports."
+skills = { "a.exit-status" = 1.0 }
+question = { prompt = "What exit status does healthcheck return?", type = "number", accept = ["{{code}}"] }
+explanation = "Run it, then echo $? — the exit status is how programs report success (0) or failure (anything else)."
+
+[[task]]
+id = "export"
+title = "A variable for the next program"
+kind = "assessment"
+instructions = "In your shell, set REPORT_DIR to /srv/reports/{{team}} so that programs you start from it see the value too."
+skills = { "a.env-vars-intro" = 1.0 }
+checks = [{ type = "shell_var", name = "REPORT_DIR", value = "/srv/reports/{{team}}", exported = true }]
+explanation = "export REPORT_DIR=/srv/reports/{{team}} — without export the variable stays in the shell and child processes do not inherit it."
+
+[[task]]
+id = "which"
+title = "Where a command lives"
+kind = "assessment"
+instructions = "Find the file that runs when you type {{cmd}}."
+skills = { "a.builtin-vs-external" = 1.0 }
+question = { prompt = "Full path of the {{cmd}} program?", type = "regex", accept = ["^(/usr)?/bin/{{cmd}}$"] }
+explanation = "type {{cmd}}, command -v {{cmd}} or which {{cmd}} — PATH is searched in order."
+
+[[task]]
+id = "builtin"
+title = "No file at all"
+kind = "assessment"
+instructions = "There is no program file called cd anywhere in PATH, yet cd works."
+skills = { "a.builtin-vs-external" = 1.0, "a.terminal-vs-shell" = 0.5 }
+question = { prompt = "Why?", type = "choice", choices = ["cd is an alias for pushd", "cd is built into the shell: a separate program could not change the shell's own working directory", "cd is a kernel system call typed directly", "The terminal emulator handles cd"], answer = 1 }
+explanation = "A child process cannot change its parent's current directory — so cd has to be a builtin (type cd says so)."
+
+[[task]]
+id = "manual"
+title = "Read the manual"
+kind = "assessment"
+instructions = "Without guessing: find in sort's documentation the option that compares lines by their numeric value (so 10 sorts after 9)."
+skills = { "a.help-man" = 1.0, "a.command-anatomy" = 0.5 }
+question = { prompt = "Which option?", type = "regex", accept = ["^(-n|--numeric-sort)$"] }
+explanation = "man sort or sort --help: -n, --numeric-sort."
+
+[[task]]
+id = "history"
+title = "What happened before"
+kind = "assessment"
+instructions = "An earlier session on this account downloaded a file with curl."
+skills = { "a.history" = 1.0 }
+question = { prompt = "Which URL did it download?", type = "exact", accept = ["https://downloads.example.lan/{{file}}"] }
+explanation = "The shell keeps earlier sessions' commands in ~/.bash_history; history (or history | grep curl) shows them."
+
+[[task]]
+id = "date"
+title = "Today"
+kind = "assessment"
+instructions = "Report the machine's current date."
+skills = { "a.date-time" = 1.0 }
+question = { prompt = "Today's date (any common format, e.g. 2026-03-02)", type = "state", state = { command = "date +%F", date = true } }
+explanation = "date prints it; date +%F gives YYYY-MM-DD."
+
+[[task]]
+id = "write"
+title = "A two-line report"
+kind = "assessment"
+instructions = "Create ~/report.txt containing exactly two lines: `host: {{host}}` and then `status: ok`."
+skills = { "a.echo-printf" = 1.0, "a.command-anatomy" = 0.5 }
+checks = [{ type = "file_equals", path = "~/report.txt", content = "host: {{host}}\nstatus: ok\n" }]
+explanation = "printf 'host: %s\\nstatus: ok\\n' \"$(hostname)\" > ~/report.txt — or two echo lines with > and >>."
+
+[debrief]
+summary = """
+The check covered chapter A: identity, exit statuses, exported variables, built-ins and
+PATH, the manual, history, dates and printing text. Every solved task is evidence for its
+skill; chapter A's missions stay open to replay whenever you like.
+"""
+next = "Take the next skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "straight through"
+steps = [
+    "whoami; hostname",
+    ":answer learner@{{host}}",
+    "healthcheck; echo $?",
+    ":answer {{code}}",
+    "export REPORT_DIR=/srv/reports/{{team}}",
+    "type {{cmd}}",
+    ":answer /usr/bin/{{cmd}}",
+    ":answer 2",
+    "sort --help | grep -i numeric",
+    ":answer -n",
+    "history | grep curl",
+    ":answer https://downloads.example.lan/{{file}}",
+    { answer_with = "date +%F" },
+    "printf 'host: %s\\nstatus: ok\\n' \"$(hostname)\" > ~/report.txt",
+]
+
+[[solution]]
+name = "other tools, other order"
+steps = [
+    "echo 'host: {{host}}' > ~/report.txt",
+    "echo 'status: ok' >> ~/report.txt",
+    "REPORT_DIR=/srv/reports/{{team}}",
+    "export REPORT_DIR",
+    "grep curl ~/.bash_history",
+    ":answer https://downloads.example.lan/{{file}}",
+    "which {{cmd}}",
+    ":answer /bin/{{cmd}}",
+    ":answer b",
+    ":answer --numeric-sort",
+    { answer_with = "date '+%d %b %Y'" },
+    "/usr/local/bin/healthcheck || echo failed with $?",
+    ":answer {{code}}",
+    ":answer learner@{{host}}",
+]
+
+[[counterexample]]
+name = "unexported variable and a wrong file"
+steps = [
+    ":answer learner@{{host}}",
+    ":answer {{code}}",
+    "REPORT_DIR=/srv/reports/{{team}}",
+    ":answer /usr/bin/{{cmd}}",
+    ":answer 2",
+    ":answer -n",
+    ":answer https://downloads.example.lan/{{file}}",
+    { answer_with = "date +%F" },
+    "echo 'host: {{host}} status: ok' > ~/report.txt",
+]

@@ -1,0 +1,155 @@
+schema = 1
+
+[mission]
+id = "d02b-directory-access"
+title = "Directories Are Doors"
+chapter = "D"
+kind = "lesson"
+order = 3
+difficulty = 3
+requires = ["d02-chmod"]
+skills = ["d.directory-permissions"]
+review_for = ["d.directory-permissions"]
+xp = 80
+estimated_minutes = 15
+
+[briefing]
+context = """
+'Permission denied' on a file whose own permissions look fine is one of the most common
+puzzles on Linux. The answer is almost always a directory. In this lesson you change the
+permissions of your own directories and watch what each bit does.
+"""
+concept = """
+On a directory the bits mean something different than on a file:
+  r  list the names inside (ls)
+  w  create, delete and rename entries inside (together with x)
+  x  "search": pass through the directory to reach what is inside (cd, open a file by name)
+To open /a/b/c/file you need x on /, /a, /a/b and /a/b/c — every directory on the path —
+plus the right permission on the file itself. One directory without x for you breaks the
+whole path, whatever the file's own mode says. ls -ld DIR shows a directory's own
+permissions (plain ls -l would list its contents instead).
+"""
+objectives = ["Explain r, w and x on directories", "Find the directory that breaks a path", "Grant traversal without granting listing"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+code = { word = true }
+team = { choices = ["design", "finance", "research"] }
+blocker = { choices = ["projects", "shared"] }
+
+[[environment.setup]]
+action = "dir"
+path = "~/lab/box"
+owner = "learner"
+group = "learner"
+mode = "0755"
+
+[[environment.setup]]
+action = "file"
+path = "~/lab/box/notes.txt"
+content = "box notes: {{code}}\n"
+owner = "learner"
+group = "learner"
+mode = "0644"
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /srv/{{team}}/shared/projects/2026 && echo 'Q2 roadmap: ship it' > /srv/{{team}}/shared/projects/2026/roadmap.txt && chmod 644 /srv/{{team}}/shared/projects/2026/roadmap.txt && chmod 755 /srv/{{team}} /srv/{{team}}/shared /srv/{{team}}/shared/projects /srv/{{team}}/shared/projects/2026 && chmod 750 $(test {{blocker}} = shared && echo /srv/{{team}}/shared || echo /srv/{{team}}/shared/projects)"
+
+[[task]]
+id = "no-x"
+title = "Take away x"
+kind = "guided"
+instructions = "Remove your own search (x) permission from ~/lab/box and try to read the file inside:  chmod u-x ~/lab/box   then   cat ~/lab/box/notes.txt"
+skills = { "d.directory-permissions" = 1.0 }
+checks = [{ type = "command_used", command = ["cat"], args_contain = ["notes.txt"], failed = true }]
+hints = ["Two commands: first chmod, then cat.", "chmod u-x removes x for the owner (you).", "Type: chmod u-x ~/lab/box   then   cat ~/lab/box/notes.txt"]
+explanation = "notes.txt is still rw-r--r--, yet you cannot read it: without x on the directory, nothing inside can be reached by name — not even by its owner."
+
+[[task]]
+id = "list-only"
+title = "r without x"
+kind = "guided"
+instructions = "The directory still has r. Try  ls -l ~/lab/box  and look closely at the output."
+skills = { "d.directory-permissions" = 1.0 }
+question = { prompt = "With r but no x, what does ls -l show for notes.txt?", type = "choice", choices = ["Its full details, as usual", "Only the name; the details are question marks, because the file cannot be reached", "Nothing at all", "The file's contents"], answer = 1 }
+hints = ["Run ls -l ~/lab/box and read every column.", "r lets ls read the list of names; the details live in the file's inode, which needs x to reach.", "The answer is (b)."]
+explanation = "r on a directory gives you the list of names and nothing more. To look at an entry's details (or open it), you need x."
+
+[[task]]
+id = "x-only"
+title = "x without r"
+kind = "guided"
+instructions = "Now the opposite: give yourself x but no r —  chmod u=wx ~/lab/box  — then try  ls ~/lab/box  and  cat ~/lab/box/notes.txt"
+skills = { "d.directory-permissions" = 1.0 }
+checks = [
+    { type = "mode_lacks", path = "~/lab/box", bits = "400" },
+    { type = "mode_has", path = "~/lab/box", bits = "100" },
+    { type = "output_contains", text = "box notes:", command = ["cat"], scope = "history" },
+]
+hints = ["Set the owner's bits to exactly w and x.", "Then ls fails, but cat with the exact name works.", "Type: chmod u=wx ~/lab/box; ls ~/lab/box; cat ~/lab/box/notes.txt"]
+explanation = "With x but not r you can use a name you already know, but you cannot list the directory. That is how 'drop-box' and home directories with mode 711 work."
+
+[[task]]
+id = "restore"
+title = "Back to normal"
+kind = "independent"
+instructions = "Restore ~/lab/box to the usual directory mode: rwx for you, r-x for group and others."
+skills = { "d.directory-permissions" = 1.0, "d.chmod-octal" = 0.5 }
+checks = [{ type = "file_mode", path = "~/lab/box", mode = "755" }]
+persistent = true
+hints = ["Directories normally have x wherever they have r.", "rwxr-xr-x is 755.", "Type: chmod 755 ~/lab/box"]
+explanation = "755 is the usual mode for a directory others may enter and list; 700 keeps it private; 711 lets others pass through without listing."
+
+[[task]]
+id = "chain"
+title = "Find the broken door"
+kind = "guided"
+instructions = "You cannot read /srv/{{team}}/shared/projects/2026/roadmap.txt, though the file is rw-r--r--. Check every directory on the path with:  ls -ld /srv/{{team}} /srv/{{team}}/shared /srv/{{team}}/shared/projects /srv/{{team}}/shared/projects/2026"
+skills = { "d.directory-permissions" = 1.0 }
+question = { prompt = "Which directory stops you? (give its full path)", type = "exact", accept = ["/srv/{{team}}/shared/{{blocker}}", "/srv/{{team}}/shared/{{blocker}}/"] }
+hints = ["You are not root and not in root's group, so the 'other' triplet (last three letters) applies.", "Look for the directory whose last three letters have no x.", "It is the one with mode drwxr-x---: run the ls -ld command above."]
+explanation = "The directory with mode 750 belongs to root: for you, as 'other', it has no x, so nothing below it can be reached — even though the file and the directories below it are open."
+
+[[task]]
+id = "minimal"
+title = "The smallest fix"
+kind = "prediction"
+instructions = "Think about which bits a reader needs on a directory."
+skills = { "d.directory-permissions" = 1.0 }
+question = { prompt = "To let others open roadmap.txt by its path WITHOUT letting them list the blocking directory, which mode should that directory get?", type = "choice", choices = ["777", "755", "751 (x for others, no r)", "700"], answer = 2 }
+hints = ["Opening a file by path needs x on each directory; listing needs r.", "Give others x only.", "The answer is (c): 751."]
+explanation = "x without r is the least that makes the path usable. 755 would also work but reveals the names; 777 lets anyone delete files in it."
+
+[[task]]
+id = "ls-ld"
+title = "ls -l versus ls -ld"
+kind = "prediction"
+instructions = "Think about which permissions you see."
+skills = { "d.directory-permissions" = 0.5 }
+question = { prompt = "What does  ls -l /srv/{{team}}  show?", type = "choice", choices = ["The permissions of /srv/{{team}} itself", "The permissions of the entries inside /srv/{{team}}", "Only the directory's owner", "An error"], answer = 1 }
+hints = ["ls lists a directory's contents unless told otherwise.", "-d means: show the directory itself, not what is inside.", "The answer is (b). Use ls -ld to see the directory's own mode."]
+explanation = "ls -l DIR lists the entries inside DIR; ls -ld DIR shows DIR itself. When chasing a path, you want -d."
+
+[debrief]
+summary = """
+On a directory, r lists names, w changes entries and x lets you pass through. Reaching a file
+needs x on every directory of its path. When 'Permission denied' hits a readable file, check
+each parent with ls -ld and fix the one missing x.
+"""
+alternatives = ["stat -c '%A %U:%G %n' DIR... prints mode and owner for several paths at once", "chmod o+x DIR grants traversal symbolically; chmod 751 DIR sets it in octal"]
+pitfalls = ["ls -l on a directory shows its contents' permissions, not its own — use ls -ld.", "Fixing the file's mode when the problem is a directory above it.", "chmod -R 777 'fixes' everything by removing all protection."]
+next = "Next: administrator rights with sudo — then your first troubleshooting mission."
+
+[[solution]]
+name = "as instructed"
+steps = ["chmod u-x ~/lab/box", "cat ~/lab/box/notes.txt", "ls -l ~/lab/box", ":answer b", "chmod u=wx ~/lab/box", "ls ~/lab/box", "cat ~/lab/box/notes.txt", "chmod 755 ~/lab/box", "ls -ld /srv/{{team}} /srv/{{team}}/shared /srv/{{team}}/shared/projects /srv/{{team}}/shared/projects/2026", ":answer /srv/{{team}}/shared/{{blocker}}", ":answer c", ":answer b"]
+
+[[solution]]
+name = "octal and stat"
+steps = ["cd ~/lab", "chmod 655 box", "cat box/notes.txt", "ls -l box", ":answer 2", "chmod 355 box", "cat box/notes.txt", "chmod u+r box", "stat -c '%A %n' /srv/{{team}} /srv/{{team}}/shared /srv/{{team}}/shared/projects", ":answer /srv/{{team}}/shared/{{blocker}}/", ":answer 751 (x for others, no r)", ":answer 2"]
+
+[[counterexample]]
+name = "never trying it"
+steps = [":answer b", "chmod 755 ~/lab/box", ":answer /srv/{{team}}/shared", ":answer a", ":answer a"]

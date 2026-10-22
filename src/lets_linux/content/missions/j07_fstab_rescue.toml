@@ -1,0 +1,172 @@
+schema = 1
+
+[mission]
+id = "j07-fstab-rescue"
+title = "Before the Reboot"
+chapter = "J"
+kind = "troubleshooting"
+order = 9
+difficulty = 5
+requires = ["j02-busy-and-options", "h02-reading-the-journal", "j06b-checking-filesystems", "c08-the-method"]
+skills = ["j.fstab-persistence", "j.fs-integrity", "m.hypothesis-method"]
+review_for = ["j.mount-umount", "h.journalctl"]
+xp = 180
+estimated_minutes = 25
+
+[briefing]
+context = """
+A reboot is planned for tonight. Yesterday a colleague edited /etc/fstab, and since then
+the media archive is not mounted. A broken fstab can drop the server into emergency mode at
+boot — with nobody at the console. Find every problem now, repair the media filesystem and
+make sure the next boot will be clean. (sudo password: letslinux)
+"""
+concept = """
+At boot, systemd mounts every fstab entry; a missing device or a bad option makes the boot
+wait and then fail into emergency mode (unless the entry has nofail). Test fstab before a
+reboot: sudo findmnt --verify finds unknown devices, missing mount points and wrong types;
+sudo mount -a actually mounts and also catches bad options — the kernel explains in dmesg.
+Filesystems that recorded errors must be checked unmounted with fsck (e2fsck for ext4):
+-n only reports, -y repairs.
+"""
+objectives = ["Test fstab safely", "Read mount errors and kernel messages", "Check and repair a filesystem", "Leave fstab correct and verified"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "4G"
+partitions = [
+    { size = "2G", fs = "ext4", label = "media", errors = true },
+    { size = "rest", fs = "ext4", label = "scratch", mount = "/srv/scratch", fstab = true },
+]
+
+[[environment.setup]]
+action = "dir"
+path = "/srv/media"
+
+[[environment.setup]]
+action = "append"
+path = "/etc/fstab"
+content = """# media archive and old backup disk (changed 2026-03-01)
+LABEL=media /srv/media ext4 defualts,noatime 0 2
+UUID=3e6be9de-8d2b-4d5c-a1f0-7b0b1a0e8c11 /mnt/old-backup ext4 defaults 0 2
+"""
+
+[[environment.setup]]
+action = "journal"
+identifier = "kernel"
+priority = "err"
+message = "EXT4-fs (sdb1): error count since last fsck: 3"
+ago = 7200
+
+[[environment.setup]]
+action = "journal"
+identifier = "kernel"
+priority = "err"
+message = "EXT4-fs (sdb1): last error at time 1772300400: ext4_lookup:1855: inode #2: comm ls: deleted inode referenced: 77"
+ago = 7200
+
+[[task]]
+id = "test"
+title = "Test fstab"
+kind = "guided"
+instructions = "Test /etc/fstab without rebooting: let mount mount everything it lists."
+skills = { "j.fstab-persistence" = 1.0 }
+checks = [{ type = "command_used", command = "mount", args_regex = "(^| )(-a|--all)( |$)", as_root = true }]
+hints = ["mount has an option that mounts all fstab entries.", "sudo mount -a", "sudo mount -a — and read every line of the output."]
+explanation = "mount -a tries every entry that is not mounted yet, exactly like the boot would."
+
+[[task]]
+id = "count"
+title = "How many problems?"
+kind = "troubleshooting"
+instructions = "Use mount -a, findmnt --verify and the kernel messages to find out how many fstab entries are broken."
+skills = { "j.fstab-persistence" = 1.0, "h.journalctl" = 0.5 }
+question = { prompt = "How many entries in /etc/fstab are broken?", type = "exact", accept = ["2", "two"] }
+hints = ["sudo findmnt --verify checks every entry; after a failed mount, sudo dmesg | tail explains it.", "findmnt --verify does not check mount options — mount -a does.", "Two: /mnt/old-backup (the disk does not exist, nor does the mount point) and /srv/media (an option the kernel does not know)."]
+explanation = "\"defualts\" is not an option: the kernel refused it ('Unrecognized mount option'). The old backup disk is gone: no filesystem has that UUID."
+
+[[task]]
+id = "fsck"
+title = "Check the media filesystem"
+kind = "troubleshooting"
+instructions = "The kernel logged errors on the media filesystem (/dev/sdb1). Check and repair it before it is mounted again."
+skills = { "j.fs-integrity" = 1.0 }
+checks = [{ type = "filesystem_on", device = "/dev/sdb1", fstype = "ext4", label = "media", clean = true }]
+persistent = true
+hints = ["journalctl -k or dmesg show the EXT4-fs errors for sdb1.", "fsck only on unmounted filesystems: sudo e2fsck -f /dev/sdb1 (-n first to only look, -y to repair).", "sudo e2fsck -f -y /dev/sdb1"]
+explanation = "e2fsck repaired the filesystem (exit status 1: errors corrected). Running it on a mounted filesystem could have made things worse — that is why it refuses."
+
+[[task]]
+id = "fix"
+title = "A clean fstab"
+kind = "troubleshooting"
+instructions = "Repair /etc/fstab: the old backup disk has been removed for good; the media archive must be mounted on /srv/media (keep noatime). Then prove it with findmnt --verify and mount -a."
+skills = { "j.fstab-persistence" = 1.0, "j.mount-options" = 0.5 }
+checks = [
+    { type = "fstab_valid" },
+    { type = "fstab_entry", target = "/srv/media", label = "media", options = ["noatime"] },
+    { type = "mounted", target = "/srv/media", label = "media", options = ["noatime"] },
+    { type = "filesystem_on", device = "/dev/sdb1", clean = true },
+    { type = "after_reboot", checks = [{ type = "mounted", target = "/srv/media", label = "media", options = ["noatime"] }] },
+]
+persistent = true
+hints = [
+    "Fix the typo in the media line and delete (or comment out) the old-backup line.",
+    "sudo sed -i 's/defualts/defaults/' /etc/fstab and sudo sed -i '/old-backup/d' /etc/fstab — or sudo nano /etc/fstab.",
+    "sudo sed -i -e 's/defualts/defaults/' -e '/old-backup/d' /etc/fstab && sudo findmnt --verify && sudo mount -a && findmnt /srv/media",
+]
+explanation = "findmnt --verify is clean and mount -a mounts everything: tonight's boot will find what it expects. (The game checked that by rebooting a copy of the machine.)"
+
+[debrief]
+summary = """
+Test fstab before every reboot: findmnt --verify (devices, mount points, types) and mount -a
+(options, actual mounting), dmesg for the kernel's reason. Check filesystems with errors
+unmounted, with fsck/e2fsck.
+"""
+alternatives = ["nofail on entries for removable or optional disks lets the boot continue without them", "systemd-analyze verify and journalctl -b -p err after the reboot", "tune2fs -l /dev/sdb1 shows the filesystem state and error counters"]
+pitfalls = ["Running fsck on a mounted filesystem.", "Trusting findmnt --verify alone: it does not know filesystem-specific options.", "Rebooting a remote server with an untested fstab."]
+next = "Chapter J continues with backups and LVM (planned)."
+
+[[solution]]
+name = "sed, e2fsck and verification"
+steps = [
+    { input = ["letslinux"] },
+    "sudo mount -a",
+    "sudo findmnt --verify",
+    "sudo dmesg | tail -3",
+    ":answer 2",
+    "sudo e2fsck -n /dev/sdb1",
+    "sudo e2fsck -f -y /dev/sdb1",
+    "sudo sed -i -e 's/defualts/defaults/' -e '/old-backup/d' /etc/fstab",
+    "sudo findmnt --verify",
+    "sudo mount -a",
+    "findmnt /srv/media",
+]
+
+[[solution]]
+name = "root shell, fsck by label"
+steps = [
+    { input = ["letslinux"] },
+    "sudo -i",
+    "mount -a; echo $?",
+    "journalctl -k -p err --no-pager",
+    ":answer two",
+    "fsck -y LABEL=media",
+    "grep -v old-backup /etc/fstab | sed 's/defualts,noatime/defaults,noatime/' > /root/fstab.new",
+    "cat /root/fstab.new > /etc/fstab",
+    "findmnt --verify && mount -a",
+    "exit",
+]
+
+[[counterexample]]
+name = "mounted by hand, fstab still broken"
+steps = [
+    { input = ["letslinux"] },
+    "sudo mount -a",
+    ":answer 1",
+    ":answer 2",
+    "sudo mount -o noatime LABEL=media /srv/media",
+]

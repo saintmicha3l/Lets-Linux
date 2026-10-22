@@ -1,0 +1,182 @@
+schema = 1
+
+[mission]
+id = "h05-log-files"
+title = "Old-School Logs"
+chapter = "H"
+kind = "lesson"
+order = 5
+difficulty = 3
+requires = ["h02-reading-the-journal"]
+skills = ["h.traditional-logs"]
+xp = 110
+estimated_minutes = 18
+
+[briefing]
+context = """
+This Debian server runs rsyslog next to the journal, and the security team's tools read
+plain text files in /var/log. They also want the order-processing app to log into its own
+file. Find your way around the classic logs and teach rsyslog a new rule.
+(sudo password: letslinux)
+"""
+concept = """
+rsyslog receives every message and writes it to text files according to rules in
+/etc/rsyslog.conf and /etc/rsyslog.d/*.conf: a selector FACILITY.PRIORITY and a file, such as
+auth,authpriv.* /var/log/auth.log. Programs choose a facility (auth, cron, kern, mail, user,
+local0 to local7...). rsyslog reads its rules when it starts, so restart it after a change.
+On Debian 12 the journal is kept in memory only, but the text files survive reboots.
+"""
+objectives = ["Find information in /var/log", "Write an rsyslog rule", "Know where history survives a reboot"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+visitor = { choices = ["guest", "olduser", "temp"] }
+facility = { choices = ["local3", "local5", "local6"] }
+
+[[environment.setup]]
+action = "user"
+name = "{{visitor}}"
+
+[[environment.setup]]
+action = "journal"
+ago = 5400
+identifier = "sudo"
+facility = "authpriv"
+priority = "notice"
+message = "pam_unix(sudo:auth): authentication failure; logname={{visitor}} uid=1001 euid=0 tty=/dev/pts/2 ruser={{visitor}} rhost=  user={{visitor}}"
+
+[[environment.setup]]
+action = "journal"
+ago = 5390
+identifier = "sudo"
+facility = "authpriv"
+priority = "err"
+message = "{{visitor}} : 3 incorrect password attempts ; TTY=pts/2 ; PWD=/home/{{visitor}} ; USER=root ; COMMAND=/bin/bash"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/orderproc"
+mode = "0755"
+content = """#!/bin/bash
+# order processing (training stand-in): logs to syslog facility {{facility}}
+logger -t orderproc -p {{facility}}.info "processed batch $1"
+"""
+
+[[task]]
+id = "where"
+title = "Where are the logs?"
+kind = "guided"
+instructions = "List the files in /var/log."
+skills = { "h.traditional-logs" = 1.0 }
+checks = [{ type = "output_contains", text = "auth.log", command = "ls" }]
+hints = ["Logs live under /var/log.", "ls -l /var/log", "Type: ls -l /var/log"]
+explanation = "syslog collects nearly everything; auth.log holds authentication and privilege messages; kern.log the kernel's."
+
+[[task]]
+id = "auth"
+title = "Failed sudo in auth.log"
+kind = "independent"
+instructions = "Search /var/log/auth.log for failed sudo attempts."
+skills = { "h.traditional-logs" = 1.0, "l.audit-logging" = 0.5 }
+question = { prompt = "Which user had 3 incorrect password attempts?", type = "exact", accept = ["{{visitor}}"] }
+hints = ["The file is readable by members of the adm group — you are one.", "grep 'incorrect password' /var/log/auth.log", "It was {{visitor}}."]
+explanation = "Classic forensic tooling (grep, fail2ban, logwatch) reads these files directly."
+
+[[task]]
+id = "notinsyslog"
+title = "Kept apart"
+kind = "prediction"
+instructions = "Look at the first rule in /etc/rsyslog.conf before you answer."
+skills = { "h.traditional-logs" = 1.0 }
+question = { prompt = "Does /var/log/syslog also contain those sudo messages?", type = "choice", choices = ["Yes, syslog contains everything", "No: the rule *.*;auth,authpriv.none excludes authentication messages from syslog"], answer = 1 }
+hints = ["Read the selector of the /var/log/syslog rule.", "auth,authpriv.none means 'nothing from these facilities'.", "The answer is (b). Check with grep -c 'incorrect password' /var/log/syslog."]
+explanation = "Authentication data is kept out of the general log on purpose, because more people can read it."
+
+[[task]]
+id = "rule"
+title = "A log file for orderproc"
+kind = "independent"
+instructions = """
+orderproc logs with facility {{facility}}. Make rsyslog write everything from that facility to
+/var/log/orderproc.log by adding a rule in a new file /etc/rsyslog.d/50-orderproc.conf, then
+make rsyslog use it and run `orderproc 42` to test.
+"""
+skills = { "h.traditional-logs" = 1.0, "h.systemctl-control" = 0.5 }
+checks = [
+    { type = "file_contains", path = "/var/log/orderproc.log", text = "processed batch 42" },
+    { type = "file_contains", path = "/etc/rsyslog.d/50-orderproc.conf", regex = "{{facility}}\\.(\\*|info|debug)\\s+-?/var/log/orderproc\\.log" },
+]
+hints = [
+    "A rule is FACILITY.PRIORITY followed by a file name.",
+    "{{facility}}.*  /var/log/orderproc.log — then sudo systemctl restart rsyslog.",
+    "echo '{{facility}}.* /var/log/orderproc.log' | sudo tee /etc/rsyslog.d/50-orderproc.conf; sudo systemctl restart rsyslog; orderproc 42",
+]
+explanation = "rsyslog only reads its configuration at start-up: without the restart, the new rule would have been ignored. rsyslogd -N1 checks the syntax first."
+
+[[task]]
+id = "history"
+title = "After a reboot"
+kind = "independent"
+instructions = "The server was rebooted last week. Compare what the journal and the text files remember about the previous boot."
+skills = { "h.traditional-logs" = 1.0, "h.journalctl" = 0.5 }
+question = { prompt = "Where can you still read messages from before the last reboot on this Debian system?", type = "choice", choices = ["Only in the journal (journalctl -b -1)", "Only in the text logs such as /var/log/syslog, because the journal here is volatile", "Nowhere", "In /proc"], answer = 1 }
+hints = ["Try journalctl --list-boots and journalctl -b -1.", "Then grep 'Power down' /var/log/syslog.", "The answer is (b): Debian 12 keeps the journal in /run unless /var/log/journal exists."]
+explanation = "Create /var/log/journal (or set Storage=persistent in journald.conf) to keep the journal across reboots."
+
+[debrief]
+summary = """
+/var/log holds rsyslog's text files, routed by facility and priority. Rules live in
+rsyslog.conf and rsyslog.d; restart rsyslog after changes. Text logs persist even where the
+journal does not.
+"""
+alternatives = ["journalctl -t orderproc", "logger -p {{facility}}.err test   checks a rule quickly", "mkdir /var/log/journal makes the journal persistent"]
+pitfalls = ["Forgetting to restart rsyslog after editing its rules.", "Facilities are a convention: an application must actually use the one you route."]
+next = "Chapter H continues with timers (planned)."
+
+[[solution]]
+name = "tee and restart"
+steps = [
+    "ls -l /var/log",
+    "grep 'incorrect password' /var/log/auth.log",
+    ":answer {{visitor}}",
+    "head -40 /etc/rsyslog.conf | grep var/log",
+    ":answer b",
+    { input = ["letslinux"] },
+    "echo '{{facility}}.* /var/log/orderproc.log' | sudo tee /etc/rsyslog.d/50-orderproc.conf",
+    "sudo systemctl restart rsyslog",
+    "orderproc 42",
+    "cat /var/log/orderproc.log",
+    "journalctl -b -1",
+    "grep -c 'Power down' /var/log/syslog",
+    ":answer b",
+]
+
+[[solution]]
+name = "editor and reload check"
+steps = [
+    "ls /var/log",
+    "grep -h sudo /var/log/auth.log | grep attempts",
+    ":answer {{visitor}}",
+    "grep -c 'incorrect password' /var/log/syslog",
+    ":answer No: the rule *.*;auth,authpriv.none excludes authentication messages from syslog",
+    { input = ["letslinux"] },
+    { edit = "# orderproc\n{{facility}}.info\t-/var/log/orderproc.log\n" },
+    "sudo nano /etc/rsyslog.d/50-orderproc.conf",
+    "sudo rsyslogd -N1",
+    "sudo systemctl restart rsyslog.service",
+    "/usr/local/bin/orderproc 42",
+    "journalctl --list-boots",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "no restart"
+steps = [
+    "ls -l /var/log",
+    ":answer {{visitor}}",
+    ":answer b",
+    { input = ["letslinux"] },
+    "echo '{{facility}}.* /var/log/orderproc.log' | sudo tee /etc/rsyslog.d/50-orderproc.conf",
+    "orderproc 42",
+]

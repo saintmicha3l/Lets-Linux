@@ -1,0 +1,80 @@
+# Package catalogue: mandatory access control status tools (SELinux on Fedora, AppArmor on Ubuntu).
+# The simulation reports modes and profiles; it does not enforce policy decisions.
+
+schema = 1
+
+[[package]]
+name = "libselinux-utils"
+summary = "SELinux libselinux utilities"
+section = "admin"
+families = ["fedora"]
+versions = { fedora = "3.7-5.fc41" }
+sbin = ["getenforce", "setenforce"]
+
+[[package]]
+name = "policycoreutils"
+summary = "SELinux policy core utilities"
+section = "admin"
+families = ["fedora"]
+versions = { fedora = "3.7-7.fc41" }
+sbin = ["sestatus"]
+
+[[package.file]]
+path = "/etc/selinux/config"
+conffile = true
+content = """# This file controls the state of SELinux on the system.
+# SELINUX= can take one of these three values:
+#     enforcing - SELinux security policy is enforced.
+#     permissive - SELinux prints warnings instead of enforcing.
+#     disabled - No SELinux policy is loaded.
+SELINUX=enforcing
+# SELINUXTYPE= can take one of these three values:
+#     targeted - Targeted processes are protected,
+#     minimum - Modification of targeted policy. Only selected processes are protected.
+#     mls - Multi Level Security protection.
+SELINUXTYPE=targeted
+"""
+
+[[package]]
+name = "apparmor"
+summary = "user-space parser utility for AppArmor"
+section = "admin"
+families = ["debian"]
+versions = { debian = "3.0.8-3", ubuntu = "4.0.1really4.0.1-0ubuntu0.24.04.3" }
+sbin = ["aa-status", "apparmor_status=aa-status"]
+
+[[package.file]]
+path = "/etc/apparmor.d/usr.sbin.rsyslogd"
+conffile = true
+content = """# Last Modified: Sun Sep 25 08:58:35 2016
+#include <tunables/global>
+
+profile rsyslogd /usr/sbin/rsyslogd {
+  #include <abstractions/base>
+  capability sys_tty_config,
+  /var/log/** rw,
+}
+"""
+
+[[package.file]]
+path = "/etc/apparmor.d/usr.sbin.tcpdump"
+conffile = true
+content = """#include <tunables/global>
+
+profile tcpdump /usr/bin/tcpdump {
+  #include <abstractions/base>
+  capability net_raw,
+  network raw,
+}
+"""
+
+[[package.file]]
+path = "/etc/apparmor.d/usr.bin.man"
+conffile = true
+content = """#include <tunables/global>
+
+profile man /usr/bin/man flags=(attach_disconnected) {
+  #include <abstractions/base>
+  /usr/share/man/** r,
+}
+"""

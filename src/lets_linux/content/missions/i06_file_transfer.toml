@@ -1,0 +1,173 @@
+schema = 1
+
+[mission]
+id = "i06-file-transfer"
+title = "Copies That Count"
+chapter = "I"
+kind = "lesson"
+order = 6
+difficulty = 4
+requires = ["i05-ssh", "k01-cron-jobs"]
+skills = ["i.file-transfer", "j.backup-restore", "k.backup-automation"]
+review_for = ["i.ssh-keys", "k.cron-basics"]
+xp = 170
+estimated_minutes = 30
+
+[briefing]
+context = """
+Your projects live only on this machine — one broken disk and they are gone. The file server
+'files' has space in /srv/backup. Copy a file there, build a backup of ~/projects with rsync,
+prove that you can restore from it, and let cron run the backup every night. Key login to
+admin@files is already set up for you.
+"""
+concept = """
+scp copies files over SSH (scp FILE admin@files:/path/, scp -r for directories). rsync copies
+only what changed, locally or over SSH: rsync -a (archive: recursive, keeps times and
+permissions), -v (list files), -n (dry run), --delete (also remove files that disappeared
+from the source). A trailing slash on the source means 'its contents': rsync -a ~/projects/
+admin@files:/srv/backup/projects/. A backup is only a backup once you have restored from it.
+"""
+objectives = ["Copy files with scp", "Mirror a directory with rsync", "Understand incremental transfers", "Restore a file", "Automate the backup"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "file"
+path = "~/projects/website/index.html"
+content = "<html><body><h1>Pinecone Analytics</h1></body></html>\n"
+
+[[environment.setup]]
+action = "file"
+path = "~/projects/website/css/style.css"
+content = "body { font-family: sans-serif; color: #234; }\n"
+
+[[environment.setup]]
+action = "file"
+path = "~/projects/notes/todo.txt"
+content = "- renew TLS certificate\n- clean up /srv/share\n"
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "chown -R learner:learner ~/projects"
+
+[[environment.setup]]
+action = "remote"
+host = "files"
+steps = [
+    { action = "dir", path = "/srv/backup" },
+    { action = "dir", path = "/srv/share" },
+    { action = "run", command = "chown admin:admin /srv/backup /srv/share" },
+]
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+input = ["yes", "letslinux"]
+command = "ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/id_ed25519 >/dev/null && ssh-copy-id admin@files >/dev/null 2>&1"
+
+[[task]]
+id = "scp"
+title = "One file"
+kind = "guided"
+instructions = "Copy ~/projects/notes/todo.txt to /srv/share/ on files with scp."
+skills = { "i.file-transfer" = 1.0 }
+checks = [{ type = "command_result", command = "ssh -o BatchMode=yes admin@files cat /srv/share/todo.txt", stdout_contains = "renew TLS certificate" }]
+hints = ["scp SOURCE USER@HOST:PATH", "A trailing / on the target means 'into this directory'.", "scp ~/projects/notes/todo.txt admin@files:/srv/share/"]
+explanation = "scp uses SSH for the transfer: the same keys, the same host-key check."
+
+[[task]]
+id = "mirror"
+title = "A backup with rsync"
+kind = "independent"
+instructions = "Copy everything inside ~/projects to /srv/backup/projects/ on files with rsync (archive mode), so that /srv/backup/projects/website/index.html exists there."
+skills = { "i.file-transfer" = 1.0, "j.backup-restore" = 1.0 }
+checks = [
+    { type = "command_result", command = "ssh -o BatchMode=yes admin@files 'cat /srv/backup/projects/website/css/style.css; ls /srv/backup/projects'", stdout_contains = ["font-family", "notes", "website"] },
+]
+hints = ["rsync -a SOURCE/ USER@HOST:TARGET/ — the trailing slash copies the contents.", "Add -v to see what is transferred.", "rsync -av ~/projects/ admin@files:/srv/backup/projects/"]
+explanation = "rsync created the target directory and copied every file. Without the trailing slash on the source you would get /srv/backup/projects/projects."
+
+[[task]]
+id = "incremental"
+title = "Only what changed"
+kind = "prediction"
+instructions = "Run exactly the same rsync -av command once more and watch the file list."
+skills = { "i.file-transfer" = 1.0 }
+question = { prompt = "How many files does the second run transfer?", type = "number", accept = ["0"] }
+hints = ["rsync compares size and modification time first.", "Nothing changed since the first run.", "0"]
+explanation = "Nothing changed, so nothing was sent — that is what makes rsync suitable for frequent backups."
+
+[[task]]
+id = "restore"
+title = "Prove it"
+kind = "independent"
+instructions = "Disaster drill: delete ~/projects/website/css/style.css, then restore it from the backup on files. Its content must be exactly as before."
+skills = { "j.backup-restore" = 1.0 }
+checks = [
+    { type = "file_equals", path = "~/projects/website/css/style.css", content = "body { font-family: sans-serif; color: #234; }\n" },
+    { type = "command_used", command = "rm", scope = "history" },
+]
+hints = ["rm the file first — then copy it back from admin@files:/srv/backup/projects/…", "scp or rsync work in the other direction too: remote source, local target.", "rm ~/projects/website/css/style.css; scp admin@files:/srv/backup/projects/website/css/style.css ~/projects/website/css/"]
+explanation = "A restore that you have practised is the only kind you can rely on during an incident."
+
+[[task]]
+id = "nightly"
+title = "Every night at 02:30"
+kind = "independent"
+instructions = "Add a job to your crontab that runs the same rsync every day at 02:30 — with --delete, so files you remove also disappear from the mirror. Then create ~/projects/notes/new.txt, wait for the night (sleep until after 02:30) and check that the file reached the backup."
+skills = { "k.backup-automation" = 1.0, "k.cron-basics" = 0.5 }
+checks = [
+    { type = "file_contains", path = "/var/spool/cron/crontabs/learner", regex = "(?m)^\\s*30\\s+0?2\\s+\\*\\s+\\*\\s+\\*\\s+.*rsync\\s+.*--delete" },
+    { type = "command_result", command = "ssh -o BatchMode=yes admin@files ls /srv/backup/projects/notes", stdout_contains = "new.txt" },
+]
+persistent = true
+hints = ["crontab -e (or echo '…' | crontab -): minute 30, hour 2, then the rsync command with absolute paths.", "30 2 * * * rsync -a --delete /home/learner/projects/ admin@files:/srv/backup/projects/", "(crontab -l 2>/dev/null; echo '30 2 * * * rsync -a --delete /home/learner/projects/ admin@files:/srv/backup/projects/') | crontab -; touch ~/projects/notes/new.txt; sleep 18h"]
+explanation = "cron ran rsync as you, with your SSH key: unattended backups need key login (and a key without a passphrase, kept safe)."
+
+[debrief]
+summary = """
+scp for single copies, rsync -a SRC/ DEST/ for mirrors (only changes are sent, --delete keeps
+them exact), a restore drill, and cron (or a timer) for the nightly run.
+"""
+alternatives = ["A systemd timer instead of cron, with its output in the journal", "tar czf - DIR | ssh admin@files 'cat > /srv/backup/projects.tar.gz' for an archive", "Versioned backups: rsync --link-dest or tools like borg/restic"]
+pitfalls = ["Mixing up source and target with --delete: you can mirror an empty directory over your data.", "Backups nobody ever restores.", "A mirror is not a history: a deleted or corrupted file is gone from the mirror after the next run."]
+next = "Next: a firewall that lets in only what is needed."
+
+[[solution]]
+name = "scp and rsync"
+steps = [
+    "scp ~/projects/notes/todo.txt admin@files:/srv/share/",
+    "rsync -av ~/projects/ admin@files:/srv/backup/projects/",
+    "rsync -av ~/projects/ admin@files:/srv/backup/projects/",
+    ":answer 0",
+    "rm ~/projects/website/css/style.css",
+    "scp admin@files:/srv/backup/projects/website/css/style.css ~/projects/website/css/",
+    "(crontab -l 2>/dev/null; echo '30 2 * * * rsync -a --delete /home/learner/projects/ admin@files:/srv/backup/projects/') | crontab -",
+    "touch ~/projects/notes/new.txt",
+    "sleep 18h",
+]
+
+[[solution]]
+name = "rsync both ways"
+steps = [
+    "rsync -v projects/notes/todo.txt admin@files:/srv/share/",
+    "rsync -a projects/ admin@files:/srv/backup/projects/",
+    "rsync -av projects/ admin@files:/srv/backup/projects/ | grep -c txt",
+    ":answer 0",
+    "rm projects/website/css/style.css",
+    "rsync -av admin@files:/srv/backup/projects/website/ projects/website/",
+    { edit = "# nightly mirror of my projects\n30 2 * * * /usr/bin/rsync -a --delete $HOME/projects/ admin@files:/srv/backup/projects/\n" },
+    "crontab -e",
+    "echo idea > projects/notes/new.txt",
+    "sleep 1d",
+]
+
+[[counterexample]]
+name = "local copy and no schedule"
+steps = [
+    "cp ~/projects/notes/todo.txt /tmp/",
+    "rsync -a ~/projects/ /tmp/backup/",
+    ":answer 0",
+]

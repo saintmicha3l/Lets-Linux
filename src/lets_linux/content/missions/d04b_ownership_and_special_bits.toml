@@ -1,0 +1,183 @@
+schema = 1
+
+[mission]
+id = "d04b-ownership-and-special-bits"
+title = "Owners, Groups and Special Bits"
+chapter = "D"
+kind = "lesson"
+order = 6
+difficulty = 3
+requires = ["d04-sudo-and-accounts", "d02b-directory-access"]
+skills = ["d.chown-chgrp", "d.special-bits", "d.su-switch-user"]
+review_for = ["d.chown-chgrp", "d.special-bits"]
+xp = 90
+estimated_minutes = 20
+
+[briefing]
+context = """
+Teams share files on servers. That needs three more tools: changing who owns a file, making a
+shared directory hand its group to every new file, and stopping people from deleting each
+other's files in a common drop folder. You will also switch to another user's account to see
+the result through their eyes.
+"""
+concept = """
+chown USER[:GROUP] FILE changes the owner (only root may give files away: use sudo);
+chgrp GROUP FILE changes the group. Three special bits sit in front of rwx:
+  setuid (s in the owner's x position, chmod u+s) — a program runs with its OWNER's rights;
+         /usr/bin/passwd is setuid root so users can update their own password.
+  setgid on a directory (s in the group's x position, chmod g+s) — new files inside get the
+         directory's group instead of the creator's primary group: ideal for team folders.
+  sticky on a directory (t in the others' x position, chmod +t) — only a file's owner (or
+         root) may delete or rename it, even if the directory is writable by all: /tmp.
+In octal they form a fourth digit in front: 4 = setuid, 2 = setgid, 1 = sticky (2775, 1777).
+su - USER starts a login shell as USER (asking for USER's password); exit returns.
+"""
+objectives = ["Change owner and group", "Read and set setuid, setgid and sticky", "Switch users with su to verify access"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+team = { choices = ["atlas", "beacon", "comet"] }
+other = { choices = ["noor", "piet", "yuki"] }
+pw = { word = true }
+
+[[environment.setup]]
+action = "group"
+name = "{{team}}"
+members = ["learner"]
+
+[[environment.setup]]
+action = "user"
+name = "{{other}}"
+groups = ["{{team}}"]
+password = "{{pw}}"
+
+[[environment.setup]]
+action = "file"
+path = "~/handover/report.txt"
+content = "handover notes\n"
+owner = "root"
+group = "root"
+mode = "0644"
+
+[[environment.setup]]
+action = "dir"
+path = "/srv/{{team}}-docs"
+owner = "root"
+group = "root"
+mode = "0775"
+
+[[environment.setup]]
+action = "dir"
+path = "/srv/dropbox"
+owner = "root"
+group = "root"
+mode = "1777"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/dropbox/{{other}}-invoice.pdf"
+content = "invoice\n"
+owner = "{{other}}"
+group = "{{other}}"
+mode = "0666"
+
+[[task]]
+id = "setuid"
+title = "Read a setuid program"
+kind = "guided"
+instructions = "Look at the passwd program:  ls -l /usr/bin/passwd"
+skills = { "d.special-bits" = 1.0 }
+question = { prompt = "What does the s in its permissions (-rwsr-xr-x) mean?", type = "choice", choices = ["The file is a symbolic link", "The program runs with the rights of its owner (root), whoever starts it", "Only root may run it", "The file is encrypted"], answer = 1 }
+hints = ["The s sits where the owner's x would be.", "That position is the setuid bit: the program runs as the file's owner.", "The answer is (b)."]
+explanation = "passwd must write /etc/shadow, which only root may change. Being setuid root lets any user run it — and the program itself decides that you may only change your own password. Setuid programs are therefore prime targets for attackers (chapter L)."
+
+[[task]]
+id = "chown"
+title = "Take ownership back"
+kind = "guided"
+instructions = "Someone copied ~/handover/report.txt as root, so you cannot edit it. Make it yours (owner and group learner):  sudo chown learner:learner ~/handover/report.txt   (password: letslinux)"
+skills = { "d.chown-chgrp" = 1.0 }
+checks = [
+    { type = "file_owner", path = "~/handover/report.txt", user = "learner", group = "learner" },
+]
+persistent = true
+hints = ["Only root can give a file to another user, so you need sudo.", "chown takes USER:GROUP, then the file.", "Type: sudo chown learner:learner ~/handover/report.txt"]
+explanation = "chown USER:GROUP sets both at once; chown USER: (with a trailing colon) uses the user's primary group. Files copied as root are a classic source of 'Permission denied' in home directories."
+
+[[task]]
+id = "chgrp"
+title = "Give the folder to the team"
+kind = "guided"
+instructions = "/srv/{{team}}-docs belongs to root's group. Give it to the {{team}} group:  sudo chgrp {{team}} /srv/{{team}}-docs"
+skills = { "d.chown-chgrp" = 1.0 }
+checks = [{ type = "file_owner", path = "/srv/{{team}}-docs", group = "{{team}}" }]
+persistent = true
+hints = ["chgrp GROUP PATH changes only the group.", "The directory belongs to root, so use sudo.", "Type: sudo chgrp {{team}} /srv/{{team}}-docs"]
+explanation = "Now the group triplet (rwx in 775) applies to members of {{team}}: they may create files in the folder."
+
+[[task]]
+id = "setgid"
+title = "New files inherit the group"
+kind = "guided"
+instructions = "Set the setgid bit on the folder, then create a file in it and check its group:  sudo chmod g+s /srv/{{team}}-docs   touch /srv/{{team}}-docs/agenda.md   ls -l /srv/{{team}}-docs"
+skills = { "d.special-bits" = 1.0 }
+checks = [
+    { type = "mode_has", path = "/srv/{{team}}-docs", bits = "2000" },
+    { type = "file_owner", path = "/srv/{{team}}-docs/agenda.md", user = "learner", group = "{{team}}" },
+]
+persistent = true
+hints = ["g+s on a directory is the setgid bit.", "Create the file only after setting the bit; files that already exist keep their group.", "Type: sudo chmod g+s /srv/{{team}}-docs, then touch /srv/{{team}}-docs/agenda.md"]
+explanation = "Without setgid, agenda.md would belong to your primary group (learner) and your teammates could not edit it. With it, every new file gets {{team}}. ls -ld shows drwxrwsr-x."
+
+[[task]]
+id = "sticky"
+title = "The sticky bit"
+kind = "guided"
+instructions = "/srv/dropbox is writable by everyone (like /tmp). Try to delete {{other}}'s file in it:  rm /srv/dropbox/{{other}}-invoice.pdf — then look at  ls -ld /srv/dropbox"
+skills = { "d.special-bits" = 1.0 }
+checks = [{ type = "command_used", command = ["rm"], args_contain = ["{{other}}-invoice.pdf"], failed = true }]
+hints = ["Run the rm; it should fail.", "Look at the last letter of the directory's mode: t is the sticky bit.", "Type: rm /srv/dropbox/{{other}}-invoice.pdf"]
+explanation = "In a sticky directory only a file's owner (or the directory's owner, or root) may delete or rename it. Without the t, anyone who can write the directory could delete everybody's files — even files they cannot read."
+
+[[task]]
+id = "su"
+title = "See it as someone else"
+kind = "guided"
+instructions = "Become {{other}} with  su - {{other}}  (their password is {{pw}}), run  whoami  and  ls -l /srv/{{team}}-docs  — then  exit  to return."
+skills = { "d.su-switch-user" = 1.0 }
+checks = [{ type = "command_used", command = ["whoami", "id"], user = "{{other}}", scope = "history" }]
+hints = ["su asks for the password of the user you switch TO.", "The - makes it a login shell: their home directory and environment.", "Type: su - {{other}}, enter {{pw}}, then whoami, ls -l /srv/{{team}}-docs, exit"]
+explanation = "Switching users lets you verify access exactly as that person experiences it. su needs THEIR password; sudo -u USER COMMAND needs YOURS and your sudo rights — handy when you do not know theirs."
+
+[[task]]
+id = "octal"
+title = "Four digits"
+kind = "prediction"
+instructions = "Think about the extra octal digit."
+skills = { "d.special-bits" = 1.0, "d.chmod-octal" = 0.5 }
+question = { prompt = "Which mode makes a shared team directory: rwx for owner and group, nothing for others, and new files inheriting the group?", type = "exact", accept = ["2770", "02770"] }
+hints = ["rwx rwx --- is 770.", "setgid is 2 in the leading digit.", "The answer is 2770."]
+explanation = "The leading digit adds setuid (4), setgid (2) and sticky (1). 2770 is the classic team folder; 1777 is /tmp."
+
+[debrief]
+summary = """
+chown and chgrp change who owns a file (giving files away needs root). setuid runs a program as
+its owner; setgid on a directory hands its group to new files; sticky stops users deleting each
+other's files. su - USER lets you check access as that user.
+"""
+alternatives = ["sudo chown :{{team}} DIR changes only the group, like chgrp", "chmod 2775 DIR sets setgid and rwxrwxr-x at once", "sudo -u {{other}} ls -l /srv/{{team}}-docs runs one command as {{other}} without their password"]
+pitfalls = ["Setting setgid after the files exist does not change their group: fix those with chgrp -R.", "chmod 777 on a shared directory without the sticky bit lets anyone delete everyone's files.", "A capital S or T in ls output means the special bit is set but the x underneath is not."]
+next = "Next: the shared-project challenge — build a team folder with no commands given."
+
+[[solution]]
+name = "as instructed"
+steps = ["ls -l /usr/bin/passwd", ":answer b", { input = ["letslinux"] }, "sudo chown learner:learner ~/handover/report.txt", "sudo chgrp {{team}} /srv/{{team}}-docs", "sudo chmod g+s /srv/{{team}}-docs", "touch /srv/{{team}}-docs/agenda.md", "ls -l /srv/{{team}}-docs", "rm /srv/dropbox/{{other}}-invoice.pdf", "ls -ld /srv/dropbox", { input = ["{{pw}}"] }, "su - {{other}}", "whoami", "ls -l /srv/{{team}}-docs", "exit", ":answer 2770"]
+
+[[solution]]
+name = "octal and a root shell"
+steps = ["stat -c '%A %U %n' /usr/bin/passwd", ":answer 2", { input = ["letslinux"] }, "sudo chown learner: ~/handover/report.txt", "sudo chown :{{team}} /srv/{{team}}-docs", "sudo chmod 2775 /srv/{{team}}-docs", "echo agenda > /srv/{{team}}-docs/agenda.md", "rm -f /srv/dropbox/{{other}}-invoice.pdf", { input = ["{{pw}}"] }, "su {{other}}", "id", "exit", ":answer 02770"]
+
+[[counterexample]]
+name = "creating the file before setting setgid"
+steps = ["ls -l /usr/bin/passwd", ":answer b", { input = ["letslinux"] }, "sudo chown learner:learner ~/handover/report.txt", "sudo chgrp {{team}} /srv/{{team}}-docs", "touch /srv/{{team}}-docs/agenda.md", "sudo chmod g+s /srv/{{team}}-docs"]

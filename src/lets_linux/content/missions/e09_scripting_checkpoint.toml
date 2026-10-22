@@ -1,0 +1,95 @@
+schema = 1
+
+[mission]
+id = "e09-scripting-checkpoint"
+title = "Scripting Check-up"
+chapter = "E"
+kind = "assessment"
+order = 11
+difficulty = 3
+requires = ["e04-case-and-validation", "e08-shell-startup"]
+skills = ["e.variables-expansion", "e.arithmetic"]
+review_for = ["e.variables-expansion", "e.arithmetic", "e.script-structure"]
+xp = 130
+estimated_minutes = 20
+sequential = false
+
+[briefing]
+context = """
+Two small scripts for the storage team, written by you this time, in ~/bin. They will be
+tested with several inputs — make them correct, not just right for one example.
+"""
+concept = "Use what you know: parameters and defaults (${VAR:-default}, ${#VAR}, ${VAR%suffix}), $(( )) arithmetic, quoting, exit status."
+objectives = ["Use parameter expansion for defaults, lengths and suffixes", "Compute with shell arithmetic"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "dir"
+path = "/home/learner/bin"
+owner = "learner"
+group = "learner"
+
+[[task]]
+id = "units"
+title = "Megabytes to gigabytes"
+kind = "independent"
+instructions = "Write ~/bin/mb2gb (executable): it takes a size in MB and prints it as whole GB and remaining MB, using 1024 MB per GB — for example: mb2gb 5000 prints 4 GB 904 MB. Without an argument it prints usage: mb2gb MEGABYTES to standard error and exits with status 2."
+skills = { "e.arithmetic" = 1.0, "e.variables-expansion" = 0.5 }
+checks = [
+    { type = "command_result", user = "learner", command = "~/bin/mb2gb 5000", status = 0, stdout_equals = "4 GB 904 MB\n" },
+    { type = "command_result", user = "learner", command = "~/bin/mb2gb 1024", status = 0, stdout_equals = "1 GB 0 MB\n" },
+    { type = "command_result", user = "learner", command = "~/bin/mb2gb 300", status = 0, stdout_equals = "0 GB 300 MB\n" },
+    { type = "command_result", user = "learner", command = "~/bin/mb2gb", status = 2, stdout_equals = "", stderr_contains = ["usage: mb2gb MEGABYTES"] },
+]
+hints = ["$(( a / b )) divides as integers, $(( a % b )) is the remainder.", "Check $# (the number of arguments) first; >&2 sends output to standard error.", "#!/bin/bash\\nif [ $# -lt 1 ]; then echo 'usage: mb2gb MEGABYTES' >&2; exit 2; fi\\necho \"$(( $1 / 1024 )) GB $(( $1 % 1024 )) MB\""]
+explanation = "Shell arithmetic is integer arithmetic: / truncates and % gives the rest — exactly what this conversion needs."
+
+[[task]]
+id = "names"
+title = "Backup names"
+kind = "independent"
+instructions = "Write ~/bin/backupname (executable): given a file name such as report.txt it prints report.bak — the name with its last extension replaced by .bak (a name without extension just gets .bak). Then it prints the length of the new name in characters on a second line. The suffix may be changed with the environment variable BACKUP_SUFFIX (default bak)."
+skills = { "e.variables-expansion" = 1.0 }
+checks = [
+    { type = "command_result", user = "learner", command = "~/bin/backupname report.txt", status = 0, stdout_equals = "report.bak\n10\n" },
+    { type = "command_result", user = "learner", command = "~/bin/backupname archive.tar.gz", status = 0, stdout_equals = "archive.tar.bak\n15\n" },
+    { type = "command_result", user = "learner", command = "~/bin/backupname README", status = 0, stdout_equals = "README.bak\n10\n" },
+    { type = "command_result", user = "learner", command = "BACKUP_SUFFIX=old ~/bin/backupname notes.md", status = 0, stdout_equals = "notes.old\n9\n" },
+]
+hints = ["${name%.*} removes the shortest .suffix from the end; ${#var} is a length; ${VAR:-default} supplies a default.", "A name without a dot: ${name%.*} leaves it unchanged.", "#!/bin/bash\\nname=$1\\nnew=\"${name%.*}.${BACKUP_SUFFIX:-bak}\"\\necho \"$new\"\\necho \"${#new}\""]
+explanation = "Parameter expansion does string work inside the shell — no sed or basename needed for suffixes, defaults and lengths."
+
+[debrief]
+summary = "$(( )) for integer arithmetic (/ and %); ${VAR:-default}, ${#VAR}, ${VAR%pattern}/${VAR#pattern} for strings; check $# and report usage on stderr with a distinct exit status."
+alternatives = ["bc or awk for decimals", "basename name .txt removes a known suffix"]
+pitfalls = ["${name%%.*} (two %) removes the longest match — archive instead of archive.tar.", "Writing usage messages to standard output."]
+next = "Chapter E is complete."
+
+[[solution]]
+name = "if and parameter expansion"
+steps = [
+    "printf '#!/bin/bash\\nif [ $# -lt 1 ]; then\\n    echo \"usage: mb2gb MEGABYTES\" >&2\\n    exit 2\\nfi\\necho \"$(( $1 / 1024 )) GB $(( $1 %% 1024 )) MB\"\\n' > ~/bin/mb2gb",
+    "chmod +x ~/bin/mb2gb",
+    "~/bin/mb2gb 5000",
+    "printf '#!/bin/bash\\nname=$1\\nnew=\"${name%%.*}.${BACKUP_SUFFIX:-bak}\"\\necho \"$new\"\\necho \"${#new}\"\\n' > ~/bin/backupname",
+    "chmod +x ~/bin/backupname",
+    "~/bin/backupname archive.tar.gz",
+]
+
+[[solution]]
+name = "variables and ${1:?}"
+steps = [
+    "printf '#!/bin/bash\\n[ -n \"$1\" ] || { echo \"usage: mb2gb MEGABYTES\" >&2; exit 2; }\\nmb=$1\\ngb=$(( mb / 1024 ))\\nrest=$(( mb - gb * 1024 ))\\necho \"$gb GB $rest MB\"\\n' > ~/bin/mb2gb",
+    "printf '#!/bin/bash\\nsuffix=${BACKUP_SUFFIX:-bak}\\nbase=${1%%.*}\\nresult=$base.$suffix\\nprintf \"%%s\\\\n%%d\\\\n\" \"$result\" ${#result}\\n' > ~/bin/backupname",
+    "chmod 755 ~/bin/mb2gb ~/bin/backupname",
+]
+
+[[counterexample]]
+name = "longest match and stdout usage"
+steps = [
+    "printf '#!/bin/bash\\nif [ $# -lt 1 ]; then echo \"usage: mb2gb MEGABYTES\"; exit 2; fi\\necho \"$(( $1 / 1024 )) GB $(( $1 %% 1024 )) MB\"\\n' > ~/bin/mb2gb",
+    "printf '#!/bin/bash\\nname=$1\\nnew=\"${name%%%%.*}.${BACKUP_SUFFIX:-bak}\"\\necho \"$new\"\\necho \"${#new}\"\\n' > ~/bin/backupname",
+    "chmod +x ~/bin/mb2gb ~/bin/backupname",
+]

@@ -1,0 +1,156 @@
+schema = 1
+
+[mission]
+id = "m03-unreachable"
+title = "Works on My Machine"
+chapter = "M"
+kind = "troubleshooting"
+order = 4
+difficulty = 6
+requires = ["i07-firewall", "l02-service-exposure", "i04-ports", "c08-the-method"]
+skills = ["m.network-rca", "m.hypothesis-method", "m.verification"]
+review_for = ["i.firewalls", "i.ports-sockets", "i.net-troubleshooting"]
+xp = 230
+estimated_minutes = 35
+
+[briefing]
+context = """
+The new shop website on this Fedora server is live — according to the developer, who tested
+it with curl on the server itself. Customers on the network get nothing. Find every layer
+that stops them and fix it, testing from another machine ('files', 10.0.2.40; user admin,
+password letslinux) at each step. (sudo password: letslinux)
+"""
+concept = """
+Test from where the users are: on the server itself, loopback bypasses the network
+interface and usually the firewall. Work through the layers and let each symptom tell you
+where you are: 'Network is unreachable' → routing; a *timeout* → something drops the packets
+(a firewall with drop rules, or a host that is down); 'No route to host' although ping works
+→ a firewall rejecting with an ICMP prohibited message (firewalld does this by default);
+*connection refused* → the packets arrive but nothing listens on that address and port; an
+HTTP error → the application. ss -tlnp shows not just the
+port but the address: 127.0.0.1:80 accepts only local connections, 0.0.0.0:80 (or *:80)
+all. Change one thing at a time and test again from the client's side.
+"""
+objectives = ["Reproduce the problem from the client's side", "Read timeouts and refusals as evidence", "Fix the firewall layer persistently", "Fix the listening address", "Verify from another host, also after a reboot"]
+
+[environment]
+profile = "fedora"
+packages = ["nginx"]
+
+[[environment.setup]]
+action = "run"
+command = "sed -i 's/listen       80;/listen       127.0.0.1:80;/' /etc/nginx/nginx.conf && sed -i '/listen       \\[::\\]:80;/d' /etc/nginx/nginx.conf && echo '<h1>Shop is open</h1>' > /usr/share/nginx/html/index.html && systemctl enable nginx && systemctl restart nginx"
+
+[[task]]
+id = "reproduce"
+title = "See what customers see"
+kind = "troubleshooting"
+instructions = "From the host files, try to open the website (http://10.0.2.15/) or connect to port 80."
+skills = { "m.network-rca" = 1.0, "m.hypothesis-method" = 0.5 }
+question = { prompt = "What happens?", type = "choice", choices = ["Connection refused", "No route to host — although ping 10.0.2.15 from files works", "The page loads"], answer = 1 }
+hints = ["Log in to files: ssh admin@files (password letslinux), or run one command: ssh admin@files 'COMMAND'.", "ssh admin@files 'wget -T 5 -O - http://10.0.2.15/' — and ssh admin@files 'ping -c 1 10.0.2.15'", "'No route to host' — yet ping answers, so routing is fine."]
+explanation = "'No route to host' while ping works is the signature of a firewall that rejects with an ICMP 'administratively prohibited' message — firewalld's default. A firewall that drops would cause a timeout; a reachable host without a listener answers 'Connection refused'."
+
+[[task]]
+id = "firewall"
+title = "Layer one: the firewall"
+kind = "independent"
+instructions = "Let HTTP through the firewall — now and permanently."
+skills = { "m.network-rca" = 1.0, "i.firewalls" = 1.0 }
+checks = [
+    { type = "not", check = { type = "firewall_blocks", from = "10.0.2.40", port = 80 } },
+    { type = "command_result", user = "root", command = "firewall-cmd --permanent --list-all", stdout_regex = "services:.*\\bhttp\\b|ports:.*\\b80/tcp" },
+]
+hints = ["firewalld (Fedora) allows only what is listed: sudo firewall-cmd --list-all", "Runtime and permanent are separate: use both, or --runtime-to-permanent.", "sudo firewall-cmd --add-service=http && sudo firewall-cmd --runtime-to-permanent"]
+explanation = "The firewall lets HTTP through. Test again from files before you assume it works."
+
+[[task]]
+id = "refused"
+title = "Next symptom"
+kind = "troubleshooting"
+instructions = "Test from files again."
+skills = { "m.hypothesis-method" = 1.0, "i.ports-sockets" = 0.5 }
+question = { prompt = "What happens now?", type = "choice", choices = ["Connection refused", "No route to host", "The page loads"], answer = 0 }
+hints = ["Same command as before, from files.", "What does sudo ss -tlnp say about the address nginx listens on?", "Refused: the packets arrive, but nothing listens on 10.0.2.15:80 — nginx listens on 127.0.0.1 only."]
+explanation = "Progress: the symptom changed from 'rejected by the firewall' to 'refused by the host', so the firewall layer is solved and the next layer is visible."
+
+[[task]]
+id = "listen"
+title = "Layer two: the listener"
+kind = "independent"
+instructions = "Make nginx accept connections from the network, and verify from files. It must still work after a reboot."
+skills = { "m.network-rca" = 1.0, "m.verification" = 1.0 }
+checks = [
+    { type = "port_open_from", from = "files", port = 80 },
+    { type = "unit_state", unit = "nginx.service", active = "active" },
+    { type = "after_reboot", checks = [{ type = "port_open_from", from = "files", port = 80 }] },
+]
+hints = ["The listen directive: grep -n listen /etc/nginx/nginx.conf", "listen 80; (all addresses) instead of listen 127.0.0.1:80; — then sudo nginx -t and sudo systemctl reload nginx.", "sudo sed -i 's/listen       127.0.0.1:80;/listen       80;/' /etc/nginx/nginx.conf && sudo nginx -t && sudo systemctl reload nginx"]
+explanation = "Customers reach the shop: the game connected from files, now and after a reboot (firewall rule permanent, nginx enabled)."
+
+[[task]]
+id = "method"
+title = "Reading symptoms"
+kind = "explanation"
+instructions = "Summarise the method."
+skills = { "m.hypothesis-method" = 1.0 }
+question = { prompt = "Why was 'curl http://localhost' on the server useless as a test here?", type = "choice", choices = ["curl cannot test nginx", "Loopback traffic neither crosses the firewall's network-interface rules nor needs a listener on the external address — it tests a different path than the customers use", "localhost is slower"], answer = 1 }
+hints = ["Which address did nginx listen on? Which path do local packets take?", "Test the path the users take.", "(b)"]
+explanation = "A test only proves something about the path it exercises."
+
+[debrief]
+summary = """
+Reproduce from the client → timeout or 'No route to host' with working ping (firewall) →
+refused (no listener on that address) → HTTP status (application) — fix one layer, test again from the client, make
+each fix persistent, verify after a reboot.
+"""
+alternatives = ["nmap or nc -zv from another host map open, closed and filtered ports", "firewall-cmd --add-port=80/tcp instead of the service name", "listen 10.0.2.15:80 to bind to one interface deliberately"]
+pitfalls = ["Testing only from the server.", "Changing several things at once, then not knowing which one helped.", "Runtime-only firewall changes."]
+next = "Next: several problems at once."
+
+[[solution]]
+name = "firewall-cmd and sed"
+steps = [
+    { input = ["yes", "letslinux"] },
+    "ssh admin@files 'wget -T 5 -O - http://10.0.2.15/'",
+    ":answer b",
+    { input = ["letslinux"] },
+    "sudo firewall-cmd --list-all",
+    "sudo firewall-cmd --add-service=http",
+    "sudo firewall-cmd --runtime-to-permanent",
+    { input = ["letslinux"] },
+    "ssh admin@files 'wget -T 5 -O /dev/null http://10.0.2.15/'",
+    ":answer a",
+    "sudo ss -tlnp",
+    "sudo sed -i 's/listen       127.0.0.1:80;/listen       80;/' /etc/nginx/nginx.conf",
+    "sudo nginx -t",
+    "sudo systemctl reload nginx",
+    ":answer b",
+]
+
+[[solution]]
+name = "permanent first, nc from files"
+steps = [
+    { input = ["yes", "letslinux"] },
+    "ssh admin@files 'ping -c 1 10.0.2.15; wget -T 3 -O /dev/null http://10.0.2.15/'",
+    ":answer No route to host — although ping 10.0.2.15 from files works",
+    { input = ["letslinux"] },
+    "sudo firewall-cmd --permanent --add-port=80/tcp",
+    "sudo firewall-cmd --reload",
+    ":answer Connection refused",
+    "sudo sed -i 's/127.0.0.1:80/80/' /etc/nginx/nginx.conf",
+    "sudo systemctl restart nginx",
+    ":answer b",
+]
+
+[[counterexample]]
+name = "runtime firewall only"
+steps = [
+    ":answer b",
+    { input = ["letslinux"] },
+    "sudo firewall-cmd --add-service=http",
+    ":answer a",
+    "sudo sed -i 's/127.0.0.1:80/80/' /etc/nginx/nginx.conf",
+    "sudo systemctl restart nginx",
+    ":answer b",
+]

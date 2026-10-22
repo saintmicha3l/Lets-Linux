@@ -1,0 +1,216 @@
+schema = 1
+
+[mission]
+id = "h01-meet-the-services"
+title = "Meet the Services"
+chapter = "H"
+kind = "lesson"
+order = 1
+difficulty = 3
+requires = ["g02-signals"]
+skills = ["h.service-concepts", "h.systemctl-control", "h.enable-disable"]
+xp = 100
+estimated_minutes = 18
+
+[briefing]
+context = """
+The reporting team installed reportd, a small daemon that builds reports from a queue, and
+asked you to run it — now and after every reboot. They also want an old metrics agent switched
+off for good. Programs like these run as services, managed by systemd.
+"""
+concept = """
+A daemon is a program that runs in the background without a terminal. systemd starts and
+supervises daemons as service units described by unit files. systemctl status shows a unit's
+state, its processes and its latest log lines. start, stop and restart change what runs now;
+enable and disable decide what starts at boot. Changing services needs root: use sudo
+(password: letslinux).
+"""
+objectives = ["Inspect services with systemctl", "Start and stop services", "Enable and disable services at boot"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+queue = { choices = ["finance", "sales", "ops"] }
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/sbin/reportd"
+mode = "0755"
+content = """#!/bin/bash
+# reportd: builds reports from a queue (Let's Linux training daemon)
+echo "reportd 2.4 ready: queue={{queue}}"
+sleep 86400
+"""
+
+[[environment.setup]]
+action = "service"
+name = "reportd.service"
+vendor = true
+content = """[Unit]
+Description=Report Builder Daemon
+Documentation=https://intranet.example.lan/reportd
+After=network.target
+
+[Service]
+ExecStart=/usr/local/sbin/reportd
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/sbin/metrics-agent"
+mode = "0755"
+content = """#!/bin/bash
+echo "metrics-agent: pushing to metrics.example.lan every 60s"
+sleep 86400
+"""
+
+[[environment.setup]]
+action = "service"
+name = "metrics-agent.service"
+vendor = true
+enable = true
+start = true
+content = """[Unit]
+Description=Legacy Metrics Agent
+
+[Service]
+ExecStart=/usr/local/sbin/metrics-agent
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[task]]
+id = "status"
+title = "Inspect a service"
+kind = "guided"
+instructions = "Look at the logging service: `systemctl status rsyslog`."
+skills = { "h.systemctl-control" = 1.0, "h.service-concepts" = 1.0 }
+checks = [{ type = "output_contains", regex = "Active:.*active \\(running\\)", command = "systemctl" }]
+hints = ["systemctl status UNIT shows the state of a unit.", "The .service suffix may be left out.", "Type: systemctl status rsyslog"]
+explanation = "Loaded: where the unit file is and whether it is enabled. Active: whether it runs and since when. Then its processes and latest log lines."
+
+[[task]]
+id = "mainpid"
+title = "Read the details"
+kind = "guided"
+instructions = "Find the main PID of rsyslog.service in the status output."
+skills = { "h.systemctl-control" = 1.0 }
+question = { prompt = "What is the main PID of rsyslog.service?", type = "state", state = { command = "systemctl show -p MainPID --value rsyslog" } }
+hints = ["The 'Main PID:' line.", "systemctl status rsyslog — or systemctl show -p MainPID rsyslog.", "Read the number after Main PID:."]
+explanation = "The main PID is the process systemd watches: if it exits, systemd notices and may restart the service."
+
+[[task]]
+id = "list"
+title = "All running services"
+kind = "guided"
+instructions = "List the service units systemd currently has active."
+skills = { "h.systemctl-control" = 1.0 }
+checks = [{ type = "output_contains", text = "metrics-agent.service", command = "systemctl" }]
+hints = ["systemctl list-units, restricted to services.", "--type=service filters by unit type.", "Type: systemctl list-units --type=service"]
+explanation = "list-units shows loaded units with their LOAD, ACTIVE and SUB states. systemctl with no arguments does the same for all types."
+
+[[task]]
+id = "start"
+title = "Start reportd"
+kind = "independent"
+instructions = "Start reportd.service now."
+skills = { "h.systemctl-control" = 1.0 }
+checks = [{ type = "unit_state", unit = "reportd.service", active = "active", sub = "running" }]
+hints = ["Starting a service needs administrator rights.", "sudo systemctl start UNIT", "Type: sudo systemctl start reportd"]
+explanation = "No output means success. systemctl status reportd now shows it running, with its startup message in the log lines."
+
+[[task]]
+id = "boot"
+title = "Running is not enabled"
+kind = "prediction"
+instructions = "Think before you check with `systemctl is-enabled reportd`."
+skills = { "h.enable-disable" = 1.0 }
+question = { prompt = "reportd is running now. Will it start automatically after a reboot?", type = "choice", choices = ["Yes, because it is running", "No: it is disabled; starting a service does not enable it", "Only if it crashes", "Only on Debian"], answer = 1 }
+hints = ["Running (now) and enabled (at boot) are independent.", "systemctl is-enabled reportd prints disabled.", "The answer is (b)."]
+explanation = "start/stop act on the present; enable/disable on future boots."
+
+[[task]]
+id = "enable"
+title = "At every boot"
+kind = "independent"
+instructions = "Make reportd.service start at boot."
+skills = { "h.enable-disable" = 1.0 }
+checks = [
+    { type = "unit_enabled", unit = "reportd.service" },
+    { type = "unit_state", unit = "reportd.service", active = "active" },
+    { type = "after_reboot", checks = [{ type = "unit_state", unit = "reportd.service", active = "active" }] },
+]
+hints = ["The opposite of disable.", "sudo systemctl enable reportd (enable --now would also start it).", "Type: sudo systemctl enable reportd"]
+explanation = "enable created a symlink in /etc/systemd/system/multi-user.target.wants — the [Install] section said WantedBy=multi-user.target."
+
+[[task]]
+id = "retire"
+title = "Retire the metrics agent"
+kind = "independent"
+instructions = "Stop metrics-agent.service now and make sure it does not come back at the next boot."
+skills = { "h.enable-disable" = 1.0, "h.systemctl-control" = 1.0 }
+checks = [
+    { type = "unit_state", unit = "metrics-agent.service", active = "inactive" },
+    { type = "unit_enabled", unit = "metrics-agent.service", state = "disabled" },
+    { type = "after_reboot", checks = [{ type = "process_absent", comm = "metrics-agent" }] },
+]
+persistent = true
+hints = ["Two things: what runs now and what runs at boot.", "stop + disable, or disable --now.", "Type: sudo systemctl disable --now metrics-agent"]
+explanation = "disable --now does both. Killing its process would not help: Restart=always would make systemd start it again."
+
+[debrief]
+summary = """
+systemctl status/list-units inspect, start/stop/restart change the present, enable/disable
+change future boots. Services are supervised: systemd notices when they die.
+"""
+alternatives = ["systemctl enable --now reportd", "systemctl is-active reportd; systemctl is-enabled reportd", "systemctl mask metrics-agent prevents any start, even manual"]
+pitfalls = ["Forgetting to enable: everything works until the first reboot.", "Killing a supervised service's process instead of stopping the unit: it may be restarted."]
+next = "Next: reading the journal."
+
+[[solution]]
+name = "sudo"
+steps = [
+    "systemctl status rsyslog",
+    { answer_with = "systemctl show -p MainPID --value rsyslog" },
+    "systemctl list-units --type=service",
+    { input = ["letslinux"] },
+    "sudo systemctl start reportd",
+    "systemctl is-enabled reportd",
+    ":answer b",
+    "sudo systemctl enable reportd",
+    "sudo systemctl stop metrics-agent",
+    "sudo systemctl disable metrics-agent",
+]
+
+[[solution]]
+name = "polkit and combined verbs"
+steps = [
+    "systemctl status rsyslog.service --no-pager",
+    { answer_with = "systemctl show -P MainPID rsyslog" },
+    "systemctl --type=service",
+    { input = ["letslinux"] },
+    "systemctl start reportd.service",
+    ":answer 2",
+    "systemctl enable reportd.service",
+    "systemctl disable --now metrics-agent.service",
+]
+
+[[counterexample]]
+name = "killing instead of stopping"
+steps = [
+    "systemctl status rsyslog",
+    { answer_with = "systemctl show -p MainPID --value rsyslog" },
+    "systemctl list-units --type=service",
+    { input = ["letslinux"] },
+    "sudo systemctl start reportd",
+    ":answer b",
+    "sudo systemctl enable reportd",
+    "sudo pkill metrics-agent",
+    "sudo systemctl disable metrics-agent",
+]

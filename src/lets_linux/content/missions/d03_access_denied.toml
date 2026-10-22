@@ -1,0 +1,124 @@
+schema = 1
+
+[mission]
+id = "d03-access-denied"
+title = "Access Denied"
+chapter = "D"
+kind = "troubleshooting"
+order = 5
+difficulty = 3
+requires = ["d02b-directory-access", "d04-sudo-and-accounts", "c08-the-method"]
+skills = ["d.directory-permissions", "m.permission-rca"]
+review_for = ["d.directory-permissions"]
+xp = 100
+estimated_minutes = 15
+
+[briefing]
+context = """
+Your colleague {{colleague}} reports: "I can't read the handbook in /srv/handbook, but the
+file itself is world-readable!" You own the handbook tree. Find the real cause and fix it
+without making anything more open than necessary.
+"""
+concept = """
+To reach a file, a user needs execute (search) permission on every directory along the
+path. Read permission on a directory lets you list its names; execute lets you use them.
+ls -ld on each parent shows where the chain breaks (lesson: Directories Are Doors).
+"""
+objectives = ["Trace a permission failure to the exact path component", "Fix it with the least privilege"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+colleague = { choices = ["ines", "kofi", "lena", "omar"] }
+sub = { choices = ["onboarding", "policies", "procedures"] }
+
+[[environment.setup]]
+action = "user"
+name = "{{colleague}}"
+
+[[environment.setup]]
+action = "dir"
+path = "/srv/handbook/{{sub}}"
+owner = "learner"
+group = "learner"
+mode = "0755"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/handbook/{{sub}}/welcome.txt"
+content = "Welcome to the team!\n"
+owner = "learner"
+group = "learner"
+mode = "0644"
+
+[[environment.setup]]
+action = "chown"
+path = "/srv/handbook"
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "chmod"
+path = "/srv/handbook"
+mode = "0750"
+
+[[guard]]
+type = "mode_lacks"
+path = "/srv/handbook/{{sub}}/welcome.txt"
+bits = "022"
+message = "The handbook became writable by others. Fixing access must not make files writable by everyone. Use :reset."
+
+[[task]]
+id = "diagnose"
+title = "Find the broken link in the chain"
+kind = "troubleshooting"
+instructions = "Inspect each directory on the path /srv/handbook/{{sub}}/welcome.txt."
+skills = { "d.directory-permissions" = 1.0, "m.permission-rca" = 1.0 }
+question = { prompt = "Which directory stops {{colleague}} from reaching the file?", type = "exact", accept = ["/srv/handbook", "/srv/handbook/", "handbook"] }
+hints = ["Check ls -ld for /srv, /srv/handbook and /srv/handbook/{{sub}}.", "{{colleague}} is 'other' for these directories. Which one has no x for other?", "/srv/handbook is drwxr-x--- (750): other has no search permission."]
+explanation = "/srv/handbook is 750: {{colleague}} is neither the owner nor in the group, so 'other' (---) applies and the path cannot be traversed."
+
+[[task]]
+id = "fix"
+title = "Fix it minimally"
+kind = "troubleshooting"
+instructions = "Allow {{colleague}} to read welcome.txt. Give the least access needed: traversing a directory does not require listing it."
+skills = { "d.directory-permissions" = 1.0, "m.permission-rca" = 1.0 }
+checks = [
+    { type = "user_can_access", user = "{{colleague}}", path = "/srv/handbook/{{sub}}/welcome.txt", access = "r" },
+    { type = "mode_lacks", path = "/srv/handbook", bits = "002" },
+]
+persistent = true
+hints = ["Other needs x on /srv/handbook; r would also let them list it.", "chmod o+x /srv/handbook (resulting mode 751).", "Type: chmod o+x /srv/handbook"]
+explanation = "With o+x, {{colleague}} can pass through /srv/handbook to files whose names they know. o+rx would also let them list the directory."
+
+[[task]]
+id = "verify"
+title = "Verify as the user"
+kind = "independent"
+instructions = "Prove the fix works for {{colleague}} rather than just for you. (Hint: root can run a command as another user with sudo -u; your sudo password is letslinux.)"
+skills = { "m.verification" = 1.0, "d.sudo-least-privilege" = 0.5 }
+checks = [{ type = "output_contains", text = "Welcome to the team!", command = ["cat", "head", "less", "more"] }, { type = "command_used", command = ["cat", "head", "less", "more"], user = "{{colleague}}" }]
+hints = ["Testing as yourself proves nothing: you are the owner.", "sudo -u {{colleague}} runs a command as {{colleague}}.", "Type: sudo -u {{colleague}} cat /srv/handbook/{{sub}}/welcome.txt"]
+explanation = "Always verify a permission fix as the affected user — owner and root bypass the very checks you are fixing."
+
+[debrief]
+summary = """
+Permission denied on a readable file usually means a directory above it lacks x for that
+user. Check every component, fix the specific bit, and verify as the affected user.
+"""
+alternatives = ["namei -l /srv/handbook/{{sub}}/welcome.txt lists every component's permissions (not simulated yet)", "Adding {{colleague}} to the learner group would also work, at the cost of wider access"]
+pitfalls = ["chmod -R 777 /srv/handbook 'works' but lets anyone change the handbook.", "Testing as root or as the owner hides the problem."]
+next = "Next: administrator privileges with sudo."
+
+[[solution]]
+name = "ls -ld and o+x"
+steps = ["ls -ld /srv /srv/handbook /srv/handbook/{{sub}}", ":answer /srv/handbook", "chmod o+x /srv/handbook", { input = ["letslinux"] }, "sudo -u {{colleague}} cat /srv/handbook/{{sub}}/welcome.txt"]
+
+[[solution]]
+name = "stat and octal"
+steps = ["stat -c '%A %n' /srv/handbook /srv/handbook/{{sub}}", ":answer handbook", "chmod 751 /srv/handbook", { input = ["letslinux"] }, "sudo -u {{colleague}} head /srv/handbook/{{sub}}/welcome.txt"]
+
+[[counterexample]]
+name = "testing as yourself"
+steps = [":answer /srv/handbook", "chmod 755 /srv/handbook/{{sub}}", "cat /srv/handbook/{{sub}}/welcome.txt"]

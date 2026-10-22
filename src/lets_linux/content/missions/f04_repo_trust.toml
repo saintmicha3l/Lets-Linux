@@ -1,0 +1,146 @@
+schema = 1
+
+[mission]
+id = "f04-repo-trust"
+title = "Signed, Sealed, Delivered"
+chapter = "F"
+kind = "troubleshooting"
+order = 6
+difficulty = 5
+requires = ["f02c-where-packages-come-from", "c08-the-method"]
+skills = ["f.repo-trust", "f.apt-basics"]
+review_for = ["f.search-info", "i.http-curl"]
+xp = 190
+estimated_minutes = 30
+
+[briefing]
+context = """
+The monitoring team wants the Acme agent on this Debian server; it comes from Acme's own apt
+repository. A colleague started the setup from a forum post and gave up: apt update now
+fails. Finish the job properly — the repository must be verified with Acme's real signing
+key, trusted for Acme's repository only — then install and start acme-agent.
+(sudo password: letslinux)
+"""
+concept = """
+apt only uses repositories whose Release files are signed by a key it trusts. A source line
+names the archive (deb URI SUITE COMPONENT…) and, with [signed-by=FILE], the one keyring
+allowed to sign it. Third-party keyrings belong in /etc/apt/keyrings/ in binary form:
+curl -fsSL KEY-URL | sudo gpg --dearmor -o /etc/apt/keyrings/NAME.gpg (an armoured .asc file
+works too, but only with the .asc extension). Always compare the key's fingerprint
+(gpg --show-keys FILE) with the one the vendor publishes. NO_PUBKEY means: apt has no
+trusted key for this signature. Two wrong fixes: [trusted=yes] (switches verification off)
+and apt-key add (deprecated; the key would be trusted for every repository).
+"""
+objectives = ["Read apt's signature errors", "Verify a key's fingerprint against the vendor", "Install a keyring with signed-by", "Remove a key that should not be trusted", "Install from the new repository"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "run"
+command = "echo 'deb https://packages.acme.example/apt stable main' > /etc/apt/sources.list.d/acme.list && wget -qO- http://mirror.example.org/forum/acme-key.asc | apt-key add - 2>/dev/null"
+
+[[task]]
+id = "error"
+title = "What does apt say?"
+kind = "troubleshooting"
+instructions = "Run the update and read the error."
+skills = { "f.repo-trust" = 1.0 }
+question = { prompt = "Which key ID does apt say it is missing (the 16 hex digits after NO_PUBKEY)?", type = "exact", accept = ["D38FC56B17EBEE75"] }
+hints = ["sudo apt update", "Look at the line with 'GPG error' — it ends with NO_PUBKEY followed by a key ID.", "D38FC56B17EBEE75"]
+explanation = "The Release file is signed by key …D38FC56B17EBEE75, and none of the keys apt trusts has that ID."
+
+[[task]]
+id = "wrongkey"
+title = "The forum key"
+kind = "troubleshooting"
+instructions = "Your colleague added a key with apt-key. Compare what is in apt's legacy keyring with the fingerprint Acme publishes on https://packages.acme.example/apt/."
+skills = { "f.repo-trust" = 1.0, "i.http-curl" = 0.5 }
+question = { prompt = "Is the imported key Acme's signing key?", type = "choice", choices = ["Yes", "No — it belongs to someone else (Repo Mirror <admin@mirror.invalid>)", "apt-key keys cannot be inspected"], answer = 1 }
+hints = ["apt-key list (or gpg --show-keys /etc/apt/trusted.gpg) shows the key.", "wget -qO- https://packages.acme.example/apt/ shows the official fingerprint.", "The fingerprints differ: the forum's file is an unrelated key."]
+explanation = "An unrelated key in /etc/apt/trusted.gpg is trusted for *every* repository on this system — it has to go, even though it does not help here."
+
+[[task]]
+id = "setup"
+title = "Do it right"
+kind = "independent"
+instructions = "Set up Acme's repository properly: Acme's official key as a keyring under /etc/apt/keyrings used through signed-by, no [trusted=yes], the forum key no longer trusted anywhere. Then install acme-agent and make sure it runs."
+skills = { "f.repo-trust" = 1.0, "f.apt-basics" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "apt-get update", status = 0, stderr_not_contains = ["legacy trusted.gpg", "W: "] },
+    { type = "command_result", user = "root", command = "grep -rhi -A4 acme /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null", stdout_regex = "(?i)signed-by(=|: *)/etc/apt/keyrings/", stdout_not_contains = ["trusted=yes", "Trusted: yes"] },
+    { type = "command_result", user = "root", command = "for f in /etc/apt/trusted.gpg /etc/apt/trusted.gpg.d/* /etc/apt/keyrings/*; do [ -e \"$f\" ] && gpg --show-keys \"$f\" 2>/dev/null; done", stdout_not_contains = ["admin@mirror.invalid"], stdout_contains = ["2150BF6378CF96A1E96D304AD38FC56B17EBEE75"] },
+    { type = "package_state", name = "acme-agent", state = "installed" },
+    { type = "unit_state", unit = "acme-agent.service", active = "active" },
+]
+hints = [
+    "Remove the legacy keyring the forum key went into: sudo rm /etc/apt/trusted.gpg (check apt-key list first: nothing else is in it).",
+    "wget -qO- https://packages.acme.example/apt/acme-archive-keyring.asc | sudo gpg --dearmor -o /etc/apt/keyrings/acme.gpg — then gpg --show-keys /etc/apt/keyrings/acme.gpg and compare the fingerprint.",
+    "echo 'deb [signed-by=/etc/apt/keyrings/acme.gpg] https://packages.acme.example/apt stable main' | sudo tee /etc/apt/sources.list.d/acme.list; sudo apt update; sudo apt install acme-agent",
+]
+explanation = "apt update is clean, Acme's key can sign only Acme's repository, and the agent runs (Debian starts services when they are installed)."
+
+[[task]]
+id = "why"
+title = "Why not trusted=yes?"
+kind = "explanation"
+instructions = "A quick fix would have been [trusted=yes] in the source line."
+skills = { "f.repo-trust" = 1.0 }
+question = { prompt = "What would [trusted=yes] have meant?", type = "choice", choices = ["Nothing — it only hides the warning", "apt would install whatever the server (or anyone between you and it) delivers, unverified, as root", "apt would download the key automatically"], answer = 1 }
+hints = ["What does the signature protect against?", "Without verification, a compromised mirror or a man in the middle can deliver any package.", "(b)"]
+explanation = "Package installation runs maintainer scripts as root: an unverified repository is a remote root shell waiting to happen."
+
+[debrief]
+summary = """
+NO_PUBKEY → fetch the vendor's key over HTTPS → compare its fingerprint with the published
+one → gpg --dearmor into /etc/apt/keyrings → [signed-by=…] in the source → apt update → install.
+"""
+alternatives = ["deb822 format: /etc/apt/sources.list.d/acme.sources with Signed-By:", "Keep the armoured key as /etc/apt/keyrings/acme.asc", "extrepo (Debian) manages well-known third-party repositories"]
+pitfalls = ["[trusted=yes] or apt-key add as a 'fix'.", "Saving an armoured key with a .gpg name (apt ignores it).", "Skipping the fingerprint check."]
+next = "Next: the same package tasks on Fedora."
+
+[[solution]]
+name = "dearmor and signed-by"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt update",
+    ":answer D38FC56B17EBEE75",
+    "sudo apt-key list",
+    "wget -qO- https://packages.acme.example/apt/",
+    ":answer b",
+    "sudo rm /etc/apt/trusted.gpg",
+    "wget -qO- https://packages.acme.example/apt/acme-archive-keyring.asc | sudo gpg --dearmor -o /etc/apt/keyrings/acme.gpg",
+    "gpg --show-keys /etc/apt/keyrings/acme.gpg",
+    "echo 'deb [signed-by=/etc/apt/keyrings/acme.gpg] https://packages.acme.example/apt stable main' | sudo tee /etc/apt/sources.list.d/acme.list",
+    "sudo apt update",
+    "sudo apt install -y acme-agent",
+    "systemctl status acme-agent",
+    ":answer b",
+]
+
+[[solution]]
+name = "armoured .asc and deb822"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt-get update",
+    ":answer d38fc56b17ebee75",
+    ":answer No — it belongs to someone else (Repo Mirror <admin@mirror.invalid>)",
+    "sudo rm /etc/apt/sources.list.d/acme.list /etc/apt/trusted.gpg",
+    "sudo wget -qO /etc/apt/keyrings/acme.asc https://packages.acme.example/apt/acme-archive-keyring.asc",
+    "printf 'Types: deb\\nURIs: https://packages.acme.example/apt\\nSuites: stable\\nComponents: main\\nSigned-By: /etc/apt/keyrings/acme.asc\\n' | sudo tee /etc/apt/sources.list.d/acme.sources",
+    "sudo apt-get update",
+    "sudo apt-get install -y acme-agent",
+    ":answer b",
+]
+
+[[counterexample]]
+name = "trusted=yes"
+steps = [
+    { input = ["letslinux"] },
+    ":answer D38FC56B17EBEE75",
+    ":answer b",
+    "echo 'deb [trusted=yes] https://packages.acme.example/apt stable main' | sudo tee /etc/apt/sources.list.d/acme.list",
+    "sudo apt update",
+    "sudo apt install -y acme-agent",
+    ":answer b",
+]

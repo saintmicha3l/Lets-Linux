@@ -1,0 +1,121 @@
+schema = 1
+
+[mission]
+id = "n03-lost-network"
+title = "Hardened Into Silence"
+chapter = "N"
+kind = "troubleshooting"
+order = 3
+difficulty = 6
+requires = ["n02-kernel-cmdline", "i03-no-connection"]
+skills = ["n.boot-failure", "n.kernel-logs", "n.initramfs-cmdline"]
+review_for = ["n.kernel-modules", "i.net-troubleshooting"]
+xp = 230
+estimated_minutes = 30
+
+[briefing]
+context = """
+A hardening script ran on this Fedora server last night and rebooted it. Since then the
+server is unreachable; you are working on its console. Find out what the script did to the
+boot, repair it permanently, and bring the network back. (sudo password: letslinux)
+"""
+concept = """
+When a machine comes up without something it had before, compare this boot with the
+previous one: journalctl -b -1 versus -b, dmesg, and the kernel command line
+(cat /proc/cmdline). module_blacklist=NAME on the command line forbids the kernel to load a
+module at all — even sudo modprobe fails with "Operation not permitted" — so the fix is in
+the boot loader configuration (on Fedora: sudo grubby --update-kernel=ALL
+--remove-args=…) followed by a reboot. A network card without its driver has no
+interface: ip link shows only lo.
+"""
+objectives = ["Notice what is missing after a boot", "Trace it to the kernel command line", "Repair the boot loader configuration", "Verify after a reboot"]
+
+[environment]
+profile = "fedora"
+
+[[environment.setup]]
+action = "run"
+command = "grubby --update-kernel=ALL --args='module_blacklist=e1000e audit=1'"
+
+[[environment.setup]]
+action = "reboot"
+
+[[task]]
+id = "missing"
+title = "What is gone?"
+kind = "troubleshooting"
+instructions = "Look at the network interfaces."
+skills = { "n.boot-failure" = 1.0 }
+question = { prompt = "Which interface that existed yesterday is missing?", type = "exact", accept = ["enp0s3"] }
+hints = ["ip link (or ip -br link)", "Only lo is there. What was the other one called? journalctl -b -1 | grep enp", "enp0s3 — the network card's interface."]
+explanation = "Not just down — absent. An interface disappears when its driver is missing."
+
+[[task]]
+id = "why"
+title = "Why?"
+kind = "troubleshooting"
+instructions = "Find the cause. Try loading the network driver (e1000e) by hand."
+skills = { "n.kernel-logs" = 1.0, "n.initramfs-cmdline" = 1.0 }
+question = { prompt = "What prevents the driver from loading?", type = "choice", choices = ["The driver file was deleted", "The kernel command line contains module_blacklist=e1000e", "The firewall"], answer = 1 }
+hints = ["sudo modprobe e1000e — 'Operation not permitted' even as root?", "Something the kernel received at boot: cat /proc/cmdline", "module_blacklist=e1000e"]
+explanation = "The hardening script added module_blacklist=e1000e — probably meant for another machine's hardware."
+
+[[task]]
+id = "fix"
+title = "Repair and verify"
+kind = "independent"
+instructions = "Remove the blacklist from the boot configuration (keep the other new parameter, audit=1) and get the network back — verified: the gateway 10.0.2.2 answers."
+skills = { "n.boot-failure" = 1.0, "n.initramfs-cmdline" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "grubby --info=ALL", stdout_not_contains = ["module_blacklist"], stdout_contains = ["audit=1"] },
+    { type = "can_reach", host = "10.0.2.2" },
+    { type = "after_reboot", checks = [{ type = "can_reach", host = "10.0.2.2" }, { type = "command_result", user = "root", command = "cat /proc/cmdline", stdout_contains = ["audit=1"], stdout_not_contains = ["module_blacklist"] }] },
+]
+hints = ["The running kernel keeps its command line; the change needs a reboot.", "sudo grubby --update-kernel=ALL --remove-args=module_blacklist=e1000e", "… then sudo reboot, and ping -c 1 10.0.2.2 after logging in again."]
+explanation = "The parameter is gone from every boot entry, the driver loads at boot, enp0s3 is back with its address."
+
+[debrief]
+summary = """
+Compare boots (journalctl -b -1 vs -b), read /proc/cmdline, test the hypothesis (modprobe:
+Operation not permitted), fix the boot loader entry (grubby / /etc/default/grub +
+update-grub), reboot, verify.
+"""
+alternatives = ["For one boot: edit the entry in the GRUB menu ('e') and remove the parameter there", "On Debian: GRUB_CMDLINE_LINUX in /etc/default/grub + update-grub"]
+pitfalls = ["Fighting the symptom (network configuration) instead of the missing driver.", "Removing all new parameters instead of the harmful one.", "Forgetting that the running kernel keeps its command line until the next boot."]
+next = "Next: watching what a program asks the kernel to do."
+
+[[solution]]
+name = "grubby and reboot"
+steps = [
+    "ip -br link",
+    ":answer enp0s3",
+    { input = ["letslinux"] },
+    "sudo modprobe e1000e",
+    "cat /proc/cmdline",
+    ":answer b",
+    "sudo grubby --update-kernel=ALL --remove-args=module_blacklist=e1000e",
+    "sudo grubby --info=ALL",
+    "sudo reboot",
+    "ping -c 1 10.0.2.2",
+]
+
+[[solution]]
+name = "journal comparison, sed on the entry"
+steps = [
+    "journalctl -b -1 | grep enp0s3 | head -3",
+    ":answer enp0s3",
+    "journalctl -k | grep -i e1000e",
+    ":answer The kernel command line contains module_blacklist=e1000e",
+    { input = ["letslinux"] },
+    "sudo sh -c 'sed -i \"s/ module_blacklist=e1000e//\" /boot/loader/entries/*.conf'",
+    "sudo systemctl reboot",
+]
+
+[[counterexample]]
+name = "grubby without reboot"
+steps = [
+    ":answer enp0s3",
+    ":answer b",
+    { input = ["letslinux"] },
+    "sudo grubby --update-kernel=ALL --remove-args=module_blacklist=e1000e",
+]

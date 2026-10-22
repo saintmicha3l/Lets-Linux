@@ -1,0 +1,143 @@
+schema = 1
+
+[mission]
+id = "f02b-when-installs-go-wrong"
+title = "When Installs Go Wrong"
+chapter = "F"
+kind = "lesson"
+order = 3
+difficulty = 3
+requires = ["f02-cleaning-up", "g02-signals"]
+skills = ["f.conflicts-broken", "f.dependencies", "i.ports-sockets"]
+review_for = ["f.conflicts-broken"]
+xp = 90
+estimated_minutes = 20
+
+[briefing]
+context = """
+Installing software is usually one command. When it is not, the cause is nearly always a
+conflict: the change would remove something else, a package is pinned, or the new program
+wants a resource another program already holds. This lesson shows how to see each conflict
+before it bites. (sudo password: letslinux)
+"""
+concept = """
+Dependencies cut both ways: removing a package also removes everything that depends on it.
+apt prints the full list and asks before doing it — read the list, and answer n if it is
+longer than you expected. apt-mark hold PKG pins a package; apt then reports it as "kept
+back" during upgrades, and apt-mark showhold lists the pins.
+Programs also conflict over resources. Only one program can listen on a given TCP port at a
+time; a second one fails with "Address already in use". ss -tlnp lists listening TCP sockets
+(-t TCP, -l listening, -n numeric ports, -p the owning process — run it with sudo to see
+other users' processes).
+"""
+objectives = ["Read apt's removal plan before confirming", "Recognise held packages", "Find which program holds a port"]
+
+[environment]
+profile = "debian"
+packages = ["build-essential"]
+[environment.vars]
+port = { range = [8000, 8999] }
+squatter = { choices = ["old-dashboard", "test-api", "demo-server"] }
+
+[[environment.setup]]
+action = "run"
+command = "apt-mark hold tar"
+
+[[environment.setup]]
+action = "process"
+comm = "{{squatter}}"
+argv = ["/opt/{{squatter}}/bin/{{squatter}}", "--listen", ":{{port}}"]
+user = "root"
+listen = ["{{port}}"]
+pid_var = "squatter_pid"
+
+[[task]]
+id = "cascade"
+title = "Read the plan, then say no"
+kind = "guided"
+instructions = "Ask apt to remove make — and read what else it would remove before answering:  sudo apt remove make   then answer n."
+skills = { "f.dependencies" = 1.0, "f.conflicts-broken" = 0.5 }
+question = { prompt = "Which other installed package would apt remove together with make?", type = "exact", accept = ["build-essential"] }
+hints = ["apt lists every package it would remove under 'The following packages will be REMOVED'.", "build tools that need make cannot stay without it.", "Run sudo apt remove make, read the list, answer n — the answer is build-essential."]
+explanation = "Removing a package removes everything that depends on it. apt shows the complete plan before acting; 'n' leaves the system unchanged."
+
+[[task]]
+id = "untouched"
+title = "Nothing changed"
+kind = "guided"
+instructions = "Confirm that answering n changed nothing: make and build-essential must still be installed (dpkg -l make build-essential)."
+skills = { "f.dependencies" = 0.5 }
+checks = [
+    { type = "package_state", name = "make", state = "installed" },
+    { type = "package_state", name = "build-essential", state = "installed" },
+    { type = "command_used", command = ["dpkg", "apt", "apt-cache"], success = true },
+]
+persistent = true
+hints = ["dpkg -l shows ii in front of installed packages.", "If you answered y, reinstall with sudo apt install build-essential.", "Type: dpkg -l make build-essential"]
+explanation = "Checking that the system is still in the state you expect is part of every change — especially one you cancelled."
+
+[[task]]
+id = "held"
+title = "Kept back"
+kind = "guided"
+instructions = "Run  sudo apt update  and  apt list --upgradable  — two packages have updates — then  sudo apt upgrade  (answer n if asked) and read what apt says about it. Finally list the pins:  apt-mark showhold"
+skills = { "f.conflicts-broken" = 1.0, "f.upgrades-versions" = 0.5 }
+question = { prompt = "Which package is held, so that apt keeps it back?", type = "exact", accept = ["tar"] }
+hints = ["apt upgrade lists held packages under 'The following packages have been kept back'.", "apt-mark showhold prints the pinned packages.", "Run apt-mark showhold — the answer is tar."]
+explanation = "A hold is deliberate: someone decided this package must not change. Find out why before removing it with apt-mark unhold."
+
+[[task]]
+id = "port"
+title = "Who holds the port?"
+kind = "guided"
+instructions = "A new service must listen on port {{port}}, but it fails with 'Address already in use'. Find the program that holds the port:  sudo ss -tlnp"
+skills = { "i.ports-sockets" = 1.0, "f.conflicts-broken" = 1.0 }
+question = { prompt = "Which program listens on port {{port}}?", type = "exact", accept = ["{{squatter}}", "/opt/{{squatter}}/bin/{{squatter}}"] }
+hints = ["ss -tlnp prints one line per listening TCP socket; the address column ends in :PORT.", "The users:((\"NAME\",pid=...)) part names the program; without sudo it is hidden for other users' processes.", "Run sudo ss -tlnp | grep :{{port}} — the answer is {{squatter}}."]
+explanation = "ss -tlnp answers 'who is listening where'. lsof -i :{{port}} and fuser {{port}}/tcp give the same answer in other forms."
+
+[[task]]
+id = "free"
+title = "Free the port"
+kind = "independent"
+instructions = "{{squatter}} is a forgotten test program. Stop it, and show that nothing listens on port {{port}} any more."
+skills = { "f.conflicts-broken" = 1.0, "g.signals-kill" = 0.5, "i.ports-sockets" = 0.5 }
+checks = [
+    { type = "process_absent", comm = "{{squatter}}" },
+    { type = "command_used", command = ["ss", "lsof", "netstat", "fuser"], scope = "history" },
+]
+persistent = true
+hints = ["The PID is in the ss output (pid=...).", "Send it SIGTERM with kill PID (sudo: it runs as root); check again with ss.", "Run sudo kill {{squatter_pid}}, then sudo ss -tlnp"]
+explanation = "Stopping the program frees the port. On a real server you would also find out what started it (a service, a cron job) so it does not come back."
+
+[[task]]
+id = "two"
+title = "One port, one listener"
+kind = "prediction"
+instructions = "Think about what the kernel allows."
+skills = { "i.ports-sockets" = 1.0, "f.conflicts-broken" = 0.5 }
+question = { prompt = "nginx and Apache are both configured to listen on port 80. What happens when the second one starts?", type = "choice", choices = ["Both share the port and split the requests", "The second fails to start: Address already in use", "The first one is stopped automatically", "The kernel picks port 81 for the second"], answer = 1 }
+hints = ["A port on an address can have only one listening socket (without special options).", "The second bind() fails with EADDRINUSE.", "The answer is (b)."]
+explanation = "Port conflicts look like broken software ('nginx fails to start') but are conflicts between two programs. ss -tlnp shows the culprit in seconds."
+
+[debrief]
+summary = """
+Read apt's plan before confirming: removing one package removes its dependents. Holds keep
+packages back on purpose (apt-mark showhold). Two programs cannot listen on the same port:
+ss -tlnp shows who is there first.
+"""
+alternatives = ["apt-get -s remove make simulates the removal without asking", "apt-cache rdepends make lists packages that depend on make", "sudo lsof -i :{{port}} or sudo fuser -v {{port}}/tcp also find the listener"]
+pitfalls = ["Answering y without reading the list: removing a library can take half the system with it.", "Removing a hold without asking why it was set.", "Running ss -tlnp without sudo: other users' process names stay hidden."]
+next = "Next: where packages come from — repositories and their signatures."
+
+[[solution]]
+name = "as instructed"
+steps = [{ input = ["letslinux", "n"] }, "sudo apt remove make", ":answer build-essential", "dpkg -l make build-essential", { input = ["n"] }, "sudo apt update", "apt list --upgradable", "sudo apt upgrade", "apt-mark showhold", ":answer tar", "sudo ss -tlnp", ":answer {{squatter}}", "sudo kill {{squatter_pid}}", "sudo ss -tlnp", ":answer b"]
+
+[[solution]]
+name = "simulate and lsof"
+steps = [{ input = ["letslinux"] }, "sudo apt-get -s remove make", ":answer build-essential", "apt list --installed make build-essential", "apt-mark showhold", ":answer tar", "sudo lsof -i :{{port}}", ":answer /opt/{{squatter}}/bin/{{squatter}}", "sudo pkill {{squatter}}", "sudo lsof -i :{{port}}", ":answer 2"]
+
+[[counterexample]]
+name = "confirming the removal"
+steps = [{ input = ["letslinux"] }, "sudo apt remove -y make", ":answer build-essential", "dpkg -l make build-essential", "apt-mark showhold", ":answer tar", "sudo ss -tlnp", ":answer {{squatter}}", "sudo kill {{squatter_pid}}", ":answer b"]

@@ -1,0 +1,122 @@
+schema = 1
+
+[mission]
+id = "e02-first-script"
+title = "Your First Script"
+chapter = "E"
+kind = "lesson"
+order = 2
+difficulty = 2
+requires = ["e01-quotes-and-expansions", "d02-chmod"]
+skills = ["e.script-structure", "e.positional-args", "e.test-conditionals"]
+review_for = ["e.quoting", "c.std-streams", "a.exit-status"]
+xp = 130
+estimated_minutes = 25
+
+[briefing]
+context = """
+The help desk greets every new colleague with the same message, typed by hand. Turn it into a
+small command: greet.sh NAME. It should behave like a well-mannered Unix tool — useful output
+on standard output, complaints on standard error, and an exit status that tells the truth.
+"""
+concept = """
+A script is a text file of commands. The first line, the shebang (#!/bin/bash), names the
+interpreter; chmod +x makes it executable; then ./script or its path runs it. Inside, $1, $2 …
+are the arguments, $# their number and "$@" all of them. if [ "$#" -eq 0 ]; then … fi tests a
+condition ([ is the test command: -eq/-lt compare numbers, = compares strings, -z tests for
+empty, -f for a file). echo "message" >&2 writes to standard error; exit N ends the script
+with status N (0 = success). On Debian, ~/bin is added to PATH at login if it exists.
+"""
+objectives = ["Write a script with a shebang", "Make it executable and run it", "Use arguments", "Validate them with if and test", "Report errors properly"]
+
+[environment]
+profile = "debian"
+
+[[task]]
+id = "write"
+title = "Hello, script"
+kind = "guided"
+instructions = "Create the executable script ~/bin/greet.sh (create ~/bin first). Run with one argument, it prints 'Hello, NAME!' — for example ~/bin/greet.sh Ada prints Hello, Ada!"
+skills = { "e.script-structure" = 1.0, "e.positional-args" = 1.0 }
+checks = [
+    { type = "file_contains", path = "~/bin/greet.sh", regex = "^#!\\s*/(usr/)?bin/(env\\s+)?(ba)?sh" },
+    { type = "mode_has", path = "~/bin/greet.sh", bits = "0100" },
+    { type = "command_result", command = "~/bin/greet.sh Ada", status = 0, stdout_equals = "Hello, Ada!" },
+]
+hints = [
+    "Two lines are enough: the shebang #!/bin/bash and an echo that uses $1.",
+    "mkdir -p ~/bin, write the file with nano (or cat > file <<'EOF'), then chmod +x ~/bin/greet.sh",
+    "mkdir -p ~/bin && printf '#!/bin/bash\\necho \"Hello, $1!\"\\n' > ~/bin/greet.sh && chmod +x ~/bin/greet.sh && ~/bin/greet.sh Ada",
+]
+explanation = "The kernel read the shebang and ran /bin/bash with the script; $1 was the first argument."
+
+[[task]]
+id = "validate"
+title = "Usage, not nonsense"
+kind = "independent"
+instructions = "Without an argument the script currently prints 'Hello, !'. Make it print a usage message that contains the word Usage to standard error and exit with status 1 when no name is given. Names with spaces ('Ada Lovelace') must still work."
+skills = { "e.test-conditionals" = 1.0, "e.positional-args" = 1.0 }
+checks = [
+    { type = "command_result", command = "~/bin/greet.sh", status = 1, stderr_contains = "Usage", stdout_equals = "" },
+    { type = "command_result", command = "~/bin/greet.sh 'Ada Lovelace'", status = 0, stdout_equals = "Hello, Ada Lovelace!" },
+    { type = "command_result", command = "~/bin/greet.sh Grace", status = 0, stdout_equals = "Hello, Grace!" },
+]
+hints = [
+    "Test the number of arguments, $#, at the top of the script.",
+    "if [ \"$#\" -eq 0 ]; then echo \"Usage: greet.sh NAME\" >&2; exit 1; fi",
+    "printf '#!/bin/bash\\nif [ \"$#\" -eq 0 ]; then\\n    echo \"Usage: greet.sh NAME\" >&2\\n    exit 1\\nfi\\necho \"Hello, $1!\"\\n' > ~/bin/greet.sh",
+]
+explanation = "Errors on stderr stay visible even when stdout is redirected, and the status lets callers react: greet.sh || echo failed."
+
+[[task]]
+id = "path"
+title = "A command like any other"
+kind = "independent"
+instructions = "Make greet.sh usable as just 'greet.sh' from any directory in new login sessions — without copying it elsewhere. Then try it (the change applies to new logins; . ~/.profile applies it now)."
+skills = { "e.script-structure" = 1.0, "e.path-lookup" = 0.5 }
+checks = [{ type = "command_result", login = true, command = "cd /tmp && greet.sh Linus", stdout_equals = "Hello, Linus!" }]
+persistent = true
+hints = ["Look at ~/.profile: it already mentions ~/bin.", "Debian's ~/.profile adds ~/bin to PATH at login when the directory exists — it exists now.", "Nothing more to change: . ~/.profile (or log in again), then greet.sh Linus"]
+explanation = "PATH is read at login from your startup files. 'command not found' for a script in ~/bin usually means: log in again (or source ~/.profile)."
+
+[debrief]
+summary = """
+Script = shebang + commands + chmod +x. Arguments: $1 … $#, "$@". Validate first, report errors
+to stderr, exit with a meaningful status.
+"""
+alternatives = ["[[ $# -eq 0 ]] or (( $# == 0 )) in bash", "${1:?Usage: greet.sh NAME} stops with a message when $1 is empty", "printf 'Hello, %s!\\n' \"$1\""]
+pitfalls = ["Windows line endings (\\r) after the shebang: 'bad interpreter'.", "Forgetting chmod +x: 'Permission denied'.", "Writing errors to stdout, or exiting 0 after an error."]
+next = "Next: loops over files and lines."
+
+[[solution]]
+name = "printf into the file"
+steps = [
+    "mkdir -p ~/bin",
+    "printf '#!/bin/bash\\necho \"Hello, $1!\"\\n' > ~/bin/greet.sh",
+    "chmod +x ~/bin/greet.sh",
+    "~/bin/greet.sh Ada",
+    "printf '#!/bin/bash\\nif [ \"$#\" -eq 0 ]; then\\n    echo \"Usage: greet.sh NAME\" >&2\\n    exit 1\\nfi\\necho \"Hello, $1!\"\\n' > ~/bin/greet.sh",
+    "~/bin/greet.sh; echo $?",
+    ". ~/.profile",
+    "cd /tmp && greet.sh Linus",
+]
+
+[[solution]]
+name = "editor and ${1:?}"
+steps = [
+    "mkdir ~/bin",
+    { edit = "#!/usr/bin/env bash\n# greet.sh - greet a colleague\nname=\"${1:?Usage: greet.sh NAME}\"\nprintf 'Hello, %s!\\n' \"$name\"\n" },
+    "nano ~/bin/greet.sh",
+    "chmod u+x ~/bin/greet.sh",
+    "~/bin/greet.sh 'Ada Lovelace'",
+    "exec bash -l",
+    "greet.sh Grace",
+]
+
+[[counterexample]]
+name = "usage on stdout, success status"
+steps = [
+    "mkdir -p ~/bin",
+    "printf '#!/bin/bash\\nif [ -z \"$1\" ]; then echo \"Usage: greet.sh NAME\"; exit 0; fi\\necho \"Hello, $1!\"\\n' > ~/bin/greet.sh",
+    "chmod +x ~/bin/greet.sh",
+]

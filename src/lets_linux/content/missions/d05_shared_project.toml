@@ -1,0 +1,134 @@
+schema = 1
+
+[mission]
+id = "d05-shared-project"
+title = "A Shared Project"
+chapter = "D"
+kind = "challenge"
+order = 7
+difficulty = 4
+requires = ["d03-access-denied", "d04b-ownership-and-special-bits"]
+skills = ["d.special-bits", "d.group-management", "d.chown-chgrp"]
+review_for = ["d.special-bits", "d.group-management", "d.chown-chgrp"]
+xp = 130
+estimated_minutes = 20
+sequential = false
+
+[briefing]
+context = """
+Two developers, {{a}} and {{b}}, must collaborate in /srv/{{proj}}. Requirements from the team
+lead: both can create and edit files there; files they create automatically belong to the
+{{proj}} group; nobody else can see inside. No instructions this time — plan, then act.
+(sudo password: letslinux)
+"""
+concept = """
+A group-owned directory with the setgid bit (chmod g+s, or a leading 2 in octal such as 2770)
+makes new files inherit the directory's group. Combine it with the right owner, group and
+mode, and the right group memberships.
+"""
+objectives = ["Design a shared directory", "Use the setgid bit on directories", "Verify as the users"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+proj = { choices = ["nebula", "quasar", "pulsar", "aurora"] }
+a = { choices = ["anya", "ben"] }
+b = { choices = ["chloe", "dev"] }
+
+[[environment.setup]]
+action = "user"
+name = "{{a}}"
+
+[[environment.setup]]
+action = "user"
+name = "{{b}}"
+
+[[environment.setup]]
+action = "user"
+name = "outsider"
+
+[[task]]
+id = "group"
+title = "Project group"
+kind = "independent"
+instructions = "A group named {{proj}} exists and both developers are members."
+skills = { "d.group-management" = 1.0 }
+checks = [
+    { type = "in_group", user = "{{a}}", group = "{{proj}}" },
+    { type = "in_group", user = "{{b}}", group = "{{proj}}" },
+]
+hints = ["Create the group, then add each user.", "sudo groupadd {{proj}}; sudo usermod -aG {{proj}} USER (twice).", "sudo groupadd {{proj}} && sudo usermod -aG {{proj}} {{a}} && sudo usermod -aG {{proj}} {{b}}"]
+explanation = "Group membership is what grants access; the directory's group decides which membership counts."
+
+[[task]]
+id = "dir"
+title = "The directory"
+kind = "independent"
+instructions = "/srv/{{proj}} exists, belongs to the {{proj}} group, is fully usable by the group, closed to others, and new files inside inherit the group."
+skills = { "d.special-bits" = 1.0, "d.chown-chgrp" = 1.0 }
+checks = [
+    { type = "path_exists", path = "/srv/{{proj}}", kind = "dir" },
+    { type = "file_owner", path = "/srv/{{proj}}", group = "{{proj}}" },
+    { type = "mode_has", path = "/srv/{{proj}}", bits = "2070" },
+    { type = "mode_lacks", path = "/srv/{{proj}}", bits = "007" },
+]
+persistent = true
+hints = ["Owner/group with chown or chgrp; mode with chmod; the setgid bit is the 2 in 2770.", "sudo mkdir /srv/{{proj}}; sudo chgrp {{proj}} /srv/{{proj}}; sudo chmod 2770 /srv/{{proj}}", "sudo mkdir /srv/{{proj}} && sudo chown root:{{proj}} /srv/{{proj}} && sudo chmod 2770 /srv/{{proj}}"]
+explanation = "2770: setgid (2), rwx for the owner and the group, nothing for others. ls -ld shows drwxrws---."
+
+[[task]]
+id = "works"
+title = "Proof"
+kind = "independent"
+instructions = "Show that it works: as {{a}}, create /srv/{{proj}}/plan.md; it must belong to the {{proj}} group and {{b}} must be able to edit it."
+skills = { "d.special-bits" = 1.0, "m.verification" = 1.0 }
+checks = [
+    { type = "file_owner", path = "/srv/{{proj}}/plan.md", user = "{{a}}", group = "{{proj}}" },
+    { type = "user_can_access", user = "{{b}}", path = "/srv/{{proj}}/plan.md", access = "rw" },
+    { type = "user_cannot_access", user = "outsider", path = "/srv/{{proj}}", access = "x" },
+]
+persistent = true
+hints = ["sudo -u {{a}} runs commands as {{a}}. New files get the creator's umask (here 022 → no group write).", "Create the file as {{a}}, then give the group write: sudo -u {{a}} chmod g+w /srv/{{proj}}/plan.md", "sudo -u {{a}} touch /srv/{{proj}}/plan.md && sudo -u {{a}} chmod 664 /srv/{{proj}}/plan.md"]
+explanation = "The file got group {{proj}} automatically thanks to setgid. Group write still depends on the creator's umask — teams often set umask 002 for this reason."
+
+[debrief]
+summary = """
+Shared directories combine group membership, group ownership, group permissions and the
+setgid bit. Verify as the real users, and remember umask decides the mode of new files.
+"""
+alternatives = ["sudo install -d -g {{proj}} -m 2770 /srv/{{proj}} creates the directory in one step (install is not simulated yet)", "Default ACLs (setfacl -d) can grant group write regardless of umask"]
+pitfalls = ["Without setgid, files get the creator's primary group and the partner may be locked out.", "chmod 777 on a shared directory lets everyone delete everyone's files; consider the sticky bit for drop directories."]
+next = "Chapter E: shell behaviour and scripting (coming soon)."
+
+[[solution]]
+name = "step by step"
+steps = [
+    { input = ["letslinux"] },
+    "sudo groupadd {{proj}}",
+    "sudo usermod -aG {{proj}} {{a}}",
+    "sudo usermod -aG {{proj}} {{b}}",
+    "sudo mkdir /srv/{{proj}}",
+    "sudo chown root:{{proj}} /srv/{{proj}}",
+    "sudo chmod 2770 /srv/{{proj}}",
+    "sudo -u {{a}} touch /srv/{{proj}}/plan.md",
+    "sudo -u {{a}} chmod 664 /srv/{{proj}}/plan.md",
+    "ls -l /srv/{{proj}}",
+]
+
+[[solution]]
+name = "symbolic modes and gpasswd"
+steps = [
+    { input = ["letslinux"] },
+    "sudo groupadd {{proj}} && sudo gpasswd -M {{a}},{{b}} {{proj}}",
+    "sudo mkdir -m 770 /srv/{{proj}} && sudo chgrp {{proj}} /srv/{{proj}} && sudo chmod g+s /srv/{{proj}}",
+    "sudo -u {{a}} bash -c 'umask 002; echo plan > /srv/{{proj}}/plan.md'",
+]
+
+[[counterexample]]
+name = "no setgid"
+steps = [
+    { input = ["letslinux"] },
+    "sudo groupadd {{proj}} && sudo usermod -aG {{proj}} {{a}} && sudo usermod -aG {{proj}} {{b}}",
+    "sudo mkdir /srv/{{proj}} && sudo chgrp {{proj}} /srv/{{proj}} && sudo chmod 770 /srv/{{proj}}",
+    "sudo -u {{a}} touch /srv/{{proj}}/plan.md",
+]

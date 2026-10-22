@@ -1,0 +1,274 @@
+schema = 1
+
+[mission]
+id = "i09-who-has"
+title = "Who Has 10.0.2.2?"
+chapter = "I"
+kind = "troubleshooting"
+order = 9
+difficulty = 4
+requires = ["i03-no-connection", "h03-your-own-service"]
+skills = ["i.arp-neighbors", "i.net-troubleshooting", "m.hypothesis-method"]
+review_for = ["i.routing-gateways", "h.systemctl-control"]
+xp = 180
+estimated_minutes = 25
+sequential = false
+
+[briefing]
+context = """
+Two complaints about this server since yesterday, when the network team replaced the
+router and the facilities team installed new security cameras: it cannot reach anything
+outside the LAN (every other server can), and connections to the database on db
+(10.0.2.30, port 5432) fail now and then — then work again. (sudo password: letslinux)
+"""
+concept = """
+Before a machine can send an IP packet to a host on its own network — or to the gateway —
+it must know that host's MAC address. ARP asks the whole link "who has 10.0.2.2?"; the
+owner answers with its MAC, and the answer is cached in the neighbour table (ip neigh,
+arp -n). REACHABLE entries were confirmed recently, STALE ones will be re-checked, FAILED
+ones got no answer. PERMANENT entries are set by an administrator and never re-checked.
+arping sends ARP requests by hand and shows every MAC that answers.
+"""
+objectives = ["Read the neighbour table", "Find a host's real MAC with arping", "Recognise a stale static entry and an address conflict", "Fix both, now and after a reboot"]
+
+[environment]
+profile = "debian"
+
+[environment.vars]
+newmac = { choices = ["52:55:0a:00:02:a2", "52:55:0a:00:02:b7", "52:55:0a:00:02:c4"] }
+cammac = { choices = ["ac:cc:8e:4f:21:0a", "ac:cc:8e:61:9c:33", "b8:a4:4f:02:7e:15"] }
+
+[[environment.setup]]
+action = "run"
+command = "apt-get install -y iputils-arping net-tools netcat-openbsd"
+
+[[environment.setup]]
+action = "peer"
+name = "gateway"
+mac = "{{newmac}}"
+
+[[environment.setup]]
+action = "peer"
+name = "cam-lobby"
+addresses = ["10.0.2.30"]
+mac = "{{cammac}}"
+closed = "reject"
+services = { 80 = { kind = "http", server = "AXIS", pages = { "/" = { body = "<html><title>AXIS M3106 Network Camera</title></html>\n" } } } }
+
+[[environment.setup]]
+action = "file"
+path = "/etc/systemd/system/static-arp.service"
+content = """# Hardening guide 4.2: pin the gateway's MAC address so that nobody can impersonate it
+# (ARP spoofing). -- T.
+[Unit]
+Description=Pin the gateway MAC address (ARP spoofing protection)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/ip neigh replace 10.0.2.2 lladdr 52:55:0a:00:02:02 dev enp0s3 nud permanent
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "run"
+command = "systemctl daemon-reload && systemctl enable --now static-arp.service"
+
+[[task]]
+id = "cache"
+title = "What this machine believes"
+kind = "guided"
+instructions = """
+`ping -c 1 10.0.2.2` gets no answer, yet nothing on the LAN complains. Look at the neighbour
+table with `ip neigh` (or `arp -n`).
+"""
+skills = { "i.arp-neighbors" = 1.0 }
+question = { prompt = "Which MAC address does this machine send the gateway's packets to? (xx:xx:xx:xx:xx:xx)", type = "regex", accept = ["(?i)\\s*52:55:0a:00:02:02\\s*"] }
+hints = ["ip neigh show 10.0.2.2", "The entry is PERMANENT: nobody asked the network.", "52:55:0a:00:02:02"]
+explanation = "A PERMANENT entry is never re-checked: whatever MAC it names gets the frames, whether or not that device still exists."
+
+[[task]]
+id = "real"
+title = "Ask the network"
+kind = "guided"
+instructions = "Ask the LAN who really has 10.0.2.2: `sudo arping -c 2 10.0.2.2` (arping lives in /usr/sbin, which is not in an ordinary user's PATH on Debian)."
+skills = { "i.arp-neighbors" = 1.0 }
+question = { prompt = "Which MAC address answers for 10.0.2.2?", type = "regex", accept = ["(?i)\\s*{{newmac}}\\s*"] }
+hints = ["arping sends real ARP requests and ignores the cache.", "Copy the address from 'Unicast reply from 10.0.2.2 [..]'.", "{{newmac}}"]
+explanation = "The new router has a new network card — and so a new MAC. The pinned entry still names the old router's."
+
+[[task]]
+id = "gateway"
+title = "Out of the LAN again"
+kind = "troubleshooting"
+instructions = """
+Make the gateway reachable again so that this server reaches example.com (port 80) — now,
+and after the next reboot. Mind the colleague's intention: either pin the right MAC, or
+stop pinning.
+"""
+skills = { "i.arp-neighbors" = 1.0, "i.net-troubleshooting" = 1.0 }
+checks = [
+    { type = "can_reach", host = "example.com", port = 80 },
+    { type = "after_reboot", checks = [{ type = "can_reach", host = "example.com", port = 80 }] },
+]
+persistent = true
+hints = [
+    "Two things: the entry in the kernel's table now, and whatever creates it at boot. grep -r 10.0.2.2 /etc/systemd/system finds the culprit.",
+    "Delete the entry (ip neigh del 10.0.2.2 dev enp0s3) and disable static-arp.service — or put the new MAC into the unit and restart it.",
+    "sudo systemctl disable --now static-arp; sudo ip neigh del 10.0.2.2 dev enp0s3",
+]
+explanation = """
+Static ARP entries protect against spoofing only as long as somebody updates them whenever
+hardware changes — and they fail silently. Most networks protect ARP on the switches
+instead (dynamic ARP inspection). Note that stopping a oneshot service with
+RemainAfterExit= does not undo what it did: the entry stays until it is deleted.
+"""
+
+[[task]]
+id = "conflict"
+title = "Now and then"
+kind = "troubleshooting"
+instructions = """
+Now the database: `nc -zv db 5432` sometimes succeeds and sometimes is refused. Ask the
+network who has 10.0.2.30 and find the device that should not be there. (The servers on
+this LAN are all virtual machines.)
+"""
+skills = { "i.arp-neighbors" = 1.0, "i.net-troubleshooting" = 1.0 }
+question = { prompt = "What is the MAC address of the device that should not have 10.0.2.30?", type = "regex", accept = ["(?i)\\s*{{cammac}}\\s*"] }
+hints = [
+    "Run sudo arping -c 3 10.0.2.30 and count the different MAC addresses that answer.",
+    "Two devices claim the address. Virtual machines here have MACs beginning 52:54:00 — the other prefix belongs to a hardware vendor (ip neigh shows which one your cache holds at the moment; it changes).",
+    "{{cammac}}",
+]
+explanation = """
+Two devices answer for one address: an address conflict. Every ARP cache on the LAN
+follows whichever answered last, so traffic flips between the database and — judging by
+the vendor prefix of its MAC and its web page — a network camera that was given a static
+address that is already in use.
+"""
+
+[[task]]
+id = "pin"
+title = "A stopgap"
+kind = "independent"
+instructions = """
+Until the facilities team re-addresses the camera, make this server talk to the real
+database reliably — without changing any other machine.
+"""
+skills = { "i.arp-neighbors" = 1.0 }
+checks = [
+    { type = "command_result", command = "ip neigh show 10.0.2.30", stdout_regex = "(?i)lladdr 52:54:00:aa:02:1e PERMANENT" },
+    { type = "can_reach", host = "db", port = 5432 },
+]
+persistent = true
+hints = [
+    "A permanent neighbour entry is used without asking — this time that is what you want.",
+    "Find the database's MAC (the 52:54:00 one) and pin it with ip neigh replace … nud permanent (or arp -s).",
+    "sudo ip neigh replace 10.0.2.30 lladdr 52:54:00:aa:02:1e dev enp0s3 nud permanent",
+]
+explanation = """
+The same tool that broke the gateway now keeps the database working — as a documented,
+temporary workaround. Write down that it exists, and remove it (ip neigh del) once the
+camera has its own address.
+"""
+
+[[task]]
+id = "lesson"
+title = "Before you assign an address"
+kind = "explanation"
+instructions = "Whoever configured the camera skipped a check."
+skills = { "i.arp-neighbors" = 1.0 }
+question = { prompt = "Which command tells you whether 10.0.2.30 is already in use on the LAN — even if its owner drops ping?", type = "choice", choices = ["ping -c 1 10.0.2.30", "sudo arping -D -c 2 10.0.2.30", "ip neigh flush all", "nslookup 10.0.2.30"], answer = 1 }
+hints = ["A firewall can drop ping, but a host cannot ignore ARP and still use its address.", "Duplicate address detection.", "arping -D"]
+explanation = "arping -D probes from 0.0.0.0 and exits 1 when anyone answers. ARP works below IP filtering, so even a host that drops ping must answer. Better still: take addresses from an IPAM list or a DHCP reservation."
+
+[debrief]
+summary = """
+ip neigh / arp -n show what the machine believes; arping asks the network. A PERMANENT entry
+with an outdated MAC silently black-holes traffic; two MACs answering for one IP is an
+address conflict that makes connections flip. Fix the source of a static entry, not only the
+table — and check with arping -D before assigning an address.
+"""
+alternatives = [
+    "Pin the new router's MAC in static-arp.service and restart it (keeps the spoofing protection)",
+    "arp -d 10.0.2.2 / arp -s 10.0.2.30 52:54:00:aa:02:1e (net-tools)",
+]
+pitfalls = [
+    "Deleting the entry but leaving the unit enabled: it is back after the next reboot.",
+    "Stopping the oneshot unit and expecting the entry to disappear.",
+    "Restarting the database because connections were refused.",
+]
+next = "Next: address translation."
+
+[[solution]]
+name = "stop pinning, pin the database"
+steps = [
+    { input = ["letslinux"] },
+    "ping -c 1 -W 1 10.0.2.2",
+    "ip neigh",
+    ":answer 52:55:0a:00:02:02",
+    "sudo arping -c 2 10.0.2.2",
+    { answer_with = "arping -c 1 10.0.2.2 | sed -n 's/.*\\[\\(.*\\)\\].*/\\1/p'" },
+    "grep -rl 10.0.2.2 /etc/systemd/system",
+    "sudo systemctl disable --now static-arp",
+    "sudo ip neigh del 10.0.2.2 dev enp0s3",
+    "sudo arping -c 3 10.0.2.30",
+    ":answer {{cammac}}",
+    "sudo ip neigh replace 10.0.2.30 lladdr 52:54:00:aa:02:1e dev enp0s3 nud permanent",
+    ":answer 2",
+]
+
+[[solution]]
+name = "fix the unit, net-tools"
+steps = [
+    { input = ["letslinux"] },
+    { answer_with = "ip neigh show 10.0.2.2 | awk '{print $5}'" },
+    ":answer {{newmac}}",
+    "sudo sed -i 's/52:55:0a:00:02:02/{{newmac}}/' /etc/systemd/system/static-arp.service",
+    "sudo systemctl daemon-reload",
+    "sudo systemctl restart static-arp",
+    ":answer {{cammac}}",
+    "sudo arp -s 10.0.2.30 52:54:00:aa:02:1e",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "table only — the unit puts it back at boot"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 52:55:0a:00:02:02",
+    ":answer {{newmac}}",
+    "sudo ip neigh del 10.0.2.2 dev enp0s3",
+    ":answer {{cammac}}",
+    "sudo ip neigh replace 10.0.2.30 lladdr 52:54:00:aa:02:1e dev enp0s3 nud permanent",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "stop the unit only"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 52:55:0a:00:02:02",
+    ":answer {{newmac}}",
+    "sudo systemctl disable --now static-arp",
+    ":answer {{cammac}}",
+    "sudo ip neigh replace 10.0.2.30 lladdr 52:54:00:aa:02:1e dev enp0s3 nud permanent",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "pin the camera"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 52:55:0a:00:02:02",
+    ":answer {{newmac}}",
+    "sudo systemctl disable --now static-arp",
+    "sudo ip neigh del 10.0.2.2 dev enp0s3",
+    ":answer {{cammac}}",
+    "sudo ip neigh replace 10.0.2.30 lladdr {{cammac}} dev enp0s3 nud permanent",
+    ":answer 2",
+]

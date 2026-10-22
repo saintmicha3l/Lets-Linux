@@ -1,0 +1,159 @@
+schema = 1
+
+[mission]
+id = "k04-log-rotation"
+title = "Logs That Never Stop Growing"
+chapter = "K"
+kind = "lesson"
+order = 5
+difficulty = 4
+requires = ["k03-timers", "j04-df-du-disagree"]
+skills = ["k.log-rotation", "j.deleted-open-files"]
+review_for = ["k.systemd-timers", "g.file-descriptors"]
+xp = 160
+estimated_minutes = 25
+
+[briefing]
+context = """
+The shop application writes /var/log/shop/shop.log and never stops — it is already 1.2 GB.
+Nobody wants to delete it by hand every month (and you know since last week what rm does to a
+file that a program has open). Configure logrotate: keep a week of daily logs, compressed —
+without breaking the running application, which cannot be told to reopen its log file.
+"""
+concept = """
+logrotate reads /etc/logrotate.conf, which includes every file in /etc/logrotate.d; a block
+'PATH { directives }' says how to rotate that log: daily/weekly, rotate N (how many old copies
+to keep), compress and delaycompress, missingok, notifempty, create MODE USER GROUP. Rotation
+normally renames shop.log to shop.log.1 — but a running program keeps writing to the renamed
+file, unless a postrotate script makes it reopen its log. copytruncate copies the log and
+empties the original instead, so the program keeps writing to the same file. logrotate -d
+tests a configuration without changing anything; -f forces a rotation. On Debian,
+logrotate.timer runs logrotate every night.
+"""
+objectives = ["Write a logrotate configuration", "Test it safely", "Handle programs that keep their log open", "Rely on the daily timer"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "file"
+path = "/var/log/shop/shop.log"
+content = "2026-03-02 08:59:59 shopd: order 88213 shipped\n"
+size = 1288490188
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/shopd"
+mode = "0755"
+content = """#!/bin/bash
+# shopd: the shop application server (logs to /var/log/shop/shop.log, opened once at start)
+echo "shopd: serving the shop"
+while true; do sleep 600; done
+"""
+
+[[environment.setup]]
+action = "service"
+name = "shopd.service"
+enable = true
+start = true
+content = """[Unit]
+Description=Shop application server
+
+[Service]
+ExecStart=/usr/local/bin/shopd
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "hold"
+unit = "shopd.service"
+path = "/var/log/shop/shop.log"
+
+[[task]]
+id = "timer"
+title = "Who runs logrotate?"
+kind = "guided"
+instructions = "Find out how logrotate gets started on this system every day."
+skills = { "k.log-rotation" = 1.0, "k.systemd-timers" = 0.5 }
+question = { prompt = "Which systemd unit starts logrotate every day?", type = "exact", accept = ["logrotate.timer", "logrotate.timer (logrotate.service)"] }
+hints = ["systemctl list-timers lists the timers and what they activate.", "Look for a timer that activates logrotate.service.", "logrotate.timer"]
+explanation = "logrotate.timer (OnCalendar=daily) starts logrotate.service, which runs logrotate /etc/logrotate.conf. Older systems use /etc/cron.daily/logrotate."
+
+[[task]]
+id = "config"
+title = "A rotation policy"
+kind = "independent"
+instructions = "Create /etc/logrotate.d/shop for /var/log/shop/shop.log: rotate daily, keep 7 old logs, compress them (but not the newest old one), don't complain if the log is missing or rotate it when it is empty — and make sure shopd keeps writing to /var/log/shop/shop.log after a rotation. Test with logrotate -d."
+skills = { "k.log-rotation" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "logrotate -d /etc/logrotate.d/shop", status = 0, stderr_not_contains = "error", stdout_contains = "considering log /var/log/shop/shop.log" },
+    { type = "file_contains", path = "/etc/logrotate.d/shop", regex = "(?m)^\\s*daily\\s*$" },
+    { type = "file_contains", path = "/etc/logrotate.d/shop", regex = "(?m)^\\s*rotate\\s+7\\s*$" },
+    { type = "file_contains", path = "/etc/logrotate.d/shop", regex = "(?m)^\\s*delaycompress\\s*$" },
+    { type = "command_result", user = "root", command = "logrotate -f /etc/logrotate.d/shop && ls -l /proc/$(pidof shopd)/fd/ 2>&1; ls /var/log/shop", stdout_contains = ["shop.log.1"], stdout_not_contains = ["(deleted)"], stdout_regex = "-> /var/log/shop/shop\\.log$" },
+]
+hints = [
+    "One block: /var/log/shop/shop.log { … } with daily, rotate 7, compress, delaycompress, missingok, notifempty.",
+    "shopd cannot reopen its log: renaming it would leave shopd writing into shop.log.1. Which directive copies and empties instead?",
+    "printf '/var/log/shop/shop.log {\\n    daily\\n    rotate 7\\n    compress\\n    delaycompress\\n    missingok\\n    notifempty\\n    copytruncate\\n}\\n' | sudo tee /etc/logrotate.d/shop; sudo logrotate -d /etc/logrotate.d/shop",
+]
+explanation = "The game forced a rotation on a copy of the machine: shop.log.1 appeared and shopd's file descriptor still points to /var/log/shop/shop.log. Without copytruncate, ls -l /proc/PID/fd would show shopd writing into shop.log.1."
+
+[[task]]
+id = "nightly"
+title = "Let it run"
+kind = "independent"
+instructions = "No cron job or manual run needed: wait two nights (sleep 172800) and check that the log has been rotated by the daily timer."
+skills = { "k.log-rotation" = 1.0 }
+checks = [
+    { type = "any_of", checks = [{ type = "path_exists", path = "/var/log/shop/shop.log.1" }, { type = "path_exists", path = "/var/log/shop/shop.log.1.gz" }] },
+    { type = "file_contains", path = "/var/lib/logrotate/status", text = "/var/log/shop/shop.log" },
+]
+persistent = true
+hints = ["sleep 172800 lets two days of simulated time pass.", "The first nightly run only records the log in the state file; the next one rotates it.", "sleep 172800; ls -l /var/log/shop; cat /var/lib/logrotate/status"]
+explanation = "/var/lib/logrotate/status remembers when each log was last rotated — that is how logrotate decides whether 'daily' is due."
+
+[debrief]
+summary = """
+/etc/logrotate.d/NAME: PATH { daily; rotate 7; compress; delaycompress; missingok; notifempty;
+copytruncate or postrotate … }. Test with logrotate -d, force with -f, trust the daily timer.
+"""
+alternatives = ["postrotate systemctl reload shopd (or kill -HUP) when the program can reopen its log — better than copytruncate, which can lose lines written during the copy", "size 100M or maxsize to rotate big logs early", "Logging to the journal instead, which rotates itself (SystemMaxUse=)"]
+pitfalls = ["Rotating by rename while the program keeps the old file open: the disk still fills up.", "rotate 0 deletes old logs immediately.", "Testing with -f on production at a busy moment."]
+next = "Chapter K continues with backups."
+
+[[solution]]
+name = "copytruncate"
+steps = [
+    "systemctl list-timers",
+    ":answer logrotate.timer",
+    { input = ["letslinux"] },
+    "printf '/var/log/shop/shop.log {\\n    daily\\n    rotate 7\\n    compress\\n    delaycompress\\n    missingok\\n    notifempty\\n    copytruncate\\n}\\n' | sudo tee /etc/logrotate.d/shop",
+    "sudo logrotate -d /etc/logrotate.d/shop",
+    "sleep 172800",
+    "ls -l /var/log/shop",
+]
+
+[[solution]]
+name = "editor and forced first rotation"
+steps = [
+    "cat /usr/lib/systemd/system/logrotate.timer",
+    ":answer logrotate.timer",
+    { input = ["letslinux"] },
+    { edit = "# shop application logs\n/var/log/shop/shop.log {\n\tdaily\n\tmissingok\n\trotate 7\n\tcompress\n\tdelaycompress\n\tnotifempty\n\tcopytruncate\n}\n" },
+    "sudo nano /etc/logrotate.d/shop",
+    "sudo logrotate -d /etc/logrotate.conf 2>&1 | grep -A3 shop",
+    "sudo logrotate -f /etc/logrotate.d/shop",
+    "sudo ls -l /proc/$(pidof shopd)/fd",
+]
+
+[[counterexample]]
+name = "rotation by rename"
+steps = [
+    ":answer logrotate.timer",
+    { input = ["letslinux"] },
+    "printf '/var/log/shop/shop.log {\\n    daily\\n    rotate 7\\n    compress\\n    delaycompress\\n    missingok\\n    notifempty\\n}\\n' | sudo tee /etc/logrotate.d/shop",
+    "sleep 172800",
+]

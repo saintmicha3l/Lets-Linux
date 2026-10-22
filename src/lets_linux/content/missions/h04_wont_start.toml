@@ -1,0 +1,225 @@
+schema = 1
+
+[mission]
+id = "h04-wont-start"
+title = "It Won't Start"
+chapter = "H"
+kind = "troubleshooting"
+order = 4
+difficulty = 4
+requires = ["h02-reading-the-journal", "h03-your-own-service", "d03-access-denied"]
+skills = ["h.failed-services", "m.hypothesis-method"]
+review_for = ["h.failed-services", "h.unit-files", "d.directory-permissions"]
+xp = 150
+estimated_minutes = 25
+
+[briefing]
+context = """
+After last night's change window the ledger service is down and the accountants are waiting.
+A colleague "tried a few things" before going home. Find out what is wrong — it may be more
+than one thing — and get ledger.service running again without weakening security.
+(sudo password: letslinux)
+"""
+concept = """
+Work from evidence: systemctl status shows the state, the exit status and recent log lines;
+journalctl -u UNIT shows the whole story; systemctl cat shows the unit file and every drop-in
+that changes it. Statuses 200-243 come from systemd itself (203/EXEC: the program could not be
+executed). Fix one thing, reload/restart, and read the evidence again.
+"""
+objectives = ["Diagnose a failing service from its status and logs", "Fix unit, file and permission problems", "Verify the result"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "user"
+name = "ledger"
+shell = "/usr/sbin/nologin"
+create_home = false
+
+[[environment.setup]]
+action = "file"
+path = "/etc/ledger/ledger.conf"
+content = "database=/var/lib/ledger/ledger.db\ncurrency=EUR\nfiscal_year_start=01-01\n"
+mode = "0644"
+
+[[environment.setup]]
+action = "dir"
+path = "/var/lib/ledger"
+mode = "0755"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/sbin/ledgerd"
+mode = "0644"
+content = """#!/bin/bash
+echo "ledgerd 3.1 starting (config /etc/ledger/ledger.conf)"
+if ! touch /var/lib/ledger/ledger.lock 2>/dev/null; then
+    echo "<3>ledgerd: cannot create /var/lib/ledger/ledger.lock: Permission denied"
+    exit 1
+fi
+echo "ledgerd: ready, $(wc -l < /etc/ledger/ledger.conf) settings loaded"
+sleep 86400
+"""
+
+[[environment.setup]]
+action = "dir"
+path = "/etc/systemd/system/ledger.service.d"
+
+[[environment.setup]]
+action = "file"
+path = "/etc/systemd/system/ledger.service.d/override.conf"
+content = """# verbose logging for debugging -- T.
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/ledgerd --verbose
+"""
+
+[[environment.setup]]
+action = "service"
+name = "ledger.service"
+vendor = true
+enable = true
+start = true
+content = """[Unit]
+Description=Ledger accounting daemon
+After=network.target
+
+[Service]
+User=ledger
+ExecStart=/usr/local/sbin/ledgerd
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[guard]]
+type = "mode_lacks"
+path = "/var/lib/ledger"
+bits = "002"
+message = "/var/lib/ledger became writable by everyone. Fix access for the ledger user only. Use :reset to start over."
+
+[[guard]]
+type = "mode_lacks"
+path = "/usr/local/sbin/ledgerd"
+bits = "022"
+message = "The daemon became writable by others — anyone could replace the program that runs as a service. Use :reset."
+
+[[task]]
+id = "status"
+title = "First evidence"
+kind = "troubleshooting"
+instructions = "Look at the service's status."
+skills = { "h.failed-services" = 1.0 }
+question = { prompt = "Which exit status does systemd report for ledgerd's process?", type = "exact", accept = ["203/EXEC", "203", "status=203/EXEC"] }
+hints = ["systemctl status ledger", "Look at the 'Process:' or 'Main PID:' line and the log lines.", "It is 203/EXEC: systemd could not execute the program."]
+explanation = "203/EXEC means the failure happened before the program ran: wrong path, missing file or no execute permission."
+
+[[task]]
+id = "where"
+title = "Who changed what?"
+kind = "troubleshooting"
+instructions = "systemd is not running the ExecStart from the packaged unit file. Find out which file sets the command it uses."
+skills = { "h.failed-services" = 1.0, "h.unit-files" = 1.0 }
+question = { prompt = "Which file sets the ExecStart= that systemd uses?", type = "exact", accept = ["/etc/systemd/system/ledger.service.d/override.conf"] }
+hints = ["systemctl status shows a 'Drop-In:' section.", "systemctl cat ledger prints the unit file and all drop-ins, each with its path.", "/etc/systemd/system/ledger.service.d/override.conf"]
+explanation = "The drop-in cleared ExecStart= and set a new one — pointing at /usr/local/bin instead of /usr/local/sbin."
+
+[[task]]
+id = "fix"
+title = "Get it running"
+kind = "troubleshooting"
+instructions = """
+Make ledger.service run, as the ledger user, with the correct program. Expect more than one
+problem: after each fix, restart and read the evidence again.
+"""
+skills = { "h.failed-services" = 1.0, "m.hypothesis-method" = 1.0, "d.directory-permissions" = 0.5 }
+checks = [
+    { type = "unit_state", unit = "ledger.service", active = "active", sub = "running" },
+    { type = "unit_runs_as", unit = "ledger.service", user = "ledger" },
+    { type = "unit_reloaded", unit = "ledger.service" },
+    { type = "journal_contains", unit = "ledger.service", text = "settings loaded" },
+]
+persistent = true
+hints = [
+    "Fix the drop-in (or remove it), then daemon-reload. Next, check whether the program can be executed; then read the daemon's own error message.",
+    "Three problems: the override's wrong path, /usr/local/sbin/ledgerd lacks execute permission, and /var/lib/ledger is not writable by user ledger. A service that failed too often needs systemctl reset-failed.",
+    "sudo rm /etc/systemd/system/ledger.service.d/override.conf; sudo systemctl daemon-reload; sudo chmod 755 /usr/local/sbin/ledgerd; sudo chown ledger:ledger /var/lib/ledger; sudo systemctl reset-failed ledger; sudo systemctl restart ledger",
+]
+explanation = "Path, permission, ownership: each layer only became visible after the previous one was fixed. That is normal — keep reading the evidence after every change."
+
+[[task]]
+id = "simple"
+title = "Why did start 'succeed'?"
+kind = "explanation"
+instructions = "When the program was missing, `systemctl start ledger` printed no error at all."
+skills = { "h.failed-services" = 1.0 }
+question = { prompt = "Why did systemctl start report success for a service that failed immediately?", type = "choice", choices = ["systemctl never reports errors", "With Type=simple, systemd considers the service started as soon as it has forked the process; failures afterwards only show in status and the journal", "The failure was hidden by Restart=on-failure", "Because the unit was enabled"], answer = 1 }
+hints = ["The unit has no Type= line, so it uses the default.", "The default is Type=simple.", "The answer is (b)."]
+explanation = "Always check systemctl status after starting. Type=exec makes start fail when the program cannot be executed."
+
+[debrief]
+summary = """
+status, journalctl -u and systemctl cat locate the problem; daemon-reload applies unit
+changes; reset-failed clears the start limit. Fix one layer at a time and re-check.
+"""
+alternatives = ["journalctl -xeu ledger", "systemctl revert ledger removes all local overrides (not simulated yet)", "chgrp ledger + chmod 775 instead of chown"]
+pitfalls = ["chmod 777 'fixes' permissions by opening them to everyone.", "Editing the vendor file in /usr/lib instead of using a drop-in: upgrades overwrite it.", "Forgetting daemon-reload after removing the drop-in."]
+next = "Chapter H continues with timers and boot (planned)."
+
+[[solution]]
+name = "remove the override"
+steps = [
+    "systemctl status ledger",
+    ":answer 203/EXEC",
+    "systemctl cat ledger",
+    ":answer /etc/systemd/system/ledger.service.d/override.conf",
+    { input = ["letslinux"] },
+    "sudo rm /etc/systemd/system/ledger.service.d/override.conf",
+    "sudo systemctl daemon-reload",
+    "sudo systemctl reset-failed ledger",
+    "sudo systemctl restart ledger",
+    "systemctl status ledger",
+    "ls -l /usr/local/sbin/ledgerd",
+    "sudo chmod 755 /usr/local/sbin/ledgerd",
+    "sudo systemctl restart ledger",
+    "journalctl -u ledger -n 5",
+    "sudo chown ledger:ledger /var/lib/ledger",
+    "sudo systemctl reset-failed ledger",
+    "sudo systemctl restart ledger",
+    "systemctl status ledger",
+    ":answer b",
+]
+
+[[solution]]
+name = "fix the override with systemctl edit"
+steps = [
+    "systemctl status ledger --no-pager",
+    ":answer 203",
+    "systemctl status ledger | grep -A2 Drop-In",
+    ":answer /etc/systemd/system/ledger.service.d/override.conf",
+    { input = ["letslinux"] },
+    { edit = "[Service]\nExecStart=\nExecStart=/usr/local/sbin/ledgerd --verbose\n" },
+    "sudo systemctl edit ledger",
+    "sudo chmod u+x,go+rx /usr/local/sbin/ledgerd",
+    "sudo chgrp ledger /var/lib/ledger",
+    "sudo chmod 775 /var/lib/ledger",
+    "sudo systemctl reset-failed ledger",
+    "sudo systemctl start ledger",
+    ":answer With Type=simple, systemd considers the service started as soon as it has forked the process; failures afterwards only show in status and the journal",
+]
+
+[[counterexample]]
+name = "open everything up"
+steps = [
+    ":answer 203/EXEC",
+    ":answer /etc/systemd/system/ledger.service.d/override.conf",
+    { input = ["letslinux"] },
+    "sudo rm /etc/systemd/system/ledger.service.d/override.conf",
+    "sudo systemctl daemon-reload",
+    "sudo chmod 777 /usr/local/sbin/ledgerd /var/lib/ledger",
+    "sudo systemctl reset-failed ledger",
+    "sudo systemctl restart ledger",
+]

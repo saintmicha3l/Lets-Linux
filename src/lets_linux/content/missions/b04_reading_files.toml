@@ -1,0 +1,109 @@
+schema = 1
+
+[mission]
+id = "b04-reading-files"
+title = "Reading Files"
+chapter = "B"
+kind = "lesson"
+order = 4
+difficulty = 2
+requires = ["b02-looking-around"]
+skills = ["b.view-files", "c.wc-counting"]
+xp = 60
+estimated_minutes = 12
+
+[briefing]
+context = """
+The application on this server writes a long log. Support needs three facts from it: the
+code on the last line, the checkpoint on line 50 and how long the log is. Scrolling through
+hundreds of lines by eye is not an option.
+"""
+concept = """
+cat prints whole files. head shows the beginning (-n N lines) and tail the end. less lets
+you page and search (/text, q to quit). wc counts lines, words and bytes (wc -l: lines).
+Commands can be combined: head -n 50 file | tail -n 1 prints exactly line 50.
+"""
+objectives = ["Show the start and end of a file", "Extract a specific line", "Count lines"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+count = { range = [180, 260] }
+last = { word = true }
+checkpoint = { word = true }
+first = { word = true }
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /home/learner/logs && for i in $(seq 2 {{count}}); do echo \"$i INFO request served in $((i % 7 + 3))ms\"; done > /tmp/body && { echo '1 START session {{first}}'; cat /tmp/body; } > /home/learner/logs/app.log && rm /tmp/body && sed -i '50s/.*/50 NOTICE checkpoint {{checkpoint}}/; $s/.*/{{count}} END final code {{last}}/' /home/learner/logs/app.log && chown -R learner:learner /home/learner/logs"
+
+[[task]]
+id = "head"
+title = "The beginning"
+kind = "guided"
+instructions = "Show the first 10 lines of logs/app.log with head."
+skills = { "b.view-files" = 1.0 }
+checks = [{ type = "output_contains", text = "START session {{first}}", command = ["head", "less", "more", "sed", "awk"] }]
+hints = ["head prints the start of a file.", "By default head prints 10 lines.", "Type: head logs/app.log"]
+explanation = "head shows the first 10 lines by default; head -n 3 shows three."
+
+[[task]]
+id = "last"
+title = "The last line"
+kind = "independent"
+instructions = "Find the final code written on the last line of the log."
+skills = { "b.view-files" = 1.0 }
+question = { prompt = "What is the final code on the last line?", type = "exact", accept = ["{{last}}"] }
+hints = ["The opposite of head shows the end of a file.", "tail -n 1 prints only the last line.", "Run tail -n 1 logs/app.log; the code is {{last}}."]
+explanation = "tail shows the end of a file — the most useful part of a log."
+
+[[task]]
+id = "line50"
+title = "A specific line"
+kind = "independent"
+instructions = "Line 50 contains a checkpoint name. Print exactly that line."
+skills = { "b.view-files" = 1.0, "c.pipelines" = 0.3 }
+question = { prompt = "Which checkpoint is recorded on line 50?", type = "exact", accept = ["{{checkpoint}}"] }
+hints = ["Take the first 50 lines, then the last of those.", "head -n 50 logs/app.log | tail -n 1 (or sed -n 50p logs/app.log).", "The checkpoint is {{checkpoint}}."]
+explanation = "head | tail selects a line by number. sed -n 50p and awk 'NR==50' do the same in one command."
+
+[[task]]
+id = "count"
+title = "How long is it?"
+kind = "independent"
+instructions = "Count the lines in the log."
+skills = { "c.wc-counting" = 1.0 }
+question = { prompt = "How many lines does logs/app.log have?", type = "number", accept = ["{{count}}"] }
+hints = ["There is a word-count command that also counts lines.", "wc -l FILE prints the number of lines.", "Run wc -l logs/app.log: {{count}} lines."]
+explanation = "wc -l counts newline characters. wc -l < file prints only the number."
+
+[[task]]
+id = "less"
+title = "Page through it"
+kind = "guided"
+instructions = "Open the log in the pager with `less logs/app.log`. Scroll around and press q to come back."
+skills = { "b.view-files" = 1.0 }
+checks = [{ type = "command_used", command = ["less", "more"], args_contain = "app.log" }]
+hints = ["The pager is called less (an improved more).", "less FILE; q quits.", "Type: less logs/app.log"]
+explanation = "less never loads more than it needs, so it is the right tool for huge logs. In real less, /word searches."
+
+[debrief]
+summary = """
+head and tail show the ends of files, head | tail or sed -n Np pick a line, wc -l counts
+lines and less pages through anything too long for the screen.
+"""
+alternatives = ["sed -n '50p' logs/app.log", "awk 'END {print NR}' logs/app.log counts lines", "grep -n checkpoint logs/app.log finds the line by content"]
+pitfalls = ["cat on a huge log floods your terminal: prefer tail, head or less."]
+next = "Next: wildcards."
+
+[[solution]]
+name = "head, tail and wc"
+steps = ["head logs/app.log", "tail -n 1 logs/app.log", ":answer {{last}}", "head -n 50 logs/app.log | tail -n 1", ":answer {{checkpoint}}", "wc -l logs/app.log", ":answer {{count}}", "less logs/app.log"]
+
+[[solution]]
+name = "sed and awk"
+steps = ["sed -n '1,10p' logs/app.log", "awk 'END {print}' logs/app.log", ":answer {{last}}", "sed -n 50p logs/app.log", ":answer {{checkpoint}}", "awk 'END {print NR}' logs/app.log", ":answer {{count}}", "more logs/app.log"]
+
+[[counterexample]]
+name = "wrong line"
+steps = ["head logs/app.log", ":answer {{first}}", ":answer {{checkpoint}}"]

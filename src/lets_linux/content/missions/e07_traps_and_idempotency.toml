@@ -1,0 +1,119 @@
+schema = 1
+
+[mission]
+id = "e07-traps-and-idempotency"
+title = "Run It Twice"
+chapter = "E"
+kind = "challenge"
+order = 9
+difficulty = 5
+requires = ["e05-failing-safely"]
+skills = ["e.idempotency", "e.traps-cleanup"]
+review_for = ["e.error-handling", "c.grep-basics", "e.input-validation"]
+xp = 190
+estimated_minutes = 30
+
+[briefing]
+context = """
+Configuration management runs your scripts again and again — after every deployment, on
+every server. A script that appends a line each time slowly corrupts a file. Write
+~/bin/add-host.sh NAME IP, which maintains the host table ~/hosts: running it once or ten
+times must give the same result, and it must never leave temporary files behind.
+"""
+concept = """
+Idempotent: running again changes nothing once the desired state is reached. Check before
+acting (grep -q … || echo … >> file), or rebuild the whole file: write the new version into a
+temporary file (tmp=$(mktemp)), then replace the original with mv — readers never see a
+half-written file. trap 'rm -f "$tmp"' EXIT runs the cleanup whenever the script ends,
+also after errors (combined with set -e or || exit).
+"""
+objectives = ["Write an idempotent script", "Update instead of duplicating", "Use mktemp and mv for safe replacement", "Clean up with trap"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "file"
+path = "~/hosts"
+content = """127.0.0.1   localhost
+# application servers
+10.0.0.20   app1
+10.0.0.21   app2
+"""
+
+[[environment.setup]]
+action = "dir"
+path = "~/bin"
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "chown learner:learner ~/hosts ~/bin"
+
+[[task]]
+id = "idempotent"
+title = "Same result, every time"
+kind = "independent"
+instructions = "Write the executable ~/bin/add-host.sh NAME IP: afterwards ~/hosts contains exactly one line for NAME, of the form 'IP NAME' (any whitespace between). Running it again with the same values changes nothing; running it with a new IP replaces the old one. All other lines stay as they are. Without two arguments: usage on stderr, exit 2."
+skills = { "e.idempotency" = 1.0 }
+checks = [
+    { type = "command_result", setup = ["~/bin/add-host.sh db1 10.0.0.5", "~/bin/add-host.sh db1 10.0.0.5"], command = "grep -cE '^10\\.0\\.0\\.5[[:space:]]+db1$' ~/hosts; grep -c db1 ~/hosts", stdout_equals = "1\n1" },
+    { type = "command_result", setup = ["~/bin/add-host.sh db1 10.0.0.5", "~/bin/add-host.sh db1 10.0.0.9"], command = "grep db1 ~/hosts", stdout_regex = "\\A10\\.0\\.0\\.9\\s+db1\\s*\\Z" },
+    { type = "command_result", setup = ["~/bin/add-host.sh app2 10.0.0.99"], command = "cat ~/hosts", stdout_contains = ["127.0.0.1   localhost", "# application servers", "10.0.0.20   app1", "10.0.0.99"], stdout_not_contains = "10.0.0.21" },
+    { type = "command_result", command = "~/bin/add-host.sh onlyname", status = 2 },
+]
+hints = [
+    "One approach: remove any existing line for NAME, then append the new one.",
+    "grep -v -E \"[[:space:]]$name\\$\" ~/hosts > newfile; echo \"$ip $name\" >> newfile; mv newfile ~/hosts",
+    "Careful: grep -v exits 1 when it prints nothing — under set -e use { grep … || true; }",
+]
+explanation = "Rebuilding the file from 'everything except NAME' plus the new line is idempotent by construction — no special case for 'already there'."
+
+[[task]]
+id = "cleanup"
+title = "Leave no trace"
+kind = "independent"
+instructions = "Build the new version of ~/hosts in a temporary file made with mktemp and move it into place. Make sure the temporary file is removed when the script ends — even when replacing ~/hosts fails (then the script must exit non-zero and leave ~/hosts unchanged)."
+skills = { "e.traps-cleanup" = 1.0, "e.error-handling" = 0.5 }
+checks = [
+    { type = "command_result", setup = ["rm -f /tmp/tmp.*", "~/bin/add-host.sh web1 10.0.0.30"], command = "ls -a /tmp | grep -c '^tmp\\.'", stdout_equals = "0", checks = [{ type = "file_contains", path = "~/hosts", regex = "(?m)^10\\.0\\.0\\.30\\s+web1$" }] },
+    { type = "command_result", setup = ["rm -f /tmp/tmp.*", "chmod a-w ~/hosts ~"], command = "~/bin/add-host.sh web2 10.0.0.31", status_not = 0, checks = [{ type = "file_not_contains", path = "~/hosts", text = "web2" }, { type = "command_result", command = "ls -a /tmp | grep -c '^tmp\\.'", stdout_equals = "0" }] },
+]
+hints = [
+    "tmp=$(mktemp) creates the file; trap 'rm -f \"$tmp\"' EXIT removes it however the script ends.",
+    "Stop on failure so the trap runs and the status is non-zero: set -e, or mv \"$tmp\" ~/hosts || exit 1",
+    "#!/bin/bash\nset -eu\n[ $# -eq 2 ] || { echo 'Usage: add-host.sh NAME IP' >&2; exit 2; }\ntmp=$(mktemp)\ntrap 'rm -f \"$tmp\"' EXIT\ngrep -vE \"[[:space:]]$1\\$\" ~/hosts > \"$tmp\" || true\necho \"$2 $1\" >> \"$tmp\"\nmv \"$tmp\" ~/hosts",
+]
+explanation = "mv within one filesystem is atomic: other programs see either the old or the new file, never half of one. The trap guarantees the cleanup. (mv from /tmp to your home crosses filesystems on some systems — then cp+rm happens behind the scenes; a temp file next to the target avoids that.)"
+
+[debrief]
+summary = """
+Idempotent scripts describe the desired state, not the steps: rebuild or check-then-act. Write
+to a temp file, mv into place, and let trap … EXIT clean up.
+"""
+alternatives = ["mktemp ~/hosts.XXXXXX keeps the temp file on the same filesystem as the target", "sed -i \"/[[:space:]]$name\\$/d\" plus echo >> (sed -i also uses a temp file internally)", "Configuration tools (Ansible lineinfile) implement the same idea"]
+pitfalls = ["echo … >> file in a script that runs repeatedly.", "Regular expressions that match too much: db1 also matches db10 without the $ anchor.", "Temp files with predictable names in /tmp (use mktemp)."]
+next = "Chapter E continues with shell startup files."
+
+[[solution]]
+name = "rebuild with grep -v, trap and set -e"
+steps = [
+    { edit = "#!/bin/bash\n# add-host.sh NAME IP - keep exactly one 'IP NAME' line in ~/hosts\nset -eu\nif [ $# -ne 2 ]; then\n    echo 'Usage: add-host.sh NAME IP' >&2\n    exit 2\nfi\nname=$1\nip=$2\ntmp=$(mktemp)\ntrap 'rm -f \"$tmp\"' EXIT\ngrep -vE \"[[:space:]]$name\\$\" ~/hosts > \"$tmp\" || true\necho \"$ip $name\" >> \"$tmp\"\nmv \"$tmp\" ~/hosts\n" },
+    "nano ~/bin/add-host.sh",
+    "chmod +x ~/bin/add-host.sh",
+    "~/bin/add-host.sh db1 10.0.0.5; ~/bin/add-host.sh db1 10.0.0.5; cat ~/hosts",
+]
+
+[[solution]]
+name = "awk and explicit checks"
+steps = [
+    { edit = "#!/bin/bash\n[ \"$#\" -eq 2 ] || { echo \"Usage: $0 NAME IP\" >&2; exit 2; }\ntmp=$(mktemp) || exit 1\ntrap 'rm -f \"$tmp\"' EXIT\nawk -v n=\"$1\" '$2 != n' ~/hosts > \"$tmp\" || exit 1\nprintf '%s %s\\n' \"$2\" \"$1\" >> \"$tmp\" || exit 1\nmv \"$tmp\" ~/hosts || exit 1\n" },
+    "nano ~/bin/add-host.sh",
+    "chmod 755 ~/bin/add-host.sh",
+]
+
+[[counterexample]]
+name = "append only"
+steps = [
+    "printf '#!/bin/bash\\necho \"$2 $1\" >> ~/hosts\\n' > ~/bin/add-host.sh; chmod +x ~/bin/add-host.sh",
+]

@@ -1,0 +1,165 @@
+schema = 1
+
+[mission]
+id = "l04-patching"
+title = "Patched — Or Just Installed?"
+chapter = "L"
+kind = "lesson"
+order = 6
+difficulty = 4
+requires = ["f02-cleaning-up", "h03-your-own-service", "g03b-reading-the-load"]
+skills = ["l.patching", "f.upgrades-versions"]
+review_for = ["h.unit-files", "g.proc-filesystem"]
+xp = 170
+estimated_minutes = 25
+
+[briefing]
+context = """
+A security advisory for nginx was published this morning, and this Fedora web server runs
+nginx. Your manager wants three things: the list of pending updates, every update installed,
+and proof that the server really runs the fixed code now — "installed" is not the same as
+"running". (sudo password: letslinux)
+"""
+concept = """
+dnf check-upgrade lists available updates (exit status 100 when there are some); sudo dnf
+upgrade installs them. A package upgrade replaces the program *file*, but a process that is
+already running keeps executing the old file — which is now deleted, yet still in memory.
+ls -l /proc/PID/exe shows "(deleted)", lsof lists it as "txt … (deleted)", and dnf
+needs-restarting (-s for services) lists everything still running old code. Fedora does not
+restart services on upgrade; Debian usually does. A reload re-reads configuration only — the
+program stays the same. Restart what is listed; dnf needs-restarting -r says whether a reboot
+is needed (kernel, systemd, core libraries).
+"""
+objectives = ["List pending updates", "Install updates", "Find processes running replaced programs", "Restart services and verify"]
+
+[environment]
+profile = "fedora"
+packages = ["nginx"]
+
+[[environment.setup]]
+action = "run"
+command = "systemctl enable --now nginx"
+
+[[environment.setup]]
+action = "package_update"
+package = "nginx"
+version = "2:1.26.3-1.fc41"
+
+[[environment.setup]]
+action = "package_update"
+package = "openssh-server"
+version = "9.8p1-4.fc41"
+
+[[task]]
+id = "pending"
+title = "What is waiting?"
+kind = "guided"
+instructions = "List the updates available for this system."
+skills = { "l.patching" = 1.0 }
+question = { prompt = "How many packages can be upgraded?", type = "number", accept = [4] }
+hints = ["dnf check-upgrade lists them — no root needed.", "Count the lines: dnf check-upgrade | wc -l", "4: nginx, openssh-server, sudo and tar."]
+explanation = "Two of them are network services (nginx, sshd) — the ones attackers reach directly."
+
+[[task]]
+id = "upgrade"
+title = "Install the updates"
+kind = "independent"
+instructions = "Install all available updates."
+skills = { "l.patching" = 1.0, "f.upgrades-versions" = 1.0 }
+checks = [
+    { type = "package_state", name = "nginx", upgraded = true },
+    { type = "package_state", name = "openssh-server", upgraded = true },
+    { type = "package_state", name = "sudo", upgraded = true },
+]
+hints = ["dnf upgrade installs everything that is newer.", "sudo dnf upgrade", "Confirm with y (or add -y)."]
+explanation = "rpm -q nginx now reports 1.26.3 — but look at what is actually running."
+
+[[task]]
+id = "stale"
+title = "Still running the old code"
+kind = "troubleshooting"
+instructions = "Find out which services still run the program files that the upgrade replaced."
+skills = { "l.patching" = 1.0, "g.proc-filesystem" = 0.5 }
+question = { prompt = "Which two services must be restarted? (names separated by a space)", type = "regex", accept = ["^(nginx(\\.service)?[ ,]+sshd?(\\.service)?|sshd?(\\.service)?[ ,]+nginx(\\.service)?)$"] }
+hints = [
+    "A running process keeps its program file open. What does ls -l /proc/PID/exe show for nginx's master?",
+    "sudo ls -l /proc/*/exe 2>/dev/null | grep deleted — or sudo lsof | grep deleted",
+    "sudo dnf needs-restarting -s lists the affected services: nginx and sshd.",
+]
+explanation = "The upgrade replaced /usr/sbin/nginx and /usr/sbin/sshd; the running processes still execute the old, deleted files — the vulnerable code."
+
+[[task]]
+id = "restart"
+title = "Really patched"
+kind = "independent"
+instructions = "Make sure no process runs a replaced program any more. The website and SSH must keep working."
+skills = { "l.patching" = 1.0, "h.unit-files" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "ls -l /proc/*/exe 2>/dev/null", stdout_not_contains = ["(deleted)"] },
+    { type = "unit_state", unit = "nginx.service", active = "active" },
+    { type = "unit_state", unit = "sshd.service", active = "active" },
+    { type = "port_listening", port = 80 },
+    { type = "port_listening", port = 22 },
+]
+hints = ["A reload is not enough: it keeps the same program.", "sudo systemctl restart nginx sshd", "Verify: sudo dnf needs-restarting prints nothing."]
+explanation = "Now the fixed code runs. Restarting sshd does not drop existing SSH sessions — each has its own process — but test a new login before you log out."
+
+[[task]]
+id = "why"
+title = "Why reload is not enough"
+kind = "explanation"
+instructions = "Explain what you saw."
+skills = { "l.patching" = 1.0 }
+question = { prompt = "Why did nginx still run the old code after sudo systemctl reload nginx?", type = "choice", choices = ["The upgrade failed", "Reload only makes nginx re-read its configuration; the master and the workers it forks keep running the program that was loaded at start", "dnf restarts services automatically"], answer = 1 }
+hints = ["What does a reload change?", "The workers are forked from the old master.", "(b)"]
+explanation = "Only a new process loads the new file: restart (or reboot for the kernel and core components)."
+
+[debrief]
+summary = """
+dnf check-upgrade → sudo dnf upgrade → sudo dnf needs-restarting (-s) → restart the listed
+services → verify (needs-restarting empty, service active, port listening, version).
+"""
+alternatives = ["Debian/Ubuntu: apt list --upgradable, apt upgrade; needrestart lists services", "Automatic security updates: dnf-automatic, unattended-upgrades", "Live kernel patching (kpatch) avoids some reboots"]
+pitfalls = ["Declaring victory after the package is installed.", "Using reload instead of restart after a program update.", "Restarting sshd with a broken configuration (sshd -t first)."]
+next = "Next: verifying that files are what the packages shipped."
+
+[[solution]]
+name = "needs-restarting"
+steps = [
+    "dnf check-upgrade",
+    ":answer 4",
+    { input = ["letslinux"] },
+    "sudo dnf upgrade -y",
+    "sudo dnf needs-restarting -s",
+    ":answer nginx sshd",
+    "sudo systemctl restart nginx sshd",
+    "sudo dnf needs-restarting",
+    ":answer b",
+]
+
+[[solution]]
+name = "/proc and lsof"
+steps = [
+    "dnf check-upgrade | wc -l",
+    ":answer 4",
+    { input = ["letslinux"] },
+    { input = ["y"] },
+    "sudo dnf upgrade",
+    "sudo lsof | grep deleted",
+    ":answer sshd.service, nginx.service",
+    "sudo systemctl restart nginx",
+    "sudo systemctl restart sshd",
+    "sudo ls -l /proc/*/exe 2>/dev/null | grep -c deleted",
+    ":answer Reload only makes nginx re-read its configuration; the master and the workers it forks keep running the program that was loaded at start",
+]
+
+[[counterexample]]
+name = "reload only"
+steps = [
+    ":answer 4",
+    { input = ["letslinux"] },
+    "sudo dnf upgrade -y",
+    ":answer nginx sshd",
+    "sudo systemctl reload nginx sshd",
+    ":answer b",
+]

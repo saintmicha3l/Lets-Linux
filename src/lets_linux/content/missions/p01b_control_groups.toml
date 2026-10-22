@@ -1,0 +1,153 @@
+schema = 1
+
+[mission]
+id = "p01b-control-groups"
+title = "Control Groups"
+chapter = "P"
+kind = "lesson"
+order = 2
+difficulty = 4
+requires = ["p01-namespaces", "o00b-performance-instruments", "h05b-boot-and-order"]
+skills = ["p.cgroups"]
+review_for = ["p.cgroups"]
+xp = 100
+estimated_minutes = 20
+
+[briefing]
+context = """
+Namespaces decide what a process can see; control groups (cgroups) decide how much it may
+use. systemd puts every service into its own cgroup, so you can measure and limit a whole
+service — all its processes together — with one setting. (sudo password: letslinux)
+"""
+concept = """
+cgroups form a tree under /sys/fs/cgroup: system.slice holds services (one cgroup each,
+e.g. system.slice/nginx.service), user.slice holds login sessions. /proc/PID/cgroup names a
+process's cgroup; systemctl status shows a unit's CGroup: line; systemd-cgls prints the tree;
+systemd-cgtop ranks cgroups by CPU and memory.
+Limits are unit properties:
+  CPUQuota=50%   at most half of one CPU (200% = two whole CPUs)
+  MemoryMax=512M above it, the kernel reclaims and then OOM-kills inside that cgroup only
+  TasksMax=100   at most 100 processes/threads
+systemctl set-property UNIT PROP=VALUE applies a limit to a running service immediately and
+keeps it (a drop-in under /etc/systemd/system.control/); add --runtime to keep it only until
+reboot. Unit files and drop-ins can set the same properties in [Service].
+The kernel side is visible in the cgroup's files: cpu.max ("50000 100000" = 50 ms of CPU
+per 100 ms), memory.max, memory.current.
+"""
+objectives = ["Find a process's cgroup", "Rank services by resource use", "Limit CPU and memory per service", "Read the kernel's view of a limit"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+svc = { choices = ["thumbnailer", "indexer", "transcoder"] }
+
+[[environment.setup]]
+action = "service"
+name = "{{svc}}.service"
+enable = true
+start = true
+content = """[Unit]
+Description=Background {{svc}}
+
+[Service]
+ExecStart=/bin/sleep infinity
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "process"
+comm = "{{svc}}-worker"
+argv = ["/usr/local/bin/{{svc}}-worker", "--threads", "2"]
+unit = "{{svc}}.service"
+user = "root"
+state = "R"
+cpu = 170.0
+rss_kb = 300000
+
+[[task]]
+id = "where"
+title = "Every service has a cgroup"
+kind = "guided"
+instructions = "Look at the service's status:  systemctl status {{svc}}   — note the CGroup: line and the processes listed under it."
+skills = { "p.cgroups" = 1.0 }
+question = { prompt = "Which cgroup holds {{svc}}.service's processes?", type = "exact", accept = ["/system.slice/{{svc}}.service", "system.slice/{{svc}}.service"] }
+hints = ["The CGroup: line names it.", "Services live under system.slice.", "The answer is /system.slice/{{svc}}.service."]
+explanation = "Everything a service starts — its main process and every child — lands in its cgroup. That is how systemd can stop a service completely and account its resources as one."
+
+[[task]]
+id = "cgtop"
+title = "Who uses the machine?"
+kind = "guided"
+instructions = "Rank the cgroups once:  systemd-cgtop -b -n 1"
+skills = { "p.cgroups" = 1.0, "o.cpu-analysis" = 0.5 }
+question = { prompt = "About how many CPUs' worth of time does {{svc}}.service use? (%CPU / 100, rounded)", type = "number", accept = ["2"], tolerance = 0.5 }
+hints = ["%CPU over 100 means more than one CPU.", "Find the system.slice/{{svc}}.service line.", "About 170% = roughly 2 CPUs."]
+explanation = "systemd-cgtop is top for services: it adds up every process of each cgroup, which is what you need when one service runs many workers."
+
+[[task]]
+id = "limit"
+title = "Cap it — for now"
+kind = "guided"
+instructions = "Limit the service to half a CPU until the next reboot, without restarting it:  sudo systemctl set-property --runtime {{svc}}.service CPUQuota=50%"
+skills = { "p.cgroups" = 1.0 }
+checks = [{ type = "command_result", command = "cat /sys/fs/cgroup/system.slice/{{svc}}.service/cpu.max", stdout_contains = "50000 100000" }]
+hints = ["set-property changes a running unit's properties.", "CPUQuota=50% means half of one CPU, for all its processes together.", "Type: sudo systemctl set-property --runtime {{svc}}.service CPUQuota=50%"]
+explanation = "The kernel now gives the whole cgroup at most 50 ms of CPU time in every 100 ms period, however many workers it runs."
+
+[[task]]
+id = "kernel"
+title = "The kernel's view"
+kind = "guided"
+instructions = "Read the limit where the kernel keeps it:  cat /sys/fs/cgroup/system.slice/{{svc}}.service/cpu.max"
+skills = { "p.cgroups" = 1.0 }
+question = { prompt = "What is the first number in cpu.max now?", type = "number", accept = ["50000"] }
+hints = ["cpu.max holds two numbers: the allowed time and the period, in microseconds.", "50% of a 100000 µs period.", "The answer is 50000."]
+explanation = "systemd translates CPUQuota= into cpu.max ('max 100000' means unlimited). Reading the cgroup files is how you check what is really in force, whoever set it."
+
+[[task]]
+id = "memory"
+title = "A memory ceiling"
+kind = "independent"
+instructions = "Also give {{svc}}.service a memory limit of 1 GiB that survives reboots."
+skills = { "p.cgroups" = 1.0 }
+checks = [
+    { type = "command_result", command = "cat /sys/fs/cgroup/system.slice/{{svc}}.service/memory.max", stdout_equals = "1073741824" },
+    { type = "after_reboot", checks = [{ type = "command_result", command = "systemctl show -p MemoryMax {{svc}}.service", stdout_equals = "MemoryMax=1073741824" }] },
+]
+persistent = true
+hints = ["The property is MemoryMax.", "Without --runtime, set-property keeps the setting across reboots.", "Run: sudo systemctl set-property {{svc}}.service MemoryMax=1G"]
+explanation = "A persistent set-property writes a drop-in under /etc/systemd/system.control/. In a unit file or your own drop-in the same line is MemoryMax=1G in [Service]."
+
+[[task]]
+id = "oom"
+title = "Hitting the ceiling"
+kind = "prediction"
+instructions = "Think about what MemoryMax does."
+skills = { "p.cgroups" = 1.0, "o.memory-analysis" = 0.5 }
+question = { prompt = "The service tries to use more than its MemoryMax. What happens?", type = "choice", choices = ["The whole machine runs out of memory", "The kernel reclaims the cgroup's memory and, if that is not enough, OOM-kills a process inside that cgroup only", "systemd raises the limit", "The service is paused"], answer = 1 }
+hints = ["The limit applies to the cgroup, not the machine.", "The OOM killer then only looks inside the cgroup.", "The answer is (b)."]
+explanation = "That is the point of per-service limits: a leaking service is killed (and, with Restart=, restarted) instead of the kernel picking a victim — perhaps your database — system-wide."
+
+[debrief]
+summary = """
+Every service runs in its own cgroup. systemd-cgtop measures them, CPUQuota=, MemoryMax= and
+TasksMax= limit them — live with systemctl set-property (--runtime until reboot), or in unit
+files — and /sys/fs/cgroup shows what the kernel enforces.
+"""
+alternatives = ["systemd-run --scope -p MemoryMax=200M COMMAND runs one command in a limited cgroup", "systemd-cgls -u {{svc}}.service shows the processes of one cgroup", "systemctl show -p CPUQuotaPerSecUSec,MemoryMax UNIT prints the limits as systemd sees them"]
+pitfalls = ["Limiting one process with renice when a service runs many: cgroups cover them all.", "Forgetting --runtime is temporary.", "Setting MemoryMax without Restart= — the service stays dead after an OOM kill."]
+next = "Next: a reindexing job that eats the CPU every night — and a cache that keeps dying."
+
+[[solution]]
+name = "as instructed"
+steps = ["systemctl status {{svc}}", ":answer /system.slice/{{svc}}.service", "systemd-cgtop -b -n 1", ":answer 2", { input = ["letslinux"] }, "sudo systemctl set-property --runtime {{svc}}.service CPUQuota=50%", "cat /sys/fs/cgroup/system.slice/{{svc}}.service/cpu.max", ":answer 50000", "sudo systemctl set-property {{svc}}.service MemoryMax=1G", ":answer b"]
+
+[[solution]]
+name = "/proc and a drop-in"
+steps = ["cat /proc/$(pgrep -f {{svc}}-worker)/cgroup", ":answer system.slice/{{svc}}.service", "systemd-cgtop -b -n 1 | grep {{svc}}", ":answer 1.7", { input = ["letslinux"] }, "sudo systemctl set-property --runtime {{svc}} CPUQuota=50%", ":answer 50000", "sudo mkdir -p /etc/systemd/system/{{svc}}.service.d", "printf '[Service]\\nMemoryMax=1G\\n' | sudo tee /etc/systemd/system/{{svc}}.service.d/memory.conf", "sudo systemctl daemon-reload", "sudo systemctl set-property --runtime {{svc}} MemoryMax=1G", ":answer 2"]
+
+[[counterexample]]
+name = "only temporary limits"
+steps = ["systemctl status {{svc}}", ":answer /system.slice/{{svc}}.service", ":answer 2", { input = ["letslinux"] }, "sudo systemctl set-property --runtime {{svc}}.service CPUQuota=50%", ":answer 50000", "sudo systemctl set-property --runtime {{svc}}.service MemoryMax=1G", ":answer b"]

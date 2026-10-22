@@ -1,0 +1,178 @@
+schema = 1
+
+[mission]
+id = "o00-skill-check"
+title = "Skill Check O: Performance"
+chapter = "O"
+placement = "O"
+kind = "assessment"
+order = 0
+difficulty = 4
+requires = []
+skills = ["o.load-average", "o.cpu-analysis", "o.io-analysis", "o.memory-analysis", "o.observability", "o.capacity-planning"]
+xp = 90
+estimated_minutes = 20
+sequential = false
+
+[briefing]
+context = """
+This skill check covers chapter O: load, CPU and disk analysis, memory, recorded metrics and
+capacity planning. The server is slow right now, and sysstat has recorded its last days.
+Tasks in any order; you have sudo (password: letslinux). Solve them all (one slip allowed) to
+test out of chapter O. :submit ends the check.
+"""
+concept = "No hints: show what you can do on your own."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "ubuntu"
+packages = ["sysstat", "iotop"]
+
+[environment.vars]
+cpujob = { choices = ["ffmpeg", "xz", "bzip2"] }
+iojob = { choices = ["rsync", "pg_dump", "tar"] }
+
+[[environment.setup]]
+action = "process"
+comm = "{{cpujob}}"
+argv = ["{{cpujob}}", "/srv/media/input.dat"]
+user = "learner"
+state = "R"
+cpu = 98.0
+sys_share = 0.03
+rss_kb = 210000
+age_minutes = 25
+pid_var = "cpu_pid"
+
+[[environment.setup]]
+action = "process"
+comm = "{{iojob}}"
+argv = ["{{iojob}}", "/srv/db", "/mnt/backup/db"]
+user = "root"
+state = "D"
+cpu = 5.0
+sys_share = 0.6
+io_read_kbs = 150000
+io_write_kbs = 140000
+age_minutes = 20
+pid_var = "io_pid"
+
+[[environment.setup]]
+action = "sysstat_history"
+days = 5
+mem = 40
+mem_growth = 7
+until_ago = 30
+cpu = 4
+cpu_peak = 20
+
+[[task]]
+id = "load"
+title = "Load"
+kind = "assessment"
+instructions = "Read the system's load averages."
+skills = { "o.load-average" = 1.0 }
+question = { prompt = "What is the 15-minute load average (as printed, for example 0.94)?", type = "state", state = { command = "cut -d' ' -f3 /proc/loadavg" } }
+explanation = "uptime and /proc/loadavg show the 1-, 5- and 15-minute averages; compare them with nproc."
+
+[[task]]
+id = "cpu"
+title = "Who computes?"
+kind = "assessment"
+instructions = "One program keeps a CPU busy computing."
+skills = { "o.cpu-analysis" = 1.0 }
+question = { prompt = "Which program?", type = "exact", accept = ["{{cpujob}}"] }
+explanation = "pidstat -u 1 1, top or ps --sort=-%cpu: about 100% CPU, almost all of it %usr."
+
+[[task]]
+id = "io"
+title = "Who waits for the disk?"
+kind = "assessment"
+instructions = "Another program keeps the disk busy (vmstat shows high wa)."
+skills = { "o.io-analysis" = 1.0 }
+question = { prompt = "Which program?", type = "exact", accept = ["{{iojob}}"] }
+explanation = "pidstat -d 1 1 or iotop -b -n 1 rank processes by disk reads and writes; it is in state D."
+
+[[task]]
+id = "yield"
+title = "Make them yield"
+kind = "assessment"
+instructions = "Both jobs must keep running, but give way to everything else: the lowest CPU priority for {{cpujob}}, the idle I/O class for {{iojob}}."
+skills = { "o.cpu-analysis" = 1.0, "o.io-analysis" = 1.0 }
+checks = [
+    { type = "process_running", comm = "{{cpujob}}", min_nice = 19 },
+    { type = "command_result", user = "root", command = "ionice -p {{io_pid}}", stdout_equals = "idle" },
+    { type = "process_running", comm = "{{iojob}}" },
+]
+explanation = "renice -n 19 -p PID for the CPU job; ionice -c3 -p PID (as root: it belongs to root) for the I/O job."
+
+[[task]]
+id = "growth"
+title = "A trend"
+kind = "assessment"
+instructions = "sysstat recorded memory use over the past days in /var/log/sysstat/."
+skills = { "o.observability" = 1.0, "o.memory-analysis" = 1.0 }
+question = { prompt = "By about how many percentage points does the daily average of %memused grow from one day to the next?", type = "number", accept = ["7"], tolerance = 1.5 }
+explanation = "sar -r -f /var/log/sysstat/saDD | tail -1 prints a day's Average; compare consecutive days (pick the files by date: date -d '2 days ago' +%d)."
+
+[[task]]
+id = "plan"
+title = "When does it run out?"
+kind = "assessment"
+instructions = "A disk is 80% full and fills by 5 percentage points a week."
+skills = { "o.capacity-planning" = 1.0 }
+question = { prompt = "In about how many weeks is it full?", type = "number", accept = ["4"], tolerance = 0.5 }
+explanation = "20 points of headroom / 5 per week = 4 weeks."
+
+[debrief]
+summary = """
+The check covered chapter O: load, CPU and disk analysis and the fixes for each, recorded
+metrics and capacity planning.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "sysstat tools"
+steps = [
+    { input = ["letslinux"] },
+    "uptime",
+    { answer_with = "cut -d' ' -f3 /proc/loadavg" },
+    "pidstat -u 1 1",
+    ":answer {{cpujob}}",
+    "pidstat -d 1 1",
+    ":answer {{iojob}}",
+    "renice -n 19 -p {{cpu_pid}}",
+    "sudo ionice -c3 -p {{io_pid}}",
+    "for d in 3 2; do sar -r -f /var/log/sysstat/sa$(date -d \"$d days ago\" +%d) | tail -1; done",
+    ":answer 7",
+    ":answer 4",
+]
+
+[[solution]]
+name = "top and ps"
+steps = [
+    { input = ["letslinux"] },
+    "cat /proc/loadavg",
+    { answer_with = "cut -d' ' -f3 /proc/loadavg" },
+    "ps aux --sort=-%cpu | head -3",
+    ":answer {{cpujob}}",
+    "sudo iotop -b -n 1",
+    ":answer {{iojob}}",
+    "renice 19 $(pgrep -x {{cpujob}})",
+    "sudo ionice -c idle -p $(pgrep -x {{iojob}})",
+    ":answer 6.9",
+    ":answer 4",
+]
+
+[[counterexample]]
+name = "killing the jobs"
+steps = [
+    { input = ["letslinux"] },
+    { answer_with = "cut -d' ' -f3 /proc/loadavg" },
+    ":answer {{cpujob}}",
+    ":answer {{iojob}}",
+    "kill {{cpu_pid}}",
+    "sudo kill {{io_pid}}",
+    ":answer 7",
+    ":answer 4",
+]

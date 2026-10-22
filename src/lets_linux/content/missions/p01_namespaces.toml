@@ -1,0 +1,200 @@
+schema = 1
+
+[mission]
+id = "p01-namespaces"
+title = "Walls Without a Machine"
+chapter = "P"
+kind = "lesson"
+order = 1
+difficulty = 5
+requires = ["n04-syscalls", "b02b-the-map"]
+skills = ["p.namespaces", "p.chroot"]
+review_for = ["b.fhs-layout", "g.proc-filesystem"]
+xp = 200
+estimated_minutes = 30
+
+[briefing]
+context = """
+Before the team adopts containers, you want to see the parts they are made of. There is no
+container engine on this Debian server yet — only the kernel and a few tools from
+util-linux and coreutils. Build small walls by hand and find out what each one hides.
+(sudo password: letslinux)
+"""
+concept = """
+A container is not a small virtual machine: it is an ordinary process to which the kernel
+shows a different view of the system. Namespaces each isolate one thing: UTS (host name),
+PID (the process table: the first process in a new PID namespace is PID 1 and sees only its
+descendants), network (interfaces, addresses, ports — a new one has only a down loopback),
+mount (the mount table), IPC, user (UID mapping) and cgroup. unshare starts a program in
+new namespaces (-u, -p -f, -n, -m; --mount-proc mounts a fresh /proc so ps reads the new PID
+namespace); nsenter -t PID joins the namespaces of a running process; lsns lists them, and
+/proc/PID/ns/ holds one link per namespace (the number in uts:[4026531838] identifies it).
+chroot is older and simpler: it changes the directory a process resolves / against — it
+must contain every program the process will run, with the shared libraries and the dynamic
+loader they need (ldd PROGRAM lists them). It is not a security boundary: root
+inside can escape it, and processes, network and host name stay shared.
+"""
+objectives = ["Start a shell in a new UTS namespace", "Read namespace identities in /proc", "See a PID namespace from inside", "Join a running process's namespace", "Build a minimal chroot", "Explain why chroot alone is not isolation"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "dir"
+path = "/srv/jail/etc"
+
+[[environment.setup]]
+action = "dir"
+path = "/srv/jail/tmp"
+mode = "1777"
+
+[[environment.setup]]
+action = "process"
+comm = "build-agent"
+argv = ["/usr/local/bin/build-agent", "--worker", "--queue", "main"]
+uts = "build-7"
+age_minutes = 600
+
+[[environment.setup]]
+action = "file"
+path = "/srv/jail/etc/motd"
+content = "Welcome to the jail. Nothing out there exists in here.\n"
+
+[[task]]
+id = "uts"
+title = "A host name of your own"
+kind = "guided"
+instructions = "In a new UTS namespace, set the host name to sandbox — without changing the server's own host name (lab)."
+skills = { "p.namespaces" = 1.0 }
+checks = [
+    { type = "hostname_is", value = "lab" },
+    { type = "command_used", command = ["unshare"], args_regex = "(-u|--uts|-[a-z]*u)", scope = "history" },
+    { type = "command_used", command = ["hostname", "hostnamectl"], args_contain = ["sandbox"], scope = "history" },
+]
+hints = ["unshare needs root: sudo unshare -u starts a root shell in a new UTS namespace.", "In that shell: hostname sandbox; hostname — then exit and run hostname again.", "sudo unshare -u   then   hostname sandbox; exit; hostname"]
+explanation = "The new shell got its own copy of the UTS namespace: changing the host name there changed the copy. When the last process in the namespace exited, the namespace disappeared with it."
+
+[[task]]
+id = "identity"
+title = "Which namespace am I in?"
+kind = "guided"
+instructions = "Each process's namespaces are links in /proc/PID/ns. Look at the UTS namespace of init (PID 1)."
+skills = { "p.namespaces" = 1.0 }
+question = { prompt = "What is the number of the host's UTS namespace (the digits in uts:[…])?", type = "state", state = { command = "readlink /proc/1/ns/uts | tr -dc 0-9" } }
+hints = ["ls -l /proc/1/ns", "readlink /proc/1/ns/uts", "The digits between the brackets — lsns -t uts shows the same number in the NS column."]
+explanation = "Processes in the same namespace have the same link target; a shell started with unshare -u shows a different number. lsns lists every namespace with the processes in it."
+
+[[task]]
+id = "pid"
+title = "PID 1, again"
+kind = "guided"
+instructions = "Start a shell in a new PID namespace with its own /proc and look at the process list from inside."
+skills = { "p.namespaces" = 1.0, "g.proc-filesystem" = 0.5 }
+question = { prompt = "Inside the new PID namespace, which PID does your shell have?", type = "number", accept = ["1"] }
+hints = ["sudo unshare --pid --fork --mount-proc", "Inside: ps; echo $$ — then exit.", "1"]
+explanation = "The first process in a new PID namespace is its PID 1 — it sees only its own descendants. From the host it is an ordinary process with an ordinary, larger PID. --mount-proc matters: ps reads /proc, and without a fresh /proc it would still show the host's processes."
+
+[[task]]
+id = "enter"
+title = "Somebody else's namespace"
+kind = "troubleshooting"
+instructions = "The build agent on this server (build-agent) was started in a UTS namespace of its own and reports builds under a different host name. Find out which one — without stopping it."
+skills = { "p.namespaces" = 1.0 }
+question = { prompt = "Which host name does build-agent see?", type = "exact", accept = ["build-7"] }
+hints = ["sudo lsns -t uts lists every UTS namespace and a process in it (lsns without sudo shows only your own).", "nsenter -t PID -u COMMAND runs COMMAND in the UTS namespace of process PID.", "sudo nsenter -t $(pgrep build-agent) -u hostname"]
+explanation = "nsenter joins existing namespaces (here only UTS) of a running process and runs a command there. Container engines do exactly this for podman exec — with all of the container's namespaces."
+
+[[task]]
+id = "chroot"
+title = "A minimal root"
+kind = "troubleshooting"
+instructions = "/srv/jail is meant to be a tiny root filesystem. sudo chroot /srv/jail fails. Make a shell work in it, with cat available, so that cat /etc/motd inside shows the jail's own message."
+skills = { "p.chroot" = 1.0, "b.fhs-layout" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "chroot /srv/jail /bin/bash -c 'cat /etc/motd'", status = 0, stdout_contains = ["Welcome to the jail"] },
+]
+hints = ["Read the error: chroot runs /bin/bash — inside the new root, that is /srv/jail/bin/bash.", "Programs need their shared libraries and the dynamic loader too: ldd /bin/bash lists them — copy each to the same path under /srv/jail.", "sudo mkdir -p /srv/jail/bin /srv/jail/lib/x86_64-linux-gnu /srv/jail/lib64; sudo cp /bin/bash /bin/cat /srv/jail/bin/; sudo cp /lib/x86_64-linux-gnu/libc.so.6 /srv/jail/lib/x86_64-linux-gnu/; sudo cp /lib64/ld-linux-x86-64.so.2 /srv/jail/lib64/"]
+explanation = "Inside the chroot every path starts at /srv/jail: /bin/bash is /srv/jail/bin/bash, /etc/motd is /srv/jail/etc/motd — and the loader /lib64/ld-linux-x86-64.so.2 and libc.so.6 that bash needs are looked up there too. With only the program copied, execve() fails with \"No such file or directory\" although the file is there: what is missing is the loader. ldd shows the complete list."
+
+[[task]]
+id = "escape"
+title = "Is it a wall?"
+kind = "explanation"
+instructions = "Compare what you built with the namespaces from the first tasks."
+skills = { "p.chroot" = 1.0, "p.namespaces" = 0.5 }
+question = { prompt = "Why is chroot alone not a security boundary?", type = "choice", choices = ["It is: nothing outside the new root can be reached", "It only changes how paths are resolved: processes, network and host name are still shared, and root inside can escape (for example by chrooting again from a directory outside, or by mounting the host's disks)", "It only works for the root user"], answer = 1 }
+hints = ["What did ps show inside the jail? What did hostname show?", "Root can create device nodes and mount filesystems.", "(b)"]
+explanation = "chroot isolates one thing — the view of the filesystem — and only from processes that cannot undo it. Containers combine a changed root with namespaces for everything else, cgroups for resources, and dropping privileges (rootless, fewer capabilities)."
+
+[debrief]
+summary = """
+unshare -u / -p -f --mount-proc / -n starts programs in new namespaces; nsenter -t PID joins
+them; lsns and /proc/PID/ns show them. chroot changes the root directory only — it needs
+every program, its libraries and the loader inside (ldd), and it is not a security boundary.
+A container is all of this together, set up by an engine.
+"""
+alternatives = ["nsenter -t PID -u -n hostname — run a command in another process's namespaces", "unshare -n ip link — a new network namespace has only a down loopback", "systemd-nspawn -D DIR — a container from a directory tree, built from the same parts"]
+pitfalls = ["Forgetting --fork with --pid: unshare itself stays in the old namespace.", "Expecting ps to change without --mount-proc.", "Treating chroot as a sandbox for untrusted code."]
+next = "Next: the other half of a container — control groups."
+
+[[solution]]
+name = "interactive shells"
+steps = [
+    { input = ["letslinux"] },
+    "sudo unshare -u",
+    "hostname sandbox",
+    "hostname",
+    "exit",
+    "hostname",
+    "readlink /proc/1/ns/uts",
+    { answer_with = "readlink /proc/1/ns/uts | tr -dc 0-9" },
+    "sudo unshare --pid --fork --mount-proc",
+    "ps",
+    "exit",
+    ":answer 1",
+    "sudo lsns -t uts",
+    "sudo nsenter -t $(pgrep build-agent) -u hostname",
+    ":answer build-7",
+    "sudo chroot /srv/jail",
+    "sudo mkdir /srv/jail/bin",
+    "sudo cp /bin/bash /bin/cat /srv/jail/bin/",
+    "sudo chroot /srv/jail",
+    "ldd /bin/bash",
+    "sudo mkdir -p /srv/jail/lib/x86_64-linux-gnu /srv/jail/lib64",
+    "sudo cp /lib/x86_64-linux-gnu/libc.so.6 /srv/jail/lib/x86_64-linux-gnu/",
+    "sudo cp /lib64/ld-linux-x86-64.so.2 /srv/jail/lib64/",
+    ":answer b",
+]
+
+[[solution]]
+name = "one-liners"
+steps = [
+    { input = ["letslinux"] },
+    "sudo unshare -u hostname sandbox",
+    "hostname",
+    "lsns -t uts",
+    { answer_with = "readlink /proc/1/ns/uts | tr -dc 0-9" },
+    "sudo unshare -pf --mount-proc bash -c 'echo $$'",
+    ":answer 1",
+    "pgrep -a build-agent",
+    "sudo nsenter --target=$(pgrep build-agent) --uts hostname",
+    ":answer build-7",
+    "sudo mkdir -p /srv/jail/usr/bin",
+    "sudo ln -s usr/bin /srv/jail/bin",
+    "sudo cp /usr/bin/bash /usr/bin/cat /srv/jail/usr/bin/",
+    "for f in $(ldd /bin/bash | grep -o '/[^ ]*'); do sudo mkdir -p /srv/jail$(dirname $f); sudo cp -L $f /srv/jail$f; done",
+    ":answer It only changes how paths are resolved: processes, network and host name are still shared, and root inside can escape (for example by chrooting again from a directory outside, or by mounting the host's disks)",
+]
+
+[[counterexample]]
+name = "renaming the server"
+steps = [
+    { input = ["letslinux"] },
+    "sudo hostname sandbox",
+    { answer_with = "readlink /proc/1/ns/uts | tr -dc 0-9" },
+    ":answer 1",
+    ":answer build-7",
+    "sudo mkdir /srv/jail/bin",
+    "sudo cp /bin/bash /bin/cat /srv/jail/bin/",
+    ":answer b",
+]

@@ -1,0 +1,102 @@
+schema = 1
+
+[mission]
+id = "a06-orientation-check"
+title = "Orientation Check-up"
+chapter = "A"
+kind = "assessment"
+order = 6
+difficulty = 2
+requires = ["a03-getting-help", "a05-environment"]
+skills = ["a.identity-basics", "a.exit-status", "a.builtin-vs-external", "a.help-man"]
+review_for = ["a.identity-basics", "a.exit-status", "a.builtin-vs-external", "a.help-man"]
+xp = 80
+estimated_minutes = 10
+sequential = false
+
+[briefing]
+context = """
+Your lead wants a quick report on this unfamiliar server before handing it over to you. Answer
+each question by investigating the machine — the tasks can be done in any order, and no
+commands are given this time.
+"""
+concept = "Use what you know: identity commands, $?, type, --help and man."
+objectives = ["Investigate independently", "Answer from evidence, not memory"]
+
+[environment]
+profile = "debian"
+hostname = "{{host}}"
+[environment.vars]
+host = { choices = ["birch-07", "cedar-12", "maple-03", "spruce-21"] }
+owner = { choices = ["ines", "kofi", "mei", "ravi"] }
+
+[[environment.setup]]
+action = "user"
+name = "{{owner}}"
+groups = ["sudo"]
+
+[[task]]
+id = "kernel"
+title = "Kernel release"
+kind = "independent"
+instructions = "Report the kernel release this server runs."
+skills = { "a.identity-basics" = 1.0 }
+question = { prompt = "What is the kernel release (as printed by uname)?", type = "exact", accept = ["6.1.0-28-amd64"] }
+hints = ["uname prints system information; check its options.", "uname -r prints only the kernel release.", "Run uname -r: the answer is 6.1.0-28-amd64."]
+explanation = "uname -r prints the kernel release; uname -a shows everything."
+
+[[task]]
+id = "host"
+title = "Host name"
+kind = "independent"
+instructions = "Confirm which server this is."
+skills = { "a.identity-basics" = 1.0 }
+question = { prompt = "What is this machine's host name?", type = "exact", accept = ["{{host}}"] }
+hints = ["It is in your prompt, too.", "The hostname command prints it.", "The answer is {{host}}."]
+explanation = "Always confirm the host name before making changes — especially with several terminals open."
+
+[[task]]
+id = "admin"
+title = "Another administrator"
+kind = "independent"
+instructions = "{{owner}} also administers this server. Look up their account: the same command that shows your own identity works for other users too."
+skills = { "a.identity-basics" = 1.0 }
+question = { prompt = "What is {{owner}}'s numeric user ID (uid)?", type = "state", state = { command = "id -u {{owner}}" } }
+hints = ["You used it for yourself: it prints uid, gid and groups.", "id accepts a user name: id {{owner}}.", "Run id {{owner}} and read the number after uid=."]
+explanation = "id USER shows any account's numeric IDs and its groups — here including sudo, which is what makes {{owner}} an administrator. Chapter D explains users and groups in depth."
+
+[[task]]
+id = "status"
+title = "Exit code"
+kind = "independent"
+instructions = "Find out what exit status grep returns when it finds no matching lines (try grep nothing-matches /etc/hostname)."
+skills = { "a.exit-status" = 1.0 }
+question = { prompt = "What exit status does grep return when nothing matches?", type = "number", accept = ["1"] }
+hints = ["Run a grep that cannot match, then look at $?.", "grep zzz /etc/hostname; echo $?", "The answer is 1 (0 = match found, 2 = error)."]
+explanation = "grep returns 0 when it finds a match, 1 when it finds none, and 2 on errors — scripts rely on this."
+
+[[task]]
+id = "where"
+title = "Which program?"
+kind = "independent"
+instructions = "Find the full path of the program that runs when you type sort."
+skills = { "a.builtin-vs-external" = 1.0 }
+question = { prompt = "What is the full path of the sort program?", type = "exact", accept = ["/usr/bin/sort", "/bin/sort"] }
+hints = ["type and which both answer this.", "Try type sort or which sort.", "The answer is /usr/bin/sort."]
+explanation = "type, which and command -v all reveal where a command comes from. /bin is a symbolic link to /usr/bin on modern distributions."
+
+[debrief]
+summary = "You investigated a new server and answered from evidence. That habit — check, don't assume — is the foundation of everything that follows."
+next = "Chapter B: navigating and managing the filesystem."
+
+[[solution]]
+name = "investigate then answer"
+steps = ["uname -r", ":answer 6.1.0-28-amd64", "hostname", ":answer {{host}}", "id {{owner}}", { answer_with = "id -u {{owner}}" }, "grep zzz /etc/hostname; echo $?", ":answer 1", "type sort", ":answer /usr/bin/sort"]
+
+[[solution]]
+name = "different order and tools"
+steps = ["which sort", ":answer /bin/sort", "id -u {{owner}}", { answer_with = "id -u {{owner}}" }, "uname -a", ":answer 6.1.0-28-amd64", "cat /etc/hostname", ":answer {{host}}", ":answer 1"]
+
+[[counterexample]]
+name = "partial answers"
+steps = [":answer 6.1.0-28-amd64", ":answer {{host}}", ":answer 0"]

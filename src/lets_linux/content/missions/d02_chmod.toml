@@ -1,0 +1,124 @@
+schema = 1
+
+[mission]
+id = "d02-chmod"
+title = "Changing Permissions"
+chapter = "D"
+kind = "lesson"
+order = 2
+difficulty = 3
+requires = ["d01-who-owns-this"]
+skills = ["d.chmod-symbolic", "d.chmod-octal", "d.credential-hygiene"]
+xp = 80
+estimated_minutes = 15
+
+[briefing]
+context = """
+You wrote a small deploy script, you keep an API token in a file, and a status report should
+be readable by everyone. Right now none of them has the right permissions.
+"""
+concept = """
+chmod changes permissions. Symbolic form: who (u, g, o, a) + operator (+, -, =) + bits
+(r, w, x): chmod u+x script, chmod go-rwx secret. Octal form: one digit per class, r=4 w=2
+x=1 added together: 755 = rwxr-xr-x, 640 = rw-r-----, 600 = rw-------. Only the owner (or
+root) may chmod a file.
+"""
+objectives = ["Use symbolic modes", "Use octal modes", "Protect secrets"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+token = { word = true }
+
+[[environment.setup]]
+action = "file"
+path = "~/deploy.sh"
+content = "#!/bin/bash\necho \"deploying build $(date +%s)\"\n"
+mode = "0644"
+
+[[environment.setup]]
+action = "file"
+path = "~/api-token"
+content = "{{token}}\n"
+mode = "0664"
+
+[[environment.setup]]
+action = "file"
+path = "~/status.txt"
+content = "all systems nominal\n"
+mode = "0600"
+
+[[task]]
+id = "exec"
+title = "Make the script executable"
+kind = "guided"
+instructions = "Running ./deploy.sh fails with Permission denied. Give the owner (you) execute permission, then run it."
+skills = { "d.chmod-symbolic" = 1.0 }
+checks = [
+    { type = "mode_has", path = "~/deploy.sh", bits = "100" },
+    { type = "output_contains", text = "deploying build" },
+]
+hints = ["The x bit is missing for the owner.", "chmod u+x adds execute for the user (owner).", "Type: chmod u+x deploy.sh && ./deploy.sh"]
+explanation = "Programs (and scripts run as ./name) need the execute bit. bash deploy.sh would work without it, because then bash only reads the file."
+
+[[task]]
+id = "secret"
+title = "Lock down the token"
+kind = "independent"
+instructions = "The API token is group- and world-readable. Make it readable and writable by you only (rw-------)."
+skills = { "d.chmod-octal" = 1.0, "d.credential-hygiene" = 1.0 }
+checks = [{ type = "file_mode", path = "~/api-token", mode = "600" }]
+persistent = true
+hints = ["Owner rw, nobody else anything.", "In octal: owner 4+2=6, group 0, other 0.", "Type: chmod 600 api-token"]
+explanation = "600 is the standard mode for secrets: SSH refuses private keys that are more open than this."
+
+[[task]]
+id = "public"
+title = "Share the report"
+kind = "independent"
+instructions = "Make status.txt readable by everyone while keeping it writable only by you (rw-r--r--)."
+skills = { "d.chmod-octal" = 1.0, "d.chmod-symbolic" = 0.5 }
+checks = [{ type = "file_mode", path = "~/status.txt", mode = "644" }]
+hints = ["Add read for group and other.", "chmod go+r status.txt, or chmod 644 status.txt.", "Type: chmod 644 status.txt"]
+explanation = "644 is the usual mode for ordinary files: rw for the owner, read-only for everyone else."
+
+[[task]]
+id = "convert"
+title = "Octal fluency"
+kind = "prediction"
+instructions = "Convert without running anything."
+skills = { "d.chmod-octal" = 1.0 }
+question = { prompt = "Which octal mode equals rwxr-x---?", type = "exact", accept = ["750", "0750"] }
+hints = ["Add the values per triplet: r=4, w=2, x=1.", "rwx = 7, r-x = 5, --- = 0.", "The answer is 750."]
+explanation = "Each digit is one class: 7 (rwx) for the owner, 5 (r-x) for the group, 0 for other."
+
+[[task]]
+id = "others"
+title = "Not yours to change"
+kind = "prediction"
+instructions = "Think about who may run chmod on a file."
+skills = { "d.chmod-symbolic" = 0.5, "d.permission-bits" = 0.5 }
+question = { prompt = "What happens if you run  chmod 777 /etc/hostname  as learner?", type = "choice", choices = ["It works because the file is readable", "It fails: Operation not permitted, because you are not the owner", "It works but is reverted at reboot", "It asks for your password"], answer = 1 }
+hints = ["Being able to read a file does not let you change its permissions.", "Only the owner or root can chmod.", "The answer is (b). (Try it: chmod reports 'Operation not permitted'.)"]
+explanation = "Permission changes are reserved for the owner and root — otherwise permissions would protect nothing."
+
+[debrief]
+summary = """
+Symbolic modes adjust bits (u+x, go-rwx); octal modes set them all at once (755, 644, 600).
+Secrets get 600, programs need x, and only owners (or root) may chmod.
+"""
+alternatives = ["chmod u=rw,go= api-token equals chmod 600", "chmod a+r status.txt adds read for everyone", "stat -c %a FILE prints the octal mode"]
+pitfalls = ["chmod -R 777 'fixes' permission errors by removing all protection: never do it.", "Removing x from a directory blocks access to everything inside it."]
+next = "Next: why Permission denied can come from a directory above the file."
+
+[[solution]]
+name = "symbolic and octal"
+steps = ["./deploy.sh", "chmod u+x deploy.sh && ./deploy.sh", "chmod 600 api-token", "chmod 644 status.txt", ":answer 750", ":answer b"]
+
+[[solution]]
+name = "all symbolic"
+steps = ["chmod +x ~/deploy.sh", "~/deploy.sh", "chmod go-rw api-token", "chmod go+r status.txt", ":answer 0750", ":answer 2"]
+
+[[counterexample]]
+name = "running with bash and opening everything"
+steps = ["bash deploy.sh", "chmod 777 api-token"]

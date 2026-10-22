@@ -1,0 +1,133 @@
+schema = 1
+
+[mission]
+id = "d04-sudo-and-accounts"
+title = "Root, Carefully"
+chapter = "D"
+kind = "lesson"
+order = 4
+difficulty = 3
+requires = ["d01-who-owns-this"]
+skills = ["d.sudo-least-privilege", "d.user-management", "d.group-management"]
+xp = 100
+estimated_minutes = 18
+
+[briefing]
+context = """
+A new developer, {{newuser}}, starts today and needs an account in the developers group. A
+former contractor, {{old}}, has left: their account must be locked, not deleted, until the
+audit is complete. All of this needs administrator rights.
+"""
+concept = """
+sudo runs a single command as root after checking /etc/sudoers (members of the sudo group may
+use it on Debian). It asks for YOUR password — here: letslinux — and remembers it for a few
+minutes. useradd -m creates an account with a home directory, usermod -aG adds groups,
+passwd sets passwords and passwd -l locks an account. On Debian these programs live in
+/usr/sbin, which is not in an ordinary user's PATH but is in sudo's.
+"""
+objectives = ["Use sudo for individual commands", "Create and modify accounts", "Lock an account"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+newuser = { choices = ["priya", "mateo", "aiko", "kwame"] }
+old = { choices = ["contractor1", "temp-ops", "vendor-x"] }
+pw = { word = true }
+
+[[environment.setup]]
+action = "group"
+name = "developers"
+
+[[environment.setup]]
+action = "user"
+name = "{{old}}"
+password = "oldsecret"
+
+[[task]]
+id = "check"
+title = "What may you do?"
+kind = "guided"
+instructions = "List your sudo rights with `sudo -l` (password: letslinux)."
+skills = { "d.sudo-least-privilege" = 1.0 }
+checks = [{ type = "output_contains", text = "may run the following commands", command = "sudo" }]
+hints = ["sudo has an option to list what you are allowed to run.", "-l means list.", "Type: sudo -l"]
+explanation = "(ALL : ALL) ALL means you may run any command as any user — via sudo, one command at a time."
+
+[[task]]
+id = "create"
+title = "Create the account"
+kind = "guided"
+instructions = "Create the user {{newuser}} with a home directory and /bin/bash as login shell."
+skills = { "d.user-management" = 1.0, "d.sudo-least-privilege" = 0.5 }
+checks = [
+    { type = "user_exists", name = "{{newuser}}", shell = "/bin/bash" },
+    { type = "path_exists", path = "/home/{{newuser}}", kind = "dir" },
+    { type = "file_owner", path = "/home/{{newuser}}", user = "{{newuser}}" },
+]
+hints = ["useradd needs root, so prefix it with sudo.", "-m creates the home directory and -s sets the shell (Debian's default is /bin/sh).", "Type: sudo useradd -m -s /bin/bash {{newuser}}"]
+explanation = "Without -m Debian's useradd creates no home directory; without -s the shell would be /bin/sh."
+
+[[task]]
+id = "group"
+title = "Add to developers"
+kind = "guided"
+instructions = "Add {{newuser}} to the developers group without removing any other group memberships."
+skills = { "d.group-management" = 1.0 }
+checks = [{ type = "in_group", user = "{{newuser}}", group = "developers" }]
+hints = ["usermod changes accounts; -G sets supplementary groups.", "Use -aG: without -a, -G replaces all supplementary groups.", "Type: sudo usermod -aG developers {{newuser}}"]
+explanation = "-a (append) matters: usermod -G developers alone would silently remove the user from every other group."
+
+[[task]]
+id = "password"
+title = "Set an initial password"
+kind = "independent"
+instructions = "Give {{newuser}} the initial password {{pw}}."
+skills = { "d.user-management" = 1.0 }
+checks = [{ type = "password_set", user = "{{newuser}}" }]
+hints = ["passwd USER sets another user's password when run as root.", "sudo passwd {{newuser}} prompts twice for the new password.", "Type: sudo passwd {{newuser}}   then enter {{pw}} twice (or: echo {{newuser}}:{{pw}} | sudo chpasswd)"]
+explanation = "Root can set any user's password without knowing the old one. In real life, also force a change at first login: sudo chage -d 0 {{newuser}}."
+
+[[task]]
+id = "lock"
+title = "Lock the departed account"
+kind = "independent"
+instructions = "Lock {{old}}'s password so nobody can log in with it, without deleting the account or its files."
+skills = { "d.user-management" = 1.0, "l.account-security" = 0.5 }
+checks = [
+    { type = "user_exists", name = "{{old}}", locked = true },
+    { type = "path_exists", path = "/home/{{old}}", kind = "dir" },
+]
+persistent = true
+hints = ["passwd and usermod both have a lock option.", "sudo passwd -l {{old}} (or sudo usermod -L {{old}}).", "Type: sudo passwd -l {{old}}"]
+explanation = "Locking puts ! in front of the password hash in /etc/shadow. The account and files stay for the audit."
+
+[[task]]
+id = "why"
+title = "Why sudo, not a root shell?"
+kind = "explanation"
+instructions = "Reflect on least privilege."
+skills = { "d.sudo-least-privilege" = 1.0 }
+question = { prompt = "Why is running individual commands with sudo preferred over working in a root shell all day?", type = "choice", choices = ["sudo is faster", "Each privileged action is deliberate and logged, and mistakes in ordinary commands cannot damage the system", "Root shells cannot run useradd", "sudo does not need a password"], answer = 1 }
+hints = ["Think about mistakes and accountability.", "sudo logs every command with your name; ordinary commands run without privileges.", "The answer is (b)."]
+explanation = "Least privilege: only the commands that need root get it, and the logs show who did what."
+
+[debrief]
+summary = """
+sudo grants root for one command at a time, with your own password and a log entry. useradd
+-m -s, usermod -aG, passwd and passwd -l cover the everyday account lifecycle.
+"""
+alternatives = ["sudo adduser {{newuser}} (Debian's interactive front-end)", "sudo gpasswd -a {{newuser}} developers", "sudo usermod -L {{old}}"]
+pitfalls = ["usermod -G without -a drops existing groups.", "Group changes apply at the user's next login.", "sudo echo text > /etc/file fails: the redirection runs as you. Use | sudo tee."]
+next = "Next: a shared project directory."
+
+[[solution]]
+name = "useradd and passwd"
+steps = [{ input = ["letslinux"] }, "sudo -l", "sudo useradd -m -s /bin/bash {{newuser}}", "sudo usermod -aG developers {{newuser}}", { input = ["{{pw}}", "{{pw}}"] }, "sudo passwd {{newuser}}", "sudo passwd -l {{old}}", ":answer b"]
+
+[[solution]]
+name = "adduser and chpasswd"
+steps = [{ input = ["letslinux"] }, "sudo -l", "sudo adduser --disabled-password --gecos '' --shell /bin/bash {{newuser}}", "sudo gpasswd -a {{newuser}} developers", "echo '{{newuser}}:{{pw}}' | sudo chpasswd", "sudo usermod -L {{old}}", ":answer 2"]
+
+[[counterexample]]
+name = "replacing groups and deleting"
+steps = [{ input = ["letslinux"] }, "sudo -l", "sudo useradd {{newuser}}", "sudo userdel -r {{old}}"]

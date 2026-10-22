@@ -1,0 +1,259 @@
+schema = 1
+
+[mission]
+id = "s04-two-uplinks"
+title = "Two Ways Out"
+chapter = "S"
+kind = "troubleshooting"
+order = 5
+difficulty = 5
+requires = ["i13-on-the-wire", "s01-front-door", "i08-fixed-address"]
+skills = ["s.advanced-networking", "i.routing-gateways", "i.packet-capture-concepts", "i.network-config"]
+review_for = ["i.routing-gateways", "i.packet-capture-concepts"]
+xp = 250
+estimated_minutes = 40
+
+[briefing]
+context = """
+The shop got a second internet line yesterday. Its public address 192.0.2.10 is on the new
+card enp0s8 (provider B, gateway 192.0.2.1); the office line stays on enp0s3 (default
+route via 10.0.2.2), and everything else must keep using it. shop.example.com points to
+192.0.2.10 — and since the switch the external monitoring host (monitor, 203.0.113.140)
+reports the shop as down, although nginx runs. You may log in to the monitor: ssh
+ops@monitor, password letslinux. (sudo password: letslinux)
+"""
+concept = """
+A host with two uplinks has one routing table but two networks: replies follow the routing
+table, not the way the request came in. A request to 192.0.2.10 arrives on enp0s8, the
+answer goes out by the default route — through provider A, with provider B's address as
+source. Providers drop such packets (reverse-path filtering). Policy routing fixes it:
+`ip rule` chooses a routing table by source address (or destination, incoming interface …),
+and a second table holds the default route of the second provider:
+  ip route add default via 192.0.2.1 dev enp0s8 table 100
+  ip rule add from 192.0.2.10 table 100
+Names for tables go in /etc/iproute2/rt_tables. `ip route get DEST from SRC` shows the
+decision; tcpdump on both cards shows where packets come in and where the answers leave.
+"""
+objectives = ["Recognise asymmetric routing from packet captures", "Read and use routing policy rules", "Route by source address with a second routing table", "Make the configuration survive a reboot"]
+
+[environment]
+profile = "debian"
+packages = ["nginx", "tcpdump"]
+
+[[environment.setup]]
+action = "net"
+add_nic = "enp0s8"
+mac = "52:54:00:b0:0b:10"
+
+[[environment.setup]]
+action = "file"
+path = "/etc/network/interfaces.d/uplink-b"
+content = """# Provider B (contract 4471-{{contract}}) — shop line
+auto enp0s8
+iface enp0s8 inet static
+    address 192.0.2.10/24
+"""
+
+[[environment.setup]]
+action = "run"
+command = "ifup enp0s8 >/dev/null 2>&1; echo '<html><body><h1>Shop</h1></body></html>' > /var/www/html/index.html"
+
+[[environment.setup]]
+action = "peer"
+name = "isp-b"
+addresses = ["192.0.2.1"]
+mac = "00:1b:21:4b:00:01"
+router = true
+
+[[environment.setup]]
+action = "peer"
+name = "transit"
+addresses = ["203.0.113.1"]
+router = true
+
+[[environment.setup]]
+action = "peer"
+name = "monitor"
+addresses = ["203.0.113.140"]
+host = { profile = "debian", user = "ops", password = "letslinux", prefix = 24, gateway = "203.0.113.1", packages = ["curl"] }
+services = { 22 = { kind = "ssh", banner = "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u3" } }
+
+[[environment.setup]]
+action = "dns"
+name = "shop.example.com"
+value = "192.0.2.10"
+
+[[environment.setup]]
+action = "dns"
+name = "monitor.example.lan"
+value = "203.0.113.140"
+
+[[environment.setup]]
+action = "traffic"
+name = "monitor-check"
+from = "203.0.113.140"
+to = "192.0.2.10"
+ports = [80]
+every = 20
+first = 5
+
+[environment.vars]
+contract = { choices = ["0815", "2207", "9134"] }
+
+[[task]]
+id = "evidence"
+title = "Where do the answers go?"
+kind = "guided"
+instructions = """
+The monitor checks port 80 of 192.0.2.10 every 20 seconds. Capture on both cards at the
+same time — `sudo tcpdump -ni any port 80 -c 6` — or one after the other with -i enp0s8 and
+-i enp0s3. Compare with `ip route` and `ip route get 203.0.113.140 from 192.0.2.10`.
+"""
+skills = { "s.advanced-networking" = 1.0, "i.packet-capture-concepts" = 1.0 }
+question = { prompt = "What happens to the monitor's connections?", type = "choice", choices = ["Nothing arrives: provider B's line is down", "nginx refuses them", "The SYNs arrive on enp0s8, but the SYN-ACKs leave through enp0s3 (the default route via provider A), which drops packets with provider B's source address", "The firewall drops them"] , answer = 2 }
+hints = ["tcpdump -ni any shows the interface of each packet (In/Out).", "Look at the interface of the S. packets.", "Answer (c): the reply follows the main table's default route."]
+explanation = "Asymmetric routing: the request came in on one uplink, the answer left by the other. tcpdump shows it plainly; ip route get … from … shows why."
+
+[[task]]
+id = "policy"
+title = "Answers by the same way"
+kind = "independent"
+instructions = """
+Make traffic from 192.0.2.10 leave through provider B (192.0.2.1 on enp0s8), while
+everything else keeps using the office line. Check with the monitor:
+`ssh ops@monitor curl -s -o /dev/null -w '%{http_code}' http://192.0.2.10/`.
+"""
+skills = { "s.advanced-networking" = 1.0, "i.routing-gateways" = 1.0 }
+checks = [
+    { type = "port_open_from", from = "monitor", to = "192.0.2.10", port = 80 },
+    { type = "command_result", user = "root", command = "ip route get 8.8.8.8 | head -1", stdout_regex = "via 10\\.0\\.2\\.2 dev enp0s3" },
+    { type = "command_result", user = "root", command = "ip route get 203.0.113.140 from 192.0.2.10 | head -1", stdout_regex = "via 192\\.0\\.2\\.1 dev enp0s8" },
+    { type = "command_result", user = "root", command = "ip route show table main | grep -c '^default'", stdout_equals = "1" },
+]
+persistent = true
+hints = [
+    "A second default route in the main table would make one of the two lines the default for everything. Use a separate routing table for provider B.",
+    "Table: sudo ip route add default via 192.0.2.1 dev enp0s8 table 100 (optionally name it: echo '100 isp_b' | sudo tee -a /etc/iproute2/rt_tables). Rule: sudo ip rule add from 192.0.2.10 table 100.",
+    "Then ip rule shows the rule before 'lookup main', and ip route get 203.0.113.140 from 192.0.2.10 goes via 192.0.2.1.",
+]
+explanation = "The rule (priority below 32766) is consulted before the main table: packets with source 192.0.2.10 find provider B's default route in table 100; all others fall through to main."
+
+[[task]]
+id = "persist"
+title = "After the next reboot"
+kind = "independent"
+instructions = "ip commands only change the running system. Make the routing table and the rule part of enp0s8's configuration, so that the shop also works after a reboot."
+skills = { "s.advanced-networking" = 1.0, "i.network-config" = 1.0 }
+checks = [
+    { type = "after_reboot", checks = [
+        { type = "port_open_from", from = "monitor", to = "192.0.2.10", port = 80 },
+        { type = "command_result", user = "root", command = "ip route get 8.8.8.8 | head -1", stdout_regex = "via 10\\.0\\.2\\.2 dev enp0s3" },
+        { type = "command_result", user = "root", command = "ip route get 203.0.113.140 from 192.0.2.10 | head -1", stdout_regex = "via 192\\.0\\.2\\.1 dev enp0s8" },
+    ] },
+]
+persistent = true
+hints = [
+    "ifupdown runs `up` (or `post-up`) lines of an iface stanza after bringing the card up.",
+    "In /etc/network/interfaces.d/uplink-b, below the address line: `    up ip route add default via 192.0.2.1 dev enp0s8 table 100` and `    up ip rule add from 192.0.2.10 table 100`.",
+    "Test without rebooting: sudo ifdown enp0s8 && sudo ifup enp0s8, then ip rule and ip route show table 100.",
+]
+explanation = "Netplan expresses the same with routes: (with table:) and routing-policy:, NetworkManager with routeN_options=table= and routing-ruleN=, systemd-networkd with [Route] Table= and [RoutingPolicyRule]."
+
+[[task]]
+id = "why-not-metric"
+title = "The tempting shortcut"
+kind = "explanation"
+instructions = "A colleague asks why not simply add `default via 192.0.2.1 dev enp0s8 metric 200` to the main table."
+skills = { "s.advanced-networking" = 1.0, "i.routing-gateways" = 0.5 }
+question = { prompt = "What would that do?", type = "choice", choices = ["The same as the rule", "Nothing useful: with two default routes only the one with the lower metric is used for all traffic — the answers from 192.0.2.10 would still leave by provider A", "It would balance traffic over both lines", "The kernel refuses two default routes"], answer = 1 }
+hints = ["Which of two default routes does the kernel pick?", "The metric only breaks ties; source addresses play no role in the main table.", "Answer (b)."]
+explanation = "A second default route with a worse metric is a failover, not a source-based choice. Selecting by source address needs a rule."
+
+[[task]]
+id = "vlan"
+title = "A third line on the same cable"
+kind = "explanation"
+instructions = """
+Provider C will deliver a third line as VLAN 42, tagged on the same cable and switch port
+as the office network (enp0s3). There is no free slot for another card.
+"""
+skills = { "s.advanced-networking" = 1.0 }
+question = { prompt = "What does the server need?", type = "choice", choices = ["A third network card — one line per card", "A VLAN interface on top of enp0s3 for tag 42 (ip link add link enp0s3 name enp0s3.42 type vlan id 42) carrying provider C's address", "A bridge between enp0s3 and enp0s8", "Nothing: switches remove VLAN tags before frames reach servers"], answer = 1 }
+hints = ["802.1Q tags let one cable carry several separate networks.", "Linux creates one virtual interface per tag on top of the physical card.", "Answer (b)."]
+explanation = """
+A VLAN interface (enp0s3.42) sends and receives the frames tagged 42 and behaves like a card of
+its own — addresses, routes, its own table and rule. (This simulation explains VLANs but does
+not create VLAN interfaces.)
+"""
+
+[[task]]
+id = "bond"
+title = "Two cables, one interface"
+kind = "explanation"
+instructions = "The office line should survive a broken cable or a failed switch port: the server gets a second office port, and both should act as one interface with one address."
+skills = { "s.advanced-networking" = 1.0 }
+question = { prompt = "Which mechanism is that?", type = "choice", choices = ["A bridge", "A bond (link aggregation): two cards combined into one interface — active-backup for failover, 802.3ad/LACP to use both with a cooperating switch", "A VLAN", "A second routing table"], answer = 1 }
+hints = ["A bridge is a virtual switch — for virtual machines and containers.", "The kernel's bonding driver (or teaming) presents bond0 over two slaves.", "Answer (b)."]
+explanation = """
+A bond (bond0 over enp0s3 and enp0s9) keeps the address when one link fails. A bridge
+(br0) instead connects several interfaces into one layer-2 segment, as for VMs and
+containers (podman and docker use one). Neither is created in this simulation; netplan,
+NetworkManager and networkd configure both on real systems.
+"""
+
+[debrief]
+summary = """
+Multihomed hosts need policy routing: a table per uplink and `ip rule add from ADDRESS table
+N` so that answers leave by the line they belong to. tcpdump -ni any shows asymmetric paths;
+ip rule, ip route show table N and ip route get … from … show the decision. Persist rules and
+tables in the network configuration.
+"""
+alternatives = ["Name the table in /etc/iproute2/rt_tables (100 isp_b) and use the name", "Netplan: routes: [{to: default, via: 192.0.2.1, table: 100}] and routing-policy: [{from: 192.0.2.10, table: 100}]", "Rules by destination (to NETWORK) or incoming interface (iif)"]
+pitfalls = ["A second default route in the main table", "Forgetting that ip rule and ip route are lost at reboot", "Rules by source for addresses not on that line"]
+next = "Next: automating infrastructure changes safely."
+
+[[solution]]
+name = "ip commands, then up lines"
+steps = [
+    { input = ["letslinux"] },
+    "sudo tcpdump -ni any port 80 -c 6",
+    "ip route get 203.0.113.140 from 192.0.2.10",
+    ":answer 3",
+    "sudo ip route add default via 192.0.2.1 dev enp0s8 table 100",
+    "sudo ip rule add from 192.0.2.10 table 100",
+    "ip rule",
+    "ip route get 203.0.113.140 from 192.0.2.10",
+    { edit = "# Provider B (contract 4471-{{contract}}) — shop line\nauto enp0s8\niface enp0s8 inet static\n    address 192.0.2.10/24\n    up ip route add default via 192.0.2.1 dev enp0s8 table 100\n    up ip rule add from 192.0.2.10 table 100\n" },
+    "sudo nano /etc/network/interfaces.d/uplink-b",
+    "sudo ifdown enp0s8 && sudo ifup enp0s8",
+    "ip rule; ip route show table 100",
+    ":answer 2",
+    ":answer 2",
+    ":answer 2",
+]
+
+[[solution]]
+name = "named table, configuration first"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 3",
+    "echo '100 isp_b' | sudo tee -a /etc/iproute2/rt_tables",
+    "printf '    post-up ip route add default via 192.0.2.1 dev enp0s8 table isp_b\\n    post-up ip rule add from 192.0.2.10 lookup isp_b priority 1000\\n' | sudo tee -a /etc/network/interfaces.d/uplink-b",
+    "sudo ifdown enp0s8; sudo ifup enp0s8",
+    "ip route get 203.0.113.140 from 192.0.2.10",
+    ":answer 2",
+    ":answer b",
+    ":answer b",
+]
+
+[[counterexample]]
+name = "second default route"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 3",
+    "sudo ip route add default via 192.0.2.1 dev enp0s8 metric 200",
+    "printf '    gateway 192.0.2.1\\n' | sudo tee -a /etc/network/interfaces.d/uplink-b",
+    ":answer 2",
+    ":answer 2",
+    ":answer 2",
+]

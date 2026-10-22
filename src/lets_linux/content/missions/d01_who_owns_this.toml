@@ -1,0 +1,127 @@
+schema = 1
+
+[mission]
+id = "d01-who-owns-this"
+title = "Who Owns This?"
+chapter = "D"
+kind = "lesson"
+order = 1
+difficulty = 2
+requires = ["b02-looking-around"]
+skills = ["d.users-groups-concepts", "d.permission-bits"]
+xp = 70
+estimated_minutes = 14
+
+[briefing]
+context = """
+Three people share this server. Before changing any permissions you need to read the
+existing ones: who owns what, which groups exist, and what each rwx triplet allows.
+"""
+concept = """
+Every file has an owner (a user) and a group. Its permission string, e.g. -rw-r-----, holds
+three triplets: what the owner, members of the group, and everyone else (other) may do — r
+read, w write, x execute. Only the first matching class applies. Accounts are listed in
+/etc/passwd (name:x:UID:GID:comment:home:shell) and groups in /etc/group.
+"""
+objectives = ["Read users and groups", "Interpret permission triplets", "Predict who may do what"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+colleague = { choices = ["noor", "tomas", "yuki", "zara"] }
+team = { choices = ["design", "payroll", "audit"] }
+uid = { range = [1100, 1199] }
+
+[[environment.setup]]
+action = "group"
+name = "{{team}}"
+
+[[environment.setup]]
+action = "user"
+name = "{{colleague}}"
+uid = "{{uid}}"
+groups = ["{{team}}"]
+
+[[environment.setup]]
+action = "file"
+path = "/srv/{{team}}/plan.txt"
+content = "confidential plan\n"
+owner = "{{colleague}}"
+group = "{{team}}"
+mode = "0640"
+
+[[environment.setup]]
+action = "chmod"
+path = "/srv/{{team}}"
+mode = "0755"
+
+[[task]]
+id = "me"
+title = "Your identity"
+kind = "guided"
+instructions = "Run `id` to see your UID, primary group and supplementary groups."
+skills = { "d.users-groups-concepts" = 1.0 }
+checks = [{ type = "output_contains", text = "uid=1000(learner)", command = ["id"] }]
+hints = ["The command is two letters long.", "id with no arguments describes you.", "Type: id"]
+explanation = "Your process carries a UID and a list of group IDs; every permission check uses them."
+
+[[task]]
+id = "uid"
+title = "Look up a colleague"
+kind = "independent"
+instructions = "Find {{colleague}}'s numeric user ID."
+skills = { "d.users-groups-concepts" = 1.0 }
+question = { prompt = "What is the UID of {{colleague}}?", type = "number", accept = ["{{uid}}"] }
+hints = ["Accounts are listed in /etc/passwd; id NAME also works.", "Field 3 of the passwd line is the UID.", "Run id {{colleague}} or grep {{colleague}} /etc/passwd: the UID is {{uid}}."]
+explanation = "UIDs, not names, are stored on files: the name is looked up in /etc/passwd when ls displays it."
+
+[[task]]
+id = "members"
+title = "Group membership"
+kind = "independent"
+instructions = "Find out which users belong to the {{team}} group."
+skills = { "d.users-groups-concepts" = 1.0 }
+question = { prompt = "Which user is a member of the {{team}} group?", type = "exact", accept = ["{{colleague}}"] }
+hints = ["Groups are listed in /etc/group.", "getent group {{team}} or grep {{team}} /etc/group", "The member is {{colleague}}."]
+explanation = "The last field of an /etc/group line lists supplementary members."
+
+[[task]]
+id = "read-mode"
+title = "Read the triplets"
+kind = "explanation"
+instructions = "Look at /srv/{{team}}/plan.txt with ls -l."
+skills = { "d.permission-bits" = 1.0 }
+question = { prompt = "plan.txt is -rw-r----- {{colleague}} {{team}}. What may members of {{team}} do with it?", type = "choice", choices = ["Read and write", "Read only", "Nothing", "Execute only"], answer = 1 }
+hints = ["The middle triplet applies to the group.", "r-- means read only.", "The answer is (b): read only."]
+explanation = "Owner rw-, group r--, other ---."
+
+[[task]]
+id = "can-i"
+title = "Can you read it?"
+kind = "prediction"
+instructions = "Predict first, then test with cat."
+skills = { "d.permission-bits" = 1.0 }
+question = { prompt = "Can you (learner) read /srv/{{team}}/plan.txt?", type = "choice", choices = ["Yes, because the directory is readable", "No: you are neither the owner nor in {{team}}, and other has no permissions", "Yes, every user can read files in /srv", "Only with the x bit"], answer = 1 }
+hints = ["Which class applies to you: owner, group or other?", "You are not {{colleague}} and not in {{team}}, so 'other' (---) applies.", "The answer is (b). Try cat to confirm the Permission denied."]
+explanation = "Directory permissions let you see the name; the file's own permissions decide whether you can read it."
+
+[debrief]
+summary = """
+Owner, group and other each get rwx bits; the first matching class decides. id shows who
+you are, /etc/passwd and /etc/group (or getent) show everyone else.
+"""
+alternatives = ["stat -c '%A %U %G' file prints mode, owner and group", "getent passwd {{colleague}}"]
+pitfalls = ["If you are the owner, the group and other bits are ignored even when they are more generous.", "Group changes only take effect at the next login."]
+next = "Next: changing permissions with chmod."
+
+[[solution]]
+name = "id and getent"
+steps = ["id", "id {{colleague}}", ":answer {{uid}}", "getent group {{team}}", ":answer {{colleague}}", "ls -l /srv/{{team}}", ":answer b", "cat /srv/{{team}}/plan.txt", ":answer b"]
+
+[[solution]]
+name = "reading the files"
+steps = ["id -a", "grep {{colleague}} /etc/passwd", ":answer {{uid}}", "grep '^{{team}}:' /etc/group", ":answer {{colleague}}", ":answer Read only", ":answer 2"]
+
+[[counterexample]]
+name = "assuming"
+steps = ["whoami", ":answer 1000", ":answer learner"]

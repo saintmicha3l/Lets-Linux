@@ -1,0 +1,189 @@
+schema = 1
+
+[mission]
+id = "b06b-finding-files"
+title = "Finding Files"
+chapter = "B"
+kind = "lesson"
+order = 7
+difficulty = 2
+requires = ["b05-wildcards", "b04-reading-files"]
+skills = ["b.find-files", "b.disk-usage-basics", "c.find-exec"]
+review_for = ["b.find-files", "b.disk-usage-basics"]
+xp = 70
+estimated_minutes = 15
+
+[briefing]
+context = """
+Your team's shared ~/projects folder has grown for years. Before the clean-up challenge that
+follows, learn the two tools every administrator uses to make sense of a big tree: find, which
+searches it, and du/df, which measure it.
+"""
+concept = """
+find START TESTS... walks a whole directory tree. Common tests: -name 'PATTERN' (quote the
+pattern so the shell does not expand it), -type f (files) or -type d (directories),
+-size +100M (bigger than 100 MiB), -mtime +30 (last modified more than 30 days ago).
+Tests combine with AND by default. find can also act on what it finds: -delete, or
+-exec COMMAND {} \\; which runs COMMAND once per file, with {} replaced by the file name.
+du -sh DIR... shows how much space directories use; sort -h sorts those human-readable sizes.
+df -h shows how full each whole filesystem is.
+"""
+objectives = ["Search by name, type, size and age", "Measure directory sizes with du and filesystems with df", "Act on found files with -exec and -delete, safely"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+client = { choices = ["acme", "globex", "initech", "umbrella", "hooli"] }
+bigdir = { choices = ["video", "datasets", "renders"] }
+bigfile = { choices = ["interview-raw.mov", "survey-2023.csv", "scene-04.exr"] }
+
+[[environment.setup]]
+action = "run"
+command = "cd /home/learner && for p in website mobile-app {{bigdir}} infra; do mkdir -p projects/$p/docs projects/$p/src; echo '# notes' > projects/$p/docs/README.md; echo 'code' > projects/$p/src/main.txt; done && mkdir -p projects/{{client}}-pitch/assets reports && echo pitch > projects/{{client}}-pitch/proposal.pdf && echo terms > projects/infra/docs/contract.pdf && echo slides > projects/website/docs/launch.pdf && chown -R learner:learner projects reports"
+
+[[environment.setup]]
+action = "file"
+path = "~/projects/{{bigdir}}/src/{{bigfile}}"
+content = "x\n"
+size = 900000000
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "file"
+path = "~/projects/mobile-app/src/build-cache.bin"
+content = "x\n"
+size = 40000000
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "file"
+path = "~/projects/website/src/old-layout.bak"
+content = "old\n"
+age_days = 200
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "file"
+path = "~/projects/infra/src/firewall.bak"
+content = "old\n"
+age_days = 95
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "file"
+path = "~/projects/infra/src/today.bak"
+content = "new\n"
+age_days = 1
+owner = "learner"
+group = "learner"
+
+[[task]]
+id = "by-name"
+title = "Find by name"
+kind = "guided"
+instructions = "Find every README.md under ~/projects:  find ~/projects -name README.md"
+skills = { "b.find-files" = 1.0 }
+checks = [{ type = "output_contains", text = "infra/docs/README.md", command = ["find"] }]
+hints = ["find takes a starting directory, then tests.", "-name matches the file name (not the path).", "Type: find ~/projects -name README.md"]
+explanation = "find descends into every subdirectory. -name compares only the last part of each path, so the same name is found at any depth."
+
+[[task]]
+id = "pattern"
+title = "Patterns need quotes"
+kind = "guided"
+instructions = "List every PDF under ~/projects. Quote the pattern:  find ~/projects -name '*.pdf'"
+skills = { "b.find-files" = 1.0 }
+checks = [{ type = "output_contains", text = "{{client}}-pitch/proposal.pdf", command = ["find"] }]
+hints = ["The pattern is *.pdf — but the shell would expand an unquoted * itself.", "Put the pattern in single quotes so find receives it unchanged.", "Type: find ~/projects -name '*.pdf'"]
+explanation = "Without quotes the shell replaces *.pdf with matching names in the current directory before find runs, which silently changes the search. Quoting hands the pattern to find."
+
+[[task]]
+id = "biggest"
+title = "Which project is biggest?"
+kind = "guided"
+instructions = "Measure each project folder:  du -sh ~/projects/* | sort -h   (the biggest is listed last)"
+skills = { "b.disk-usage-basics" = 1.0 }
+question = { prompt = "Which project folder uses the most space?", type = "exact", accept = ["{{bigdir}}", "projects/{{bigdir}}", "~/projects/{{bigdir}}", "/home/learner/projects/{{bigdir}}"] }
+hints = ["du -s gives one total per argument; -h makes it human-readable.", "sort -h understands sizes like 40M and 1.2G.", "Run: du -sh ~/projects/* | sort -h — the answer is {{bigdir}}"]
+explanation = "du adds up the space used by the files below each directory. Sorting with -h puts the largest last — the usual first step when a disk is filling up."
+
+[[task]]
+id = "large-file"
+title = "Find by size"
+kind = "independent"
+instructions = "Use find to name the one file under ~/projects that is larger than 500 MB."
+skills = { "b.find-files" = 1.0, "b.disk-usage-basics" = 0.5 }
+question = { prompt = "What is the file's name?", type = "exact", accept = ["{{bigfile}}", "projects/{{bigdir}}/src/{{bigfile}}", "~/projects/{{bigdir}}/src/{{bigfile}}", "/home/learner/projects/{{bigdir}}/src/{{bigfile}}"] }
+hints = ["find has a test for size.", "-size +500M means larger than 500 MiB; add -type f.", "Run: find ~/projects -type f -size +500M"]
+explanation = "-size +N finds files larger than N (k, M or G); -size -N smaller. Combined with du, it tells you not just where space goes but which file uses it."
+
+[[task]]
+id = "df"
+title = "The whole filesystem"
+kind = "guided"
+instructions = "du measures directories; df measures whole filesystems. Run:  df -h ~"
+skills = { "b.disk-usage-basics" = 1.0 }
+checks = [{ type = "command_used", command = ["df"], success = true }]
+hints = ["df reports per filesystem; give it a path to see the one holding that path.", "-h prints sizes like 12G.", "Type: df -h ~"]
+explanation = "df shows size, used, available and Use% for the filesystem that holds the path. A full filesystem breaks programs no matter which directory the space went to."
+
+[[task]]
+id = "collect"
+title = "Act on what you find"
+kind = "guided"
+instructions = "Copy every PDF under ~/projects into ~/reports in one command:  find ~/projects -name '*.pdf' -exec cp {} ~/reports/ \\;"
+skills = { "c.find-exec" = 1.0, "b.find-files" = 0.5 }
+checks = [{ type = "dir_entries", path = "~/reports", names = ["proposal.pdf", "contract.pdf", "launch.pdf"] }]
+hints = ["-exec runs a command for every file found; {} is replaced by the file's path.", "The command must end with \\; (an escaped semicolon) so find knows where it stops.", "Type: find ~/projects -name '*.pdf' -exec cp {} ~/reports/ \\;"]
+explanation = "find ... -exec CMD {} \\; runs CMD once per file. Ending with + instead of \\; passes many files to one command, which is faster: find ... -exec cp -t ~/reports/ {} +"
+
+[[task]]
+id = "old-backups"
+title = "Delete only what is old"
+kind = "independent"
+instructions = "Delete the .bak files under ~/projects that were last modified more than 90 days ago. Keep newer .bak files. Look before you delete."
+skills = { "b.find-files" = 1.0, "c.find-exec" = 1.0 }
+checks = [
+    { type = "path_absent", path = "~/projects/website/src/old-layout.bak" },
+    { type = "path_absent", path = "~/projects/infra/src/firewall.bak" },
+    { type = "path_exists", path = "~/projects/infra/src/today.bak" },
+    { type = "path_exists", path = "~/projects/infra/docs/README.md" },
+]
+persistent = true
+hints = ["Combine a name test with an age test.", "-mtime +90 means modified more than 90 days ago. Run it with -print first, then with -delete.", "Run: find ~/projects -name '*.bak' -mtime +90 -print, then the same with -delete"]
+explanation = "Always run the search without -delete first and read the list: -delete acts on exactly what -print showed. A missing test (for example forgetting -name) would delete far more."
+
+[[task]]
+id = "order"
+title = "Order matters"
+kind = "prediction"
+instructions = "Think about how find evaluates its expression from left to right."
+skills = { "c.find-exec" = 0.5, "b.find-files" = 0.5 }
+question = { prompt = "What does  find ~/projects -delete -name '*.bak'  do?", type = "choice", choices = ["Deletes only the .bak files", "Deletes everything under ~/projects, because -delete runs before the name test", "Prints an error because -delete must come last", "Nothing until you confirm"], answer = 1 }
+hints = ["find evaluates tests and actions left to right for every file.", "-delete comes first, so it runs for every file before -name is even checked.", "The answer is (b): it deletes everything. Put tests before actions."]
+explanation = "find applies its expression left to right. Actions placed before the tests run on every file. That is why the habit is: tests first, -print to check, -delete last."
+
+[debrief]
+summary = """
+find walks a tree and selects files by name, type, size and age; -exec and -delete act on the
+selection. du -sh | sort -h shows where space went; df -h shows how full the filesystem is.
+"""
+alternatives = ["find ~/projects -name '*.pdf' | xargs cp -t ~/reports/ (careful with spaces in names)", "find ... -exec cp -t ~/reports/ {} + runs cp once for many files", "du -ah ~/projects | sort -h | tail lists the biggest files and directories together"]
+pitfalls = ["Unquoted patterns (-name *.pdf) are expanded by the shell before find runs.", "Putting -delete before the tests deletes everything under the starting directory.", "du and df can disagree: deleted files that a program still holds open count in df but not in du (chapter J)."]
+next = "Next: the lost-and-found challenge — the same tools, no commands given."
+
+[[solution]]
+name = "as instructed"
+steps = ["find ~/projects -name README.md", "find ~/projects -name '*.pdf'", "du -sh ~/projects/* | sort -h", ":answer {{bigdir}}", "find ~/projects -type f -size +500M", ":answer {{bigfile}}", "df -h ~", "find ~/projects -name '*.pdf' -exec cp {} ~/reports/ \\;", "find ~/projects -name '*.bak' -mtime +90 -print", "find ~/projects -name '*.bak' -mtime +90 -delete", ":answer b"]
+
+[[solution]]
+name = "from inside the tree, with -exec rm"
+steps = ["cd ~/projects", "find . -type f -name README.md", "find . -type f -name '*.pdf'", "du -s * | sort -n", ":answer projects/{{bigdir}}", "find . -size +500M -type f", ":answer /home/learner/projects/{{bigdir}}/src/{{bigfile}}", "df -h .", "find . -name '*.pdf' -exec cp -t ~/reports/ {} +", "find . -name '*.bak' -mtime +90 -exec rm {} \\;", ":answer 2"]
+
+[[counterexample]]
+name = "deleting every backup"
+steps = ["find ~/projects -name README.md", "find ~/projects -name '*.pdf'", "du -sh ~/projects/* | sort -h", ":answer {{bigdir}}", "find ~/projects -type f -size +500M", ":answer {{bigfile}}", "df -h ~", "find ~/projects -name '*.pdf' -exec cp {} ~/reports/ \\;", "find ~/projects -name '*.bak' -delete", ":answer b"]

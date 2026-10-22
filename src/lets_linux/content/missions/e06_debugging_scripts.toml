@@ -1,0 +1,131 @@
+schema = 1
+
+[mission]
+id = "e06-debugging-scripts"
+title = "Bugs Hide in Plain Sight"
+chapter = "E"
+kind = "troubleshooting"
+order = 8
+difficulty = 5
+requires = ["e05-failing-safely", "h02-reading-the-journal"]
+skills = ["e.script-debugging", "e.script-logging", "m.hypothesis-method"]
+review_for = ["e.test-conditionals", "e.read-input", "j.capacity"]
+xp = 180
+estimated_minutes = 30
+
+[briefing]
+context = """
+~/bin/disk-report.sh should warn about filesystems that are fuller than a threshold (default
+80%). It warns about every filesystem — and someone noticed a mysterious empty file named 80
+appearing wherever it runs. Find the bugs with the shell's own tracing, fix them, and make the
+warnings reach the journal so monitoring can pick them up.
+"""
+concept = """
+bash -x script (or set -x inside) prints every command after expansion, prefixed with +: you
+see exactly what the shell ran. Typical surprises: spaces around = in an assignment
+(var = 1 runs a command called var), and > inside [ ] (a redirection, not a comparison — use
+-gt for numbers). bash -n checks syntax without running. logger -t TAG -p user.warning
+"message" sends a message to the journal (journalctl -t TAG shows it).
+"""
+objectives = ["Trace a script with bash -x", "Find assignment and comparison bugs", "Fix numeric comparisons", "Log warnings to the journal"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "file"
+path = "~/bin/disk-report.sh"
+mode = "0755"
+content = """#!/bin/bash
+# disk-report.sh [THRESHOLD] - warn about filesystems fuller than THRESHOLD percent (default 80)
+threshold = ${1:-80}
+df -P | tail -n +2 | while read -r fs size used avail use mount; do
+    use=${use%\\%}
+    if [ $use > $threshold ]; then
+        echo "WARNING $mount at $use%"
+    fi
+done
+"""
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "chown learner:learner ~/bin ~/bin/disk-report.sh"
+
+[[task]]
+id = "trace"
+title = "Watch it run"
+kind = "troubleshooting"
+instructions = "Run the script with bash -x and read the trace (and the error messages)."
+skills = { "e.script-debugging" = 1.0 }
+question = { prompt = "bash reports a command that does not exist. Which?", type = "exact", accept = ["threshold"] }
+hints = ["bash -x ~/bin/disk-report.sh", "Look at the line '+ threshold = 80' and the message after it.", "threshold: the line 'threshold = ${1:-80}' runs a command called threshold with the arguments = and 80."]
+explanation = "With spaces around =, bash sees a command name and two arguments. An assignment is NAME=value, without spaces."
+
+[[task]]
+id = "fix"
+title = "Fix the comparison"
+kind = "troubleshooting"
+instructions = "Fix the script: it must warn only about filesystems whose use is greater than the threshold, and must not create stray files. Test it with thresholds 0 and 99."
+skills = { "e.script-debugging" = 1.0, "e.test-conditionals" = 1.0 }
+checks = [
+    { type = "command_result", command = "cd ~ && ~/bin/disk-report.sh 0", status = 0, stdout_regex = "^WARNING / at [0-9]+%$", checks = [{ type = "path_absent", path = "~/0" }, { type = "path_absent", path = "~/80" }] },
+    { type = "command_result", command = "cd ~ && ~/bin/disk-report.sh 99", status = 0, stdout_not_contains = "WARNING", checks = [{ type = "path_absent", path = "~/99" }] },
+    { type = "command_result", command = "cd ~ && ~/bin/disk-report.sh", status = 0, stdout_not_contains = "WARNING /boot", checks = [{ type = "path_absent", path = "~/80" }] },
+]
+hints = [
+    "Run bash -x again after fixing the assignment: what does '[ 13 > 80 ]' do?",
+    "> inside [ ] redirects to a file named 80. Numbers are compared with -gt.",
+    "threshold=${1:-80} and if [ \"$use\" -gt \"$threshold\" ]; then",
+]
+explanation = "[ is an ordinary command: '>' was a redirection that created the file '80', and [ 13 ] is always true. -gt compares numbers; (( use > threshold )) would also work. rm ~/80 cleans up."
+
+[[task]]
+id = "log"
+title = "Into the journal"
+kind = "independent"
+instructions = "Also send each warning to the journal with the tag disk-report and priority warning (keep printing it, too)."
+skills = { "e.script-logging" = 1.0 }
+checks = [
+    { type = "command_result", command = "~/bin/disk-report.sh 0", stdout_contains = "WARNING", checks = [{ type = "journal_contains", identifier = "disk-report", regex = "/ at [0-9]+%", max_priority = 4 }] },
+]
+hints = ["logger -t TAG -p user.warning \"message\"", "Next to the echo: logger -t disk-report -p user.warning \"$mount at $use%\"", "sed -i '/echo \"WARNING/a\\        logger -t disk-report -p user.warning \"WARNING $mount at $use%\"' ~/bin/disk-report.sh"]
+explanation = "journalctl -t disk-report -p warning now shows the warnings, with time and host — ready for alerting."
+
+[debrief]
+summary = """
+bash -x shows what the shell actually runs; bash -n checks syntax. NAME=value has no spaces;
+[ ] needs -gt/-lt for numbers (> is a redirection). logger sends script messages to the journal.
+"""
+alternatives = ["set -x … set +x around the interesting part only", "PS4='+ ${LINENO}: ' bash -x script adds line numbers to the trace", "shellcheck (not simulated) finds both bugs before running"]
+pitfalls = ["Comparing numbers as strings ([ 9 \\> 10 ] is true).", "Leaving set -x in production scripts: traces may leak secrets.", "Logging without a tag: messages are hard to find."]
+next = "Next: temporary files, traps and idempotent scripts."
+
+[[solution]]
+name = "bash -x, sed fixes, logger"
+steps = [
+    "bash -x ~/bin/disk-report.sh",
+    ":answer threshold",
+    "sed -i 's/^threshold = /threshold=/' ~/bin/disk-report.sh",
+    "bash -x ~/bin/disk-report.sh 2>&1 | head -12",
+    "sed -i 's/if \\[ $use > $threshold \\]/if [ \"$use\" -gt \"$threshold\" ]/' ~/bin/disk-report.sh",
+    "rm -f ~/80; cd ~; ~/bin/disk-report.sh 0; ~/bin/disk-report.sh 99",
+    "sed -i '/echo \"WARNING/a\\        logger -t disk-report -p user.warning \"WARNING $mount at $use%\"' ~/bin/disk-report.sh",
+    "~/bin/disk-report.sh 0; journalctl -t disk-report --no-pager",
+]
+
+[[solution]]
+name = "rewrite with arithmetic"
+steps = [
+    "bash -n ~/bin/disk-report.sh; ~/bin/disk-report.sh",
+    ":answer threshold",
+    { edit = "#!/bin/bash\n# disk-report.sh [THRESHOLD] - warn about filesystems fuller than THRESHOLD percent (default 80)\nthreshold=${1:-80}\ndf -P | tail -n +2 | while read -r fs size used avail use mount; do\n    use=${use%\\%}\n    if (( use > threshold )); then\n        msg=\"WARNING $mount at $use%\"\n        echo \"$msg\"\n        logger -t disk-report -p user.warning \"$msg\"\n    fi\ndone\n" },
+    "nano ~/bin/disk-report.sh",
+]
+
+[[counterexample]]
+name = "string comparison and a stray file"
+steps = [
+    ":answer threshold",
+    "sed -i 's/^threshold = /threshold=/; s/if \\[ $use > $threshold \\]/if [[ $use > $threshold ]]/' ~/bin/disk-report.sh",
+]

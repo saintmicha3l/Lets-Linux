@@ -1,0 +1,130 @@
+# Container images available in the simulated registries (see distributions/containers.py).
+#
+# An image's root filesystem is built from: a base (directories, /etc/os-release, users),
+# packages from the package catalogue (installed for the Debian family), single programs
+# (busybox-style, for alpine), and files. The registry must be reachable through the
+# simulated network to pull it.
+
+schema = 1
+
+[[image]]
+name = "docker.io/library/alpine"
+tags = ["3.20", "latest"]
+id = "91ef0af61f0e56d1a0fdbd29e42a3a5e0e1d0c0c6b9e2e51a5a49e6a1f3b8d17"
+size_mb = 8.1
+created_days = 92
+os_id = "alpine"
+os_name = "Alpine Linux"
+os_version = "3.20.3"
+programs = ["sh", "ls", "cat", "echo", "ps", "top", "ping", "wget", "ip", "hostname", "id", "env", "sleep", "date",
+            "df", "free", "uname", "whoami", "mkdir", "rm", "cp", "mv", "grep", "sed", "head", "tail", "touch",
+            "chmod", "find", "tar", "gzip", "kill", "printenv", "nc", "wc", "sort", "true", "false", "test", "cut", "tr",
+            "uniq", "ln", "chown", "du", "less", "su", "nslookup", "xargs", "tee", "basename", "dirname", "stat"]
+cmd = ["/bin/sh"]
+
+[[image]]
+name = "docker.io/library/debian"
+tags = ["12", "bookworm", "latest"]
+id = "5f1b9f5a7c9d4e8f0b1a2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f50617"
+size_mb = 121
+created_days = 30
+os_id = "debian"
+os_name = "Debian GNU/Linux"
+os_version = "12"
+packages = ["libc6", "bash", "coreutils", "grep", "sed", "findutils", "hostname", "debianutils", "gzip", "tar"]
+cmd = ["bash"]
+
+[[image]]
+name = "docker.io/library/nginx"
+tags = ["1.27", "latest"]
+id = "3b25b682ea82b2db3cc4fd48db818be788ee3f902ac7378090cf2624ec2442df"
+size_mb = 196
+created_days = 21
+os_id = "debian"
+os_name = "Debian GNU/Linux"
+os_version = "12"
+packages = ["libc6", "bash", "coreutils", "grep", "sed", "findutils", "hostname", "debianutils", "nginx"]
+users = ["nginx:x:101:101:nginx user:/nonexistent:/usr/sbin/nologin"]
+remove = ["/etc/nginx/sites-enabled", "/etc/nginx/sites-available"]
+cmd = ["nginx", "-g", "daemon off;"]
+expose = [80]
+
+[[image.file]]
+path = "/etc/nginx/nginx.conf"
+content = """
+user  nginx;
+worker_processes  auto;
+
+error_log  /var/log/nginx/error.log notice;
+pid        /var/run/nginx.pid;
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+    access_log  /var/log/nginx/access.log;
+    sendfile        on;
+    keepalive_timeout  65;
+    include /etc/nginx/conf.d/*.conf;
+}
+"""
+
+[[image.file]]
+path = "/etc/nginx/conf.d/default.conf"
+content = """server {
+    listen       80;
+    listen  [::]:80;
+    server_name  localhost;
+
+    location / {
+        root   /usr/share/nginx/html;
+        index  index.html index.htm;
+    }
+}
+"""
+
+[[image.file]]
+path = "/usr/share/nginx/html/index.html"
+content = """<!DOCTYPE html>
+<html>
+<head>
+<title>Welcome to nginx!</title>
+</head>
+<body>
+<h1>Welcome to nginx!</h1>
+<p>If you see this page, the nginx web server is successfully installed and
+working. Further configuration is required.</p>
+</body>
+</html>
+"""
+
+[[image]]
+name = "registry.example.lan/shop/api"
+tags = ["1.4"]
+id = "c0ffee5a1e8d7b6a5f4e3d2c1b0a99887766554433221100ffeeddccbbaa9988"
+size_mb = 134
+created_days = 6
+os_id = "debian"
+os_name = "Debian GNU/Linux"
+os_version = "12"
+packages = ["libc6", "bash", "coreutils", "grep", "sed", "netcat"]
+entrypoint = ["/app/shop-api"]
+env = ["APP_ENV=production", "LISTEN_PORT=8080"]
+expose = [8080]
+
+[[image.file]]
+path = "/app/shop-api"
+mode = "0755"
+content = """#!/bin/sh
+# shop-api 1.4 — needs DB_HOST
+if [ -z "$DB_HOST" ]; then
+  echo "shop-api: fatal: DB_HOST is not set" >&2
+  exit 1
+fi
+echo "shop-api 1.4 starting (env=$APP_ENV, database $DB_HOST)"
+echo "listening on :${LISTEN_PORT}"
+exec nc -lk "$LISTEN_PORT"
+"""

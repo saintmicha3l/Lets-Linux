@@ -1,0 +1,154 @@
+schema = 1
+
+[mission]
+id = "l01c-what-is-exposed"
+title = "What Is Exposed?"
+chapter = "L"
+kind = "lesson"
+order = 3
+difficulty = 3
+requires = ["i04-ports", "g03b-reading-the-load"]
+skills = ["l.service-exposure", "l.suspicious-processes"]
+review_for = ["l.service-exposure", "l.suspicious-processes"]
+xp = 100
+estimated_minutes = 20
+
+[briefing]
+context = """
+An attacker's first look at a server is its open ports; an administrator's first look after a
+break-in is its processes. Learn to read both the way a security reviewer does — on a server
+that has a few surprises. (sudo password: letslinux)
+"""
+concept = """
+Exposure: sudo ss -tlnp lists listening TCP sockets with their programs. The local address
+decides who can connect: 0.0.0.0 or [::] (or *) — every network the machine is on;
+127.0.0.1 or [::1] — only programs on this machine. A service that only local programs use
+should listen on 127.0.0.1; everything else listening on 0.0.0.0 must be needed, and is a job
+for the firewall too. sudo ss -tnp lists established connections.
+Suspicious processes — common signs: running from /tmp, /var/tmp or /dev/shm (often in a hidden
+directory); an executable deleted from disk (/proc/PID/exe ends in '(deleted)'); a name that
+imitates a kernel thread or system daemon; an unexpected user such as www-data running it;
+heavy CPU use; outbound connections to unknown addresses. /proc/PID/exe and /proc/PID/cwd show
+the program and working directory; keep evidence before you stop anything.
+"""
+objectives = ["Tell local-only from network-exposed services", "Spot the signs of a malicious process", "Inspect a process through /proc and ss"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+remote = { choices = ["203.0.113.91", "198.51.100.17", "192.0.2.44"] }
+fake = { choices = ["kworkerd", "systemd-helper", "dbus-agent"] }
+
+[[environment.setup]]
+action = "process"
+comm = "metrics-exporter"
+argv = ["/usr/local/bin/metrics-exporter", "--web.listen-address=:9100"]
+user = "nobody"
+listen = ["9100"]
+
+[[environment.setup]]
+action = "process"
+comm = "admin-ui"
+argv = ["/opt/admin-ui/bin/admin-ui", "--bind", "127.0.0.1:8081"]
+user = "root"
+listen = ["127.0.0.1:8081"]
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /var/tmp/.cache/.x && cp /usr/bin/sleep /var/tmp/.cache/.x/{{fake}} && chown -R www-data:www-data /var/tmp/.cache"
+
+[[environment.setup]]
+action = "process"
+comm = "{{fake}}"
+argv = ["/var/tmp/.cache/.x/{{fake}}"]
+user = "www-data"
+cwd = "/var/tmp/.cache/.x"
+cpu = 88.0
+rss_kb = 410000
+age_minutes = 900
+exe = "/var/tmp/.cache/.x/{{fake}}"
+delete_exe = true
+connect = ["{{remote}}:6667"]
+pid_var = "bad_pid"
+
+[[task]]
+id = "listening"
+title = "Who listens where?"
+kind = "guided"
+instructions = "List listening TCP sockets with their programs:  sudo ss -tlnp"
+skills = { "l.service-exposure" = 1.0, "i.ports-sockets" = 0.5 }
+question = { prompt = "Which port is reachable ONLY from this machine itself?", type = "number", accept = ["8081"] }
+hints = ["Look at the Local Address column.", "127.0.0.1:PORT accepts connections only from local programs.", "The answer is 8081 (admin-ui on 127.0.0.1)."]
+explanation = "Binding to 127.0.0.1 is the simplest protection there is: nothing on the network can even try to connect. Admin interfaces and databases used only locally should listen there."
+
+[[task]]
+id = "exposed"
+title = "Open to the network"
+kind = "guided"
+instructions = "Now look for programs listening on every address (0.0.0.0, [::] or *) in the same output."
+skills = { "l.service-exposure" = 1.0 }
+question = { prompt = "Besides sshd, which program can be reached from the network?", type = "exact", accept = ["metrics-exporter", "/usr/local/bin/metrics-exporter"] }
+hints = ["0.0.0.0:PORT or *:PORT means: every interface.", "Port 22 is sshd; one other line has an all-addresses listener.", "The answer is metrics-exporter (port 9100)."]
+explanation = "Every network-exposed service is attack surface. For each one ask: must it be reachable from the network — and from where? Then bind it to the right address or limit it with the firewall (l02 does exactly that)."
+
+[[task]]
+id = "odd-one"
+title = "Something does not fit"
+kind = "guided"
+instructions = "Rank processes by CPU with their users and full commands:  ps -eo user,pid,%cpu,args --sort=-%cpu | head"
+skills = { "l.suspicious-processes" = 1.0, "g.ps-inspection" = 0.5 }
+question = { prompt = "Which process looks suspicious? (its name)", type = "exact", accept = ["{{fake}}"] }
+hints = ["Compare each program's path with where real programs live (/usr/bin, /usr/sbin).", "One busy process runs from a hidden directory under /var/tmp as www-data.", "The answer is {{fake}}."]
+explanation = "A web server account running a CPU-heavy program from a hidden directory in /var/tmp has all the classic signs: the name is chosen to look harmless in ps."
+
+[[task]]
+id = "exe"
+title = "Look through /proc"
+kind = "guided"
+instructions = "Inspect it (PID {{bad_pid}}):  sudo ls -l /proc/{{bad_pid}}/exe /proc/{{bad_pid}}/cwd"
+skills = { "l.suspicious-processes" = 1.0, "g.proc-filesystem" = 1.0 }
+question = { prompt = "What does the exe link show about the program file?", type = "choice", choices = ["It is a normal system program", "It was deleted from disk after starting — '(deleted)' — so only the running process still has it", "It is a symbolic link to /usr/bin", "It is owned by root"], answer = 1 }
+hints = ["exe points to the program the process runs.", "Look at the end of the line.", "The answer is (b)."]
+explanation = "Malware often deletes its own file to hide. While it runs, /proc/PID/exe still gives access to it: sudo cp /proc/PID/exe /root/evidence/ saves a copy for analysis before you stop it."
+
+[[task]]
+id = "talks"
+title = "Who does it talk to?"
+kind = "independent"
+instructions = "Find the remote address the suspicious process is connected to."
+skills = { "l.suspicious-processes" = 1.0, "i.ports-sockets" = 0.5 }
+question = { prompt = "Which remote IP address?", type = "exact", accept = ["{{remote}}", "{{remote}}:6667"] }
+hints = ["ss can list established connections as well as listening sockets.", "sudo ss -tnp shows connections with their programs (or: sudo lsof -i -a -p {{bad_pid}}).", "The answer is {{remote}}."]
+explanation = "An outbound connection to an unknown address (here an IRC port, a classic botnet control channel) confirms that the process is under someone else's control. The address goes into the incident report and the firewall."
+
+[[task]]
+id = "order"
+title = "First things first"
+kind = "prediction"
+instructions = "Think about what an investigation needs."
+skills = { "l.suspicious-processes" = 1.0 }
+question = { prompt = "You found a malicious process. What comes first?", type = "choice", choices = ["kill -9 it immediately, then look around", "Record evidence (process details, a copy of /proc/PID/exe, connections), then stop it and remove whatever restarts it", "Reboot the server", "Delete /var/tmp"], answer = 1 }
+hints = ["Once the process is gone, so is the deleted program file.", "Malware usually has a way to come back (cron, a service).", "The answer is (b)."]
+explanation = "Evidence first, then containment, then removing persistence — chapter L's incident missions follow exactly that order."
+
+[debrief]
+summary = """
+ss -tlnp shows what is exposed: 127.0.0.1 is local only, 0.0.0.0/[::] is the whole network.
+Suspicious processes give themselves away by where they run from, who runs them, deleted
+executables, odd names and odd connections — and /proc shows all of it.
+"""
+alternatives = ["sudo lsof -i -P -n lists every network socket with its process", "sudo ls -l /proc/*/exe 2>/dev/null | grep deleted finds every process running a deleted program", "ps -eo pid,user,cmd --forest shows who started what"]
+pitfalls = ["Trusting process names: anyone can call a program kworker.", "Killing first and losing the evidence.", "Assuming a service on 0.0.0.0 is safe because 'nobody knows the port'."]
+next = "Next: close exposed services with the firewall."
+
+[[solution]]
+name = "as instructed"
+steps = [{ input = ["letslinux"] }, "sudo ss -tlnp", ":answer 8081", ":answer metrics-exporter", "ps -eo user,pid,%cpu,args --sort=-%cpu | head", ":answer {{fake}}", "sudo ls -l /proc/{{bad_pid}}/exe /proc/{{bad_pid}}/cwd", ":answer b", "sudo ss -tnp", ":answer {{remote}}", ":answer b"]
+
+[[solution]]
+name = "lsof and ps aux"
+steps = [{ input = ["letslinux"] }, "sudo lsof -i -P -n", ":answer 8081", ":answer /usr/local/bin/metrics-exporter", "ps aux --sort=-%cpu", ":answer {{fake}}", "sudo readlink /proc/{{bad_pid}}/exe", ":answer 2", "sudo lsof -i -a -p {{bad_pid}}", ":answer {{remote}}:6667", ":answer 2"]
+
+[[counterexample]]
+name = "guessing the exposed port"
+steps = [":answer 9100", ":answer admin-ui", ":answer {{fake}}", ":answer a", ":answer {{remote}}", ":answer a"]

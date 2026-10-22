@@ -1,0 +1,143 @@
+schema = 1
+
+[mission]
+id = "a02-command-anatomy"
+title = "Anatomy of a Command"
+chapter = "A"
+kind = "lesson"
+order = 2
+difficulty = 1
+requires = ["a01-first-contact"]
+skills = ["a.command-anatomy"]
+xp = 50
+estimated_minutes = 8
+
+[briefing]
+context = """
+A colleague left you a folder called docs and a note: "check the report, and don't miss
+the hidden config". To do that you need to know how commands take options and arguments.
+"""
+concept = """
+A command line is: COMMAND [OPTIONS] [OPERANDS]. Options change how a command behaves and
+start with a dash: short options like -l can be combined (-la); long options start with two
+dashes (--all). Some options take an argument (head -n 5). Operands are what the command acts
+on, such as file or directory names.
+"""
+objectives = ["Distinguish command, options, option arguments and operands", "Combine short options", "Use long options"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+report = { choices = ["q1-report.txt", "q2-report.txt", "q3-report.txt", "q4-report.txt"] }
+
+[[environment.setup]]
+action = "file"
+path = "~/docs/{{report}}"
+content = "Quarterly figures: revenue up 4%.\n"
+repeat = 40
+
+[[environment.setup]]
+action = "file"
+path = "~/docs/notes.md"
+content = "# Notes\n- remember the hidden config\n"
+
+[[environment.setup]]
+action = "file"
+path = "~/docs/.hidden_config"
+content = "theme=dark\n"
+
+[[task]]
+id = "ls"
+title = "List your home directory"
+kind = "guided"
+instructions = "Run `ls` with no options or operands. It lists the current directory."
+skills = { "a.command-anatomy" = 0.5, "b.ls-listing" = 0.5 }
+checks = [{ type = "output_contains", text = "docs", command = "ls" }]
+hints = ["The command to list files is two letters long.", "Type ls and press Enter.", "Type: ls"]
+explanation = "With no operand, ls lists the current directory — here, your home directory."
+
+[[task]]
+id = "long"
+title = "Add an option"
+kind = "guided"
+instructions = "Now give ls an option and an operand: `ls -l docs` shows details about each file in docs."
+skills = { "a.command-anatomy" = 1.0 }
+checks = [
+    { type = "command_used", command = "ls", args_regex = "(^| )-[a-zA-Z]*l" },
+    { type = "output_contains", text = "{{report}}", command = "ls" },
+]
+hints = [
+    "The option goes after the command name, the directory after the option.",
+    "-l means 'long format'. The operand is the directory name docs.",
+    "Type: ls -l docs",
+]
+explanation = "-l is an option (it changes the output format); docs is an operand (what to list)."
+
+[[task]]
+id = "hidden"
+title = "Combine options"
+kind = "guided"
+instructions = "Files whose names start with a dot are hidden. Combine -l with -a (all) to show them: `ls -la docs`."
+skills = { "a.command-anatomy" = 1.0, "b.hidden-files" = 0.5 }
+checks = [{ type = "output_contains", text = ".hidden_config", command = "ls" }]
+hints = [
+    "Short options can be written separately (-l -a) or combined (-la).",
+    "You need the 'all' option, -a, in addition to -l.",
+    "Type: ls -la docs",
+]
+explanation = "-la is the same as -l -a. The listing also shows . (this directory) and .. (its parent)."
+
+[[task]]
+id = "operand"
+title = "Name the parts"
+kind = "prediction"
+instructions = "Answer from what you have learned."
+skills = { "a.command-anatomy" = 1.0 }
+question = { prompt = "In the command   head -n 5 notes.md   what is the 5?", type = "choice", choices = [
+    "An option",
+    "An option argument (the value of -n)",
+    "An operand",
+    "The command name",
+], answer = 1 }
+hints = [
+    "The -n option needs to know how many lines.",
+    "Some options take a value; the value belongs to the option, not to the command's list of files.",
+    "The answer is (b): 5 is the argument of the -n option; notes.md is the operand.",
+]
+explanation = "head is the command, -n is an option, 5 is the option's argument and notes.md is the operand."
+
+[[task]]
+id = "longopt"
+title = "Use a long option"
+kind = "independent"
+instructions = "Long options use two dashes. Show the date in ISO 8601 format (YYYY-MM-DD) using the date command and a long option."
+skills = { "a.command-anatomy" = 1.0, "a.date-time" = 1.0 }
+checks = [{ type = "output_contains", regex = "(?m)^2026-03-\\d\\d$", command = "date" }]
+hints = [
+    "date --help lists its long options.",
+    "Look for an option containing 'iso'.",
+    "Type: date --iso-8601   (date +%F also works)",
+]
+explanation = "date --iso-8601 (or the format string +%F) prints the date as YYYY-MM-DD, a format that sorts correctly."
+
+[debrief]
+summary = """
+Commands take options (changing behaviour), option arguments (values for options) and operands
+(the things acted on). Short options combine (-la); long options are spelled out (--all). Reading
+a command line as these parts makes unfamiliar commands far less mysterious.
+"""
+alternatives = ["ls -a -l docs and ls --all -l docs are equivalent to ls -la docs", "date +%Y-%m-%d gives the same output as date --iso-8601"]
+pitfalls = ["A single dash with a word (ls -all) is read as -a -l -l, not as --all.", "Spaces separate arguments: ls-l is a different (non-existent) command."]
+next = "Next: finding help when you don't know which option you need."
+
+[[solution]]
+name = "as instructed"
+steps = ["ls", "ls -l docs", "ls -la docs", ":answer b", "date --iso-8601"]
+
+[[solution]]
+name = "separate options and a format string"
+steps = ["ls ~", "ls -l ~/docs", "ls -a -l docs", ":answer 2", "date +%F"]
+
+[[counterexample]]
+name = "printing the expected text"
+steps = ["echo docs", "echo .hidden_config", "echo 2026-03-02"]

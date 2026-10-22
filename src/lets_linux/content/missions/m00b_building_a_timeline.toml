@@ -1,0 +1,171 @@
+schema = 1
+
+[mission]
+id = "m00b-building-a-timeline"
+title = "Building a Timeline"
+chapter = "M"
+kind = "lesson"
+order = 1
+difficulty = 3
+requires = ["c08-the-method", "h02-reading-the-journal", "c05b-reading-logs", "b06b-finding-files"]
+skills = ["m.evidence-correlation"]
+review_for = ["m.evidence-correlation"]
+xp = 100
+estimated_minutes = 20
+
+[briefing]
+context = """
+"It worked yesterday" means something changed. Chapter M's incidents are solved by turning
+scattered clues — log lines, file times, sudo records — into one timeline. Practise on a quiet
+case: the nightly-style backup job started failing this morning. (sudo password: letslinux)
+"""
+concept = """
+1. Pin the first failure: journalctl -t TAG or -u UNIT, with -p err to show only errors.
+   journalctl -o short-iso prints full timestamps.
+2. List what changed shortly before: find /etc -mmin -N (modified in the last N minutes) or
+   find /etc -newermt 'YYYY-MM-DD HH:MM'; stat FILE shows exact times.
+3. Look at everything else around that moment:
+   journalctl --since 'YYYY-MM-DD HH:MM' --until 'YYYY-MM-DD HH:MM' — sudo logs every command
+   it runs, cron logs every job it starts, dpkg logs package changes in /var/log/dpkg.log.
+4. Check that the candidate cause really explains the symptom (read the change), before
+   acting on it: two things at the same time are not proof that one caused the other.
+"""
+objectives = ["Pin the time of the first failure", "Find changes made just before it", "Attribute a change from sudo's log", "Confirm that the change explains the failure"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+who = { choices = ["jonas", "priya", "tariq"] }
+
+[[environment.setup]]
+action = "user"
+name = "{{who}}"
+groups = ["sudo"]
+
+[[environment.setup]]
+action = "file"
+path = "/etc/backup/target.conf"
+content = "# where backup.sh writes its archives\ndest=/srv/backup\n"
+
+[[environment.setup]]
+action = "journal"
+identifier = "backup"
+message = "run completed: 412 files to /srv/backup"
+
+[[environment.setup]]
+action = "clock"
+seconds = 3600
+
+[[environment.setup]]
+action = "journal"
+identifier = "backup"
+message = "run completed: 415 files to /srv/backup"
+
+[[environment.setup]]
+action = "clock"
+seconds = 1500
+
+[[environment.setup]]
+action = "journal"
+identifier = "sudo"
+message = "{{who}} : TTY=pts/1 ; PWD=/home/{{who}} ; USER=root ; COMMAND=/usr/bin/sed -i s|/srv/backup|/mnt/nas/backup| /etc/backup/target.conf"
+
+[[environment.setup]]
+action = "run"
+command = "sed -i 's|/srv/backup|/mnt/nas/backup|' /etc/backup/target.conf"
+
+[[environment.setup]]
+action = "clock"
+seconds = 2100
+
+[[environment.setup]]
+action = "journal"
+identifier = "backup"
+priority = 3
+message = "cannot write /mnt/nas/backup: No such file or directory"
+
+[[environment.setup]]
+action = "clock"
+seconds = 3600
+
+[[environment.setup]]
+action = "journal"
+identifier = "backup"
+priority = 3
+message = "cannot write /mnt/nas/backup: No such file or directory"
+
+[[environment.setup]]
+action = "clock"
+seconds = 900
+
+[[task]]
+id = "first"
+title = "1. When did it start?"
+kind = "guided"
+instructions = "Show the backup job's messages, then only its errors:  journalctl -t backup   and   journalctl -t backup -p err"
+skills = { "m.evidence-correlation" = 1.0, "h.journalctl" = 0.5 }
+question = { prompt = "At what time (HH:MM) was the first error logged?", type = "state", state = { command = "journalctl -t backup -p err -o short-iso | head -1 | cut -c12-16" } }
+hints = ["-p err limits the output to errors (and worse).", "The first line of the error output is the first failure; its time is the third field.", "Read the HH:MM of the first line of: journalctl -t backup -p err"]
+explanation = "The first failure is the anchor of the timeline: the cause must be at or before it — and usually just before."
+
+[[task]]
+id = "changed"
+title = "2. What changed before that?"
+kind = "guided"
+instructions = "List configuration files modified in the last 150 minutes:  sudo find /etc -type f -mmin -150   (then check the exact time with  stat FILE )"
+skills = { "m.evidence-correlation" = 1.0, "b.find-files" = 0.5 }
+question = { prompt = "Which configuration file changed shortly before the first error? (full path)", type = "exact", accept = ["/etc/backup/target.conf"] }
+hints = ["-mmin -150 means modified less than 150 minutes ago.", "Only one file under /etc matches; stat shows its Modify time.", "The answer is /etc/backup/target.conf."]
+explanation = "A file modified about half an hour before the first failure is a prime suspect — still only a suspect."
+
+[[task]]
+id = "who"
+title = "3. Who changed it?"
+kind = "guided"
+instructions = "sudo logs every command it runs. Look at the journal around the time the file changed:  journalctl -t sudo   (or journalctl --since '...' --until '...' with times around the change)"
+skills = { "m.evidence-correlation" = 1.0 }
+question = { prompt = "Which user changed the file?", type = "exact", accept = ["{{who}}"] }
+hints = ["sudo's journal lines start with the user name.", "Look for COMMAND= mentioning target.conf.", "The answer is {{who}}."]
+explanation = "sudo's records turn 'someone changed it' into a name, a time and the exact command — ask them why before you undo it."
+
+[[task]]
+id = "explains"
+title = "4. Does it explain the failure?"
+kind = "independent"
+instructions = "Check that the change really explains the error message: compare what the file says now with what the backup reports."
+skills = { "m.evidence-correlation" = 1.0, "m.hypothesis-method" = 0.5 }
+question = { prompt = "Which destination does the configuration now name, that does not exist?", type = "exact", accept = ["/mnt/nas/backup", "/mnt/nas/backup/"] }
+hints = ["Read the file.", "Then check whether that directory exists (ls -ld).", "The answer is /mnt/nas/backup."]
+explanation = "Now the chain is complete: {{who}} pointed the backup at /mnt/nas/backup, which does not exist (the NAS is probably not mounted), and every run since fails. The fix is a conversation and a mount — not blindly reverting the line."
+
+[[task]]
+id = "coincidence"
+title = "Coincidence or cause?"
+kind = "prediction"
+instructions = "Think about what a timeline can and cannot prove."
+skills = { "m.evidence-correlation" = 1.0 }
+question = { prompt = "A package upgrade and a service failure happened in the same minute. What do you know?", type = "choice", choices = ["The upgrade caused the failure", "They are a lead worth checking: look for a mechanism (changed file, restart, error message) that links them", "The failure caused the upgrade", "Nothing useful"], answer = 1 }
+hints = ["Correlation narrows the search; it does not prove cause.", "Look for the mechanism that links the two.", "The answer is (b)."]
+explanation = "A timeline tells you where to look. The error message, the changed file and a test of the fix tell you whether you were right."
+
+[debrief]
+summary = """
+Anchor the timeline at the first failure, list what changed just before (find -mmin,
+-newermt, stat), find who and what made the change (sudo, cron, dpkg logs), and confirm that
+the change explains the symptom before acting.
+"""
+alternatives = ["journalctl --since '-3h' -p warning gives an overview of everything that went wrong recently", "ls -lt --time-style=full-iso /etc | head lists the most recently changed files", "grep ' install \\| upgrade ' /var/log/dpkg.log shows package changes"]
+pitfalls = ["Fixing the symptom without finding the change that caused it — it comes back.", "Trusting file times alone: a backup restore or copy can change them.", "Taking simultaneous events as proof of cause."]
+next = "Next: a real incident — the metrics agent that broke itself on a schedule."
+
+[[solution]]
+name = "as instructed"
+steps = ["journalctl -t backup", "journalctl -t backup -p err", { answer_with = "journalctl -t backup -p err -o short-iso | head -1 | cut -c12-16" }, { input = ["letslinux"] }, "sudo find /etc -type f -mmin -150", "stat /etc/backup/target.conf", ":answer /etc/backup/target.conf", "journalctl -t sudo", ":answer {{who}}", "cat /etc/backup/target.conf", "ls -ld /mnt/nas/backup", ":answer /mnt/nas/backup", ":answer b"]
+
+[[solution]]
+name = "full timestamps and grep"
+steps = ["journalctl -t backup -p err -o short-iso | head -1", { answer_with = "journalctl -t backup -p err -o short-iso | head -1 | cut -c12-16" }, { input = ["letslinux"] }, "sudo ls -lt --time-style=full-iso /etc/backup", ":answer /etc/backup/target.conf", "journalctl | grep target.conf", ":answer {{who}}", "grep dest /etc/backup/target.conf", ":answer /mnt/nas/backup/", ":answer 2"]
+
+[[counterexample]]
+name = "jumping to conclusions"
+steps = [":answer 09:00", ":answer /etc/backup/target.conf", ":answer root", ":answer /srv/backup", ":answer a"]

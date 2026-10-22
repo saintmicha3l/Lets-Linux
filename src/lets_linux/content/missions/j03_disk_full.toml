@@ -1,0 +1,244 @@
+schema = 1
+
+[mission]
+id = "j03-disk-full"
+title = "No Space Left on Device"
+chapter = "J"
+kind = "troubleshooting"
+order = 4
+difficulty = 4
+requires = ["j01-new-disk", "h04-wont-start", "b07-lost-and-found", "j02b-measuring-space", "c08-the-method"]
+skills = ["j.capacity", "j.disk-full-incident", "m.hypothesis-method"]
+review_for = ["h.failed-services", "b.disk-usage-basics"]
+xp = 160
+estimated_minutes = 25
+
+[briefing]
+context = """
+Monday morning: the sales team has no reports. reportd, the service that writes them, is
+down. Get it running again — but careful: the retention policy says archived reports must be
+kept for 30 days; older archives are already on the backup server and may be deleted.
+(sudo password: letslinux)
+"""
+concept = """
+"No space left on device" means a filesystem is full. df -h shows every mounted filesystem
+with its use; df -h PATH shows the one holding PATH. du -sh DIR/* | sort -h ranks what uses
+the space; find DIR -mtime +30 selects files by age. ext4 keeps 5% for root, so services
+running as ordinary users fail first — root can still write a little. Free space according
+to policy, then restart what failed.
+"""
+objectives = ["Read the service's error", "Find the full filesystem", "Find what fills it", "Free space by policy", "Restore the service"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "user"
+name = "reports"
+system = true
+shell = "/usr/sbin/nologin"
+home = "/var/lib/reports"
+create_home = false
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "2G"
+partitions = [{ size = "rest", fs = "ext4", label = "reports", mount = "/var/lib/reports", fstab = true, owner = "reports" }]
+
+[[environment.setup]]
+action = "dir"
+path = "/var/lib/reports/current"
+owner = "reports"
+
+[[environment.setup]]
+action = "file"
+path = "/var/lib/reports/current/sales-2026-02-27.csv"
+owner = "reports"
+content = "region,orders,revenue\nnorth,1203,88412.50\nsouth,977,70110.00\n"
+age_days = 3
+
+[[environment.setup]]
+action = "dir"
+path = "/var/lib/reports/archive"
+owner = "reports"
+
+[[environment.setup]]
+action = "file"
+path = "/var/lib/reports/archive/sales-2026-02-20.csv.gz"
+owner = "reports"
+size = 31457280
+age_days = 10
+
+[[environment.setup]]
+action = "file"
+path = "/var/lib/reports/archive/sales-2026-02-13.csv.gz"
+owner = "reports"
+size = 30408704
+age_days = 17
+
+[[environment.setup]]
+action = "file"
+path = "/var/lib/reports/archive/sales-2026-02-06.csv.gz"
+owner = "reports"
+size = 29360128
+age_days = 24
+
+[[environment.setup]]
+action = "fill"
+dir = "/var/lib/reports/archive"
+count = 24
+prefix = "sales-"
+suffix = ".csv.gz"
+age_from = 40
+age_to = 400
+owner = "reports"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/reportd"
+mode = "0755"
+content = """#!/bin/bash
+# reportd: write today's sales report, then wait for the next day
+out=/var/lib/reports/current/sales-$(date +%F).csv
+echo "region,orders,revenue" > "$out" || { echo "reportd: cannot write $out" >&2; exit 1; }
+echo "reportd: writing reports to $out"
+while true; do sleep 600; done
+"""
+
+[[environment.setup]]
+action = "service"
+name = "reportd.service"
+enable = true
+start = true
+content = """[Unit]
+Description=Sales report generator
+After=local-fs.target
+
+[Service]
+User=reports
+ExecStart=/usr/local/bin/reportd
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[task]]
+id = "symptom"
+title = "Why is reportd down?"
+kind = "troubleshooting"
+instructions = "Find out why the reportd service is not running."
+skills = { "j.disk-full-incident" = 1.0, "h.failed-services" = 0.5 }
+question = { prompt = "What error made reportd fail?", type = "choice", choices = ["Permission denied", "No space left on device", "command not found", "Address already in use"], answer = 1 }
+hints = ["systemctl status shows a service's state and its last log lines.", "systemctl status reportd   (or journalctl -u reportd)", "The shell could not create the report file: No space left on device — (b)."]
+explanation = "The script could not create its output file. That is a symptom: the cause is a full filesystem."
+
+[[task]]
+id = "which"
+title = "Which filesystem?"
+kind = "troubleshooting"
+instructions = "Find the full filesystem."
+skills = { "j.capacity" = 1.0 }
+question = { prompt = "On which mount point is the full filesystem mounted?", type = "exact", accept = ["/var/lib/reports", "/var/lib/reports/"] }
+hints = ["df -h lists every filesystem with Use%.", "df -h /var/lib/reports/current shows the filesystem that holds the directory reportd writes to.", "/var/lib/reports (on /dev/sdb1) is at 100%."]
+explanation = "df shows Avail 0 and Use% 100% for /var/lib/reports. The root filesystem is fine — a full disk is always one particular filesystem."
+
+[[task]]
+id = "what"
+title = "What fills it?"
+kind = "troubleshooting"
+instructions = "Find which directory inside /var/lib/reports uses almost all of the space."
+skills = { "j.capacity" = 1.0 }
+question = { prompt = "Which directory uses most of the space?", type = "exact", accept = ["/var/lib/reports/archive", "archive", "/var/lib/reports/archive/"] }
+hints = ["du -sh DIR/* shows the size of each entry in DIR.", "sudo du -sh /var/lib/reports/* | sort -h", "/var/lib/reports/archive"]
+explanation = "du sums up the files below each directory; sort -h orders human-readable sizes."
+
+[[task]]
+id = "free"
+title = "Free space — by the policy"
+kind = "troubleshooting"
+instructions = "Delete the archived reports that are older than 30 days. Keep everything newer. Afterwards at least 30% of the filesystem should be free."
+skills = { "j.disk-full-incident" = 1.0, "j.capacity" = 0.5, "b.find-files" = 0.5 }
+checks = [
+    { type = "filesystem_free", mount = "/var/lib/reports", min_percent = 30 },
+    { type = "path_exists", path = "/var/lib/reports/archive/sales-2026-02-20.csv.gz" },
+    { type = "path_exists", path = "/var/lib/reports/archive/sales-2026-02-13.csv.gz" },
+    { type = "path_exists", path = "/var/lib/reports/archive/sales-2026-02-06.csv.gz" },
+    { type = "path_exists", path = "/var/lib/reports/current/sales-2026-02-27.csv" },
+]
+persistent = true
+hints = [
+    "find can select files by modification time: -mtime +30 means 'more than 30 days ago'.",
+    "Look first: sudo find /var/lib/reports/archive -type f -mtime +30 -ls — then add -delete.",
+    "sudo find /var/lib/reports/archive -type f -mtime +30 -delete; df -h /var/lib/reports",
+]
+explanation = "Selecting by age instead of by name or size applies the policy exactly. Listing before deleting (-ls, then -delete) is a habit worth keeping."
+
+[[task]]
+id = "restore"
+title = "Reports again"
+kind = "troubleshooting"
+instructions = "Get reportd running again and confirm that it wrote today's report."
+skills = { "j.disk-full-incident" = 1.0, "h.systemctl-control" = 0.5 }
+checks = [
+    { type = "unit_state", unit = "reportd.service", active = "active", sub = "running" },
+    { type = "path_exists", path = "/var/lib/reports/current/sales-2026-03-02.csv" },
+]
+persistent = true
+hints = ["A failed service does not restart by itself here (no Restart= setting).", "sudo systemctl restart reportd, then systemctl status reportd", "sudo systemctl restart reportd && ls -l /var/lib/reports/current"]
+explanation = "reportd runs and today's report exists. Follow-up for the team: monitoring on disk usage, and an automatic retention job (find -mtime +30 -delete in a timer)."
+
+[debrief]
+summary = """
+Disk full: read the error → df -h to find the filesystem → du -sh … | sort -h to find the
+consumer → delete by policy (find -mtime) → restart the failed service → prevent a repeat.
+"""
+alternatives = ["ncdu, an interactive du, where it is installed", "find /var/lib/reports -xdev -type f -size +100M lists large files on one filesystem", "Moving data to another filesystem instead of deleting it"]
+pitfalls = ["Deleting files that are still open by a process: the space is not freed (next mission).", "rm -rf on a whole directory 'because it is big' — check the policy and the contents first.", "Forgetting that the service will not recover by itself."]
+next = "Next: when df and du disagree."
+
+[[solution]]
+name = "status, df, du, find -delete"
+steps = [
+    "systemctl status reportd",
+    ":answer b",
+    "df -h",
+    ":answer /var/lib/reports",
+    { input = ["letslinux"] },
+    "sudo du -sh /var/lib/reports/* | sort -h",
+    ":answer /var/lib/reports/archive",
+    "sudo find /var/lib/reports/archive -type f -mtime +30 -ls",
+    "sudo find /var/lib/reports/archive -type f -mtime +30 -delete",
+    "df -h /var/lib/reports",
+    "sudo systemctl restart reportd",
+    "systemctl status reportd",
+    "ls /var/lib/reports/current",
+]
+
+[[solution]]
+name = "journal and a root shell"
+steps = [
+    "journalctl -u reportd --no-pager",
+    ":answer No space left on device",
+    "df -h /var/lib/reports/current",
+    ":answer /var/lib/reports/",
+    { input = ["letslinux"] },
+    "sudo -i",
+    "cd /var/lib/reports && du -s * | sort -n",
+    ":answer archive",
+    "ls -lt archive | tail",
+    "find archive -name 'sales-*.csv.gz' -mtime +30 -exec rm {} +",
+    "systemctl start reportd.service",
+    "exit",
+]
+
+[[counterexample]]
+name = "emptying the archive"
+steps = [
+    ":answer b",
+    ":answer /var/lib/reports",
+    ":answer archive",
+    { input = ["letslinux"] },
+    "sudo rm -rf /var/lib/reports/archive/*",
+    "sudo systemctl restart reportd",
+]

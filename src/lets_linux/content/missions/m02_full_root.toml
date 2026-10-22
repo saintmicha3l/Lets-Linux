@@ -1,0 +1,203 @@
+schema = 1
+
+[mission]
+id = "m02-full-root"
+title = "The Disk That Was Not There"
+chapter = "M"
+kind = "troubleshooting"
+order = 3
+difficulty = 6
+requires = ["j07-fstab-rescue", "j03-disk-full"]
+skills = ["m.disk-rca", "m.hypothesis-method", "m.verification"]
+review_for = ["j.fstab-persistence", "j.mount-umount", "j.capacity"]
+xp = 230
+estimated_minutes = 35
+
+[briefing]
+context = """
+The ingest service on this Debian server reports "No space left on device", and the root
+filesystem is full. That should be impossible: incoming data goes to /srv/data, which lives
+on its own 32 GB data disk. Find out what happened, get the data where it belongs, free the
+root filesystem, and make sure it cannot happen silently again after the next reboot.
+(sudo password: letslinux)
+"""
+concept = """
+A mount point is an ordinary directory until something is mounted on it. If the mount
+fails, programs write into the directory on the filesystem below — usually the root
+filesystem — and nobody notices until it fills up. nofail in fstab lets the boot continue
+when a device is missing (good for availability, bad for noticing). Check what is mounted
+where: findmnt /srv/data, df -h /srv/data, lsblk -f. Mounting the disk afterwards does not
+free anything: the files written meanwhile are hidden *under* the mount, still using space
+on the root filesystem. Move them first (or mount the disk somewhere else temporarily and
+copy them over), then mount the disk in its place.
+"""
+objectives = ["Test hypotheses about a full disk", "Find a failed mount and why it failed", "Recover data hidden below a mount point", "Fix fstab and verify across a reboot"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "32G"
+partitions = [{ size = "rest", fs = "ext4", label = "data" }]
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /srv/data /mnt/tmpdata && mount /dev/sdb1 /mnt/tmpdata && mkdir -p /mnt/tmpdata/archive /mnt/tmpdata/incoming && for m in 01 02 03 04 05 06; do echo \"batch 2025-$m\" > /mnt/tmpdata/archive/batch-2025-$m.csv; done && umount /mnt/tmpdata && rmdir /mnt/tmpdata"
+
+[[environment.setup]]
+action = "append"
+path = "/etc/fstab"
+content = """# data disk (replaced 2026-02-25)
+UUID=6f1c2a7e-3b9d-4e2a-9c51-0d8e7f6a5b43 /srv/data ext4 defaults,nofail 0 2
+"""
+
+[[environment.setup]]
+action = "reboot"
+
+[[environment.setup]]
+action = "clock"
+advance = 432000
+
+[[environment.setup]]
+action = "fill"
+dir = "/srv/data/incoming"
+count = 5
+prefix = "batch-"
+suffix = ".csv"
+age_from = 0.3
+age_to = 4.2
+leave = "0"
+
+[[environment.setup]]
+action = "journal"
+identifier = "ingest"
+priority = "err"
+message = "write /srv/data/incoming/batch-current.csv: No space left on device"
+repeat = 4
+ago = 300
+
+[[task]]
+id = "full"
+title = "Which filesystem?"
+kind = "troubleshooting"
+instructions = "Check which filesystem is out of space."
+skills = { "m.disk-rca" = 1.0 }
+question = { prompt = "Mount point of the full filesystem?", type = "exact", accept = ["/"] }
+hints = ["df -h lists every mounted filesystem with its use.", "Look at the Use% column — and at which line /srv/data appears on.", "/ — the root filesystem is at 100%; there is no separate line for /srv/data."]
+explanation = "Hypothesis 1 ('the data disk is full') is refuted: the data disk does not even appear in df."
+
+[[task]]
+id = "where"
+title = "Where did the space go?"
+kind = "troubleshooting"
+instructions = "Find the directory on the root filesystem that uses the space."
+skills = { "m.disk-rca" = 1.0, "j.capacity" = 0.5 }
+question = { prompt = "Which directory holds the data?", type = "exact", accept = ["/srv/data", "/srv/data/incoming", "/srv/data/incoming/"] }
+hints = ["du -xh --max-depth=1 / stays on the root filesystem (-x).", "sudo du -xsh /srv/* /var/* 2>/dev/null | sort -h | tail", "/srv/data/incoming — data that should be on the data disk."]
+explanation = "The ingest service wrote to /srv/data as always — but /srv/data was just a directory on /."
+
+[[task]]
+id = "why"
+title = "Why was it not mounted?"
+kind = "troubleshooting"
+instructions = "Find out why the data disk was not mounted on /srv/data."
+skills = { "m.hypothesis-method" = 1.0, "j.fstab-persistence" = 0.5 }
+question = { prompt = "What is wrong?", type = "choice", choices = ["The data disk is broken", "The fstab line names a UUID that no device has, and nofail let the boot continue without the mount", "The data disk is full"], answer = 1 }
+hints = ["findmnt /srv/data prints nothing: not mounted. What does the boot log say? journalctl -b | grep -i 'srv-data\\|timed out'", "Compare the UUID in /etc/fstab with the disk's real UUID: lsblk -f or sudo blkid", "The disk was replaced; its new filesystem has a different UUID. The boot waited, timed out — and nofail meant 'carry on'."]
+explanation = "Each piece of evidence ruled something out: the disk is present (lsblk), healthy, nearly empty — only the reference to it was wrong."
+
+[[task]]
+id = "recover"
+title = "Data where it belongs"
+kind = "independent"
+instructions = "Make /srv/data the data disk again, with all files: the archive already on the disk and the incoming batches written to the root filesystem meanwhile. Afterwards the root filesystem must have room again, and the mount must come back after a reboot."
+skills = { "m.disk-rca" = 1.0, "m.verification" = 1.0, "j.mount-umount" = 0.5 }
+checks = [
+    { type = "mounted", target = "/srv/data", label = "data" },
+    { type = "tree_count", path = "/srv/data/archive", glob = "batch-*.csv", count = 6 },
+    { type = "tree_count", path = "/srv/data/incoming", glob = "batch-*.csv", count = 5 },
+    { type = "filesystem_free", mount = "/", min_percent = 50 },
+    { type = "fstab_valid" },
+    { type = "after_reboot", checks = [{ type = "mounted", target = "/srv/data", label = "data" }, { type = "tree_count", path = "/srv/data/incoming", glob = "batch-*.csv", count = 5 }] },
+]
+hints = [
+    "If you mount the disk on /srv/data now, the incoming files disappear below it — and keep filling /. Move them first.",
+    "Mount the disk somewhere else (sudo mount /dev/sdb1 /mnt), move the files (sudo mv /srv/data/incoming/* /mnt/incoming/), unmount, then mount it on /srv/data.",
+    "Fix fstab with the real UUID (sudo blkid /dev/sdb1) or LABEL=data, then sudo mount -a and findmnt /srv/data.",
+]
+explanation = "All eleven files are on the data disk, the root filesystem is mostly free again, and the reboot test found /srv/data mounted."
+
+[[task]]
+id = "nofail"
+title = "Silent failures"
+kind = "explanation"
+instructions = "nofail made the boot survive the missing disk — and hid the problem."
+skills = { "m.verification" = 1.0 }
+question = { prompt = "What would have revealed the problem early, without risking an unbootable server?", type = "choice", choices = ["Removing /srv/data", "Monitoring that /srv/data is a mount point (findmnt, mountpoint -q) or making the service depend on it (RequiresMountsFor=/srv/data)", "Turning off the ingest service"], answer = 1 }
+hints = ["The service should not write when the disk is missing.", "systemd can tie a service to a mount: RequiresMountsFor=", "(b)"]
+explanation = "With RequiresMountsFor=/srv/data the ingest service would have failed loudly instead of filling /."
+
+[debrief]
+summary = """
+df (which filesystem?) → du -x (which directory?) → findmnt/lsblk -f/blkid and the boot
+log (why not mounted?) → move hidden data → fix fstab → mount -a → verify df, findmnt, and a
+reboot.
+"""
+alternatives = ["Bind-mount / elsewhere (mount --bind / /mnt/root) to see files hidden under mount points", "rsync -a then delete instead of mv", "LABEL=data in fstab survives reformatting with the same label"]
+pitfalls = ["Mounting over the files: the space stays used and the data looks lost.", "Deleting the 'duplicate' data on / without checking it is on the disk.", "Fixing fstab without testing it (mount -a) before the next reboot."]
+next = "Next: a website nobody can reach."
+
+[[solution]]
+name = "move via /mnt"
+steps = [
+    "df -h",
+    ":answer /",
+    { input = ["letslinux"] },
+    "sudo du -xsh /srv/* /var/* 2>/dev/null | sort -h | tail -3",
+    ":answer /srv/data/incoming",
+    "findmnt /srv/data",
+    "lsblk -f",
+    "sudo blkid /dev/sdb1",
+    "grep srv /etc/fstab",
+    ":answer b",
+    "sudo mount /dev/sdb1 /mnt",
+    "sudo mv /srv/data/incoming/* /mnt/incoming/",
+    "sudo umount /mnt",
+    "sudo sed -i 's|^UUID=6f1c2a7e-3b9d-4e2a-9c51-0d8e7f6a5b43 |LABEL=data |' /etc/fstab",
+    "sudo mount -a",
+    "df -h / /srv/data",
+    ":answer b",
+]
+
+[[solution]]
+name = "rsync and the real UUID"
+steps = [
+    "df -h /",
+    ":answer /",
+    { input = ["letslinux"] },
+    "sudo du -xh --max-depth=2 /srv",
+    ":answer /srv/data",
+    ":answer The fstab line names a UUID that no device has, and nofail let the boot continue without the mount",
+    "sudo mkdir /mnt/data",
+    "sudo mount LABEL=data /mnt/data",
+    "sudo rsync -a /srv/data/incoming/ /mnt/data/incoming/",
+    "sudo rm -r /srv/data/incoming",
+    "sudo umount /mnt/data",
+    "uuid=$(sudo blkid -s UUID -o value /dev/sdb1) && sudo sed -i \"s|^UUID=6f1c2a7e-3b9d-4e2a-9c51-0d8e7f6a5b43|UUID=$uuid|\" /etc/fstab",
+    "sudo mount /srv/data",
+    ":answer b",
+]
+
+[[counterexample]]
+name = "mount over the files"
+steps = [
+    ":answer /",
+    ":answer /srv/data",
+    ":answer b",
+    { input = ["letslinux"] },
+    "sudo sed -i 's|^UUID=6f1c2a7e-3b9d-4e2a-9c51-0d8e7f6a5b43 |LABEL=data |' /etc/fstab",
+    "sudo mount -a",
+    ":answer b",
+]

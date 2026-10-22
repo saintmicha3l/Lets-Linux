@@ -1,0 +1,259 @@
+# Package catalogue: web servers (installable, not in the base images).
+
+schema = 1
+
+[[package]]
+name = "nginx"
+summary = "small, powerful, scalable web/proxy server"
+section = "httpd"
+size_kb = 1450
+versions = { debian = "1.22.1-9+deb12u1", ubuntu = "1.24.0-2ubuntu7.1", fedora = "2:1.26.2-1.fc41", arch = "1.26.2-2", generic = "1.26.2" }
+sbin = ["nginx"]
+services = ["nginx.service"]
+user = [{ name = "nginx", home = "/var/lib/nginx", gecos = "Nginx web server", families = ["fedora"] }]
+
+# ---- Debian and Ubuntu ------------------------------------------------------
+
+[[package.file]]
+families = ["debian", "generic"]
+path = "/etc/nginx/nginx.conf"
+content = """user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+error_log /var/log/nginx/error.log;
+include /etc/nginx/modules-enabled/*.conf;
+
+events {
+	worker_connections 768;
+	# multi_accept on;
+}
+
+http {
+
+	##
+	# Basic Settings
+	##
+
+	sendfile on;
+	tcp_nopush on;
+	types_hash_max_size 2048;
+	# server_tokens off;
+
+	include /etc/nginx/mime.types;
+	default_type application/octet-stream;
+
+	##
+	# SSL Settings
+	##
+
+	ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3; # Dropping SSLv3, ref: POODLE
+	ssl_prefer_server_ciphers on;
+
+	##
+	# Logging Settings
+	##
+
+	access_log /var/log/nginx/access.log;
+
+	##
+	# Gzip Settings
+	##
+
+	gzip on;
+
+	##
+	# Virtual Host Configs
+	##
+
+	include /etc/nginx/conf.d/*.conf;
+	include /etc/nginx/sites-enabled/*;
+}
+"""
+
+[[package.file]]
+families = ["debian", "generic"]
+path = "/etc/nginx/sites-available/default"
+content = """##
+# You should look at the following URL's in order to grasp a solid understanding
+# of Nginx configuration files in order to fully unleash the power of Nginx.
+# https://www.nginx.com/resources/wiki/start/
+##
+
+# Default server configuration
+#
+server {
+	listen 80 default_server;
+	listen [::]:80 default_server;
+
+	root /var/www/html;
+
+	# Add index.php to the list if you are using PHP
+	index index.html index.htm index.nginx-debian.html;
+
+	server_name _;
+
+	location / {
+		# First attempt to serve request as file, then
+		# as directory, then fall back to displaying a 404.
+		try_files $uri $uri/ =404;
+	}
+}
+"""
+
+[[package.file]]
+families = ["debian", "generic"]
+path = "/etc/nginx/sites-enabled"
+kind = "dir"
+mode = "0755"
+
+[[package.file]]
+families = ["debian", "generic"]
+path = "/etc/nginx/sites-enabled/default"
+kind = "symlink"
+target = "/etc/nginx/sites-available/default"
+
+[[package.file]]
+families = ["debian", "generic"]
+path = "/etc/nginx/modules-enabled"
+kind = "dir"
+mode = "0755"
+
+[[package.file]]
+families = ["debian", "generic"]
+path = "/var/www/html/index.nginx-debian.html"
+content = """<!DOCTYPE html>
+<html>
+<head>
+<title>Welcome to nginx!</title>
+</head>
+<body>
+<h1>Welcome to nginx!</h1>
+<p>If you see this page, the nginx web server is successfully installed and
+working. Further configuration is required.</p>
+</body>
+</html>
+"""
+
+[[package.file]]
+families = ["debian", "generic"]
+path = "/usr/lib/systemd/system/nginx.service"
+content = """[Unit]
+Description=A high performance web server and a reverse proxy server
+Documentation=man:nginx(8)
+After=network.target nss-lookup.target
+
+[Service]
+Type=forking
+PIDFile=/run/nginx.pid
+ExecStartPre=/usr/sbin/nginx -t -q -g 'daemon on; master_process on;'
+ExecStart=/usr/sbin/nginx -g 'daemon on; master_process on;'
+ExecReload=/usr/sbin/nginx -g 'daemon on; master_process on;' -s reload
+ExecStop=-/sbin/start-stop-daemon --quiet --stop --retry QUIT/5 --pidfile /run/nginx.pid
+TimeoutStopSec=5
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+# ---- Fedora and Arch --------------------------------------------------------
+
+[[package.file]]
+families = ["fedora", "arch"]
+path = "/etc/nginx/nginx.conf"
+content = """# For more information on configuration, see:
+#   * Official English Documentation: http://nginx.org/en/docs/
+
+worker_processes auto;
+error_log /var/log/nginx/error.log notice;
+pid /run/nginx.pid;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    access_log  /var/log/nginx/access.log;
+
+    sendfile            on;
+    tcp_nopush          on;
+    keepalive_timeout   65;
+    types_hash_max_size 4096;
+
+    include             /etc/nginx/mime.types;
+    default_type        application/octet-stream;
+
+    include /etc/nginx/conf.d/*.conf;
+
+    server {
+        listen       80;
+        listen       [::]:80;
+        server_name  _;
+        root         /usr/share/nginx/html;
+
+        error_page 404 /404.html;
+        location = /404.html {
+        }
+    }
+}
+"""
+
+[[package.file]]
+families = ["fedora", "arch"]
+path = "/usr/share/nginx/html/index.html"
+content = """<!DOCTYPE html>
+<html>
+<head><title>Test Page for the HTTP Server</title></head>
+<body><h1>nginx is working</h1></body>
+</html>
+"""
+
+[[package.file]]
+families = ["fedora", "arch"]
+path = "/usr/lib/systemd/system/nginx.service"
+content = """[Unit]
+Description=The nginx HTTP and reverse proxy server
+After=network-online.target remote-fs.target nss-lookup.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+PIDFile=/run/nginx.pid
+ExecStartPre=/usr/bin/rm -f /run/nginx.pid
+ExecStartPre=/usr/sbin/nginx -t
+ExecStart=/usr/sbin/nginx
+ExecReload=/usr/sbin/nginx -s reload
+KillSignal=SIGQUIT
+TimeoutStopSec=5
+KillMode=mixed
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+# ---- every family -----------------------------------------------------------
+
+[[package.file]]
+path = "/etc/nginx/mime.types"
+content = """types {
+    text/html                             html htm shtml;
+    text/css                              css;
+    text/plain                            txt;
+    application/javascript                js;
+    application/json                      json;
+    image/png                             png;
+    image/jpeg                            jpeg jpg;
+    image/svg+xml                         svg;
+}
+"""
+
+[[package.file]]
+path = "/etc/nginx/conf.d"
+kind = "dir"
+mode = "0755"
+
+[[package.file]]
+path = "/var/log/nginx"
+kind = "dir"
+mode = "0755"

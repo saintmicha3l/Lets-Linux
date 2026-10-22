@@ -1,0 +1,130 @@
+schema = 1
+
+[mission]
+id = "j06-swap"
+title = "Room to Breathe"
+chapter = "J"
+kind = "lesson"
+order = 7
+difficulty = 3
+requires = ["j01-new-disk", "g04-slow-server"]
+skills = ["j.swap", "j.fstab-persistence"]
+review_for = ["g.resource-monitoring", "d.permission-bits"]
+xp = 120
+estimated_minutes = 18
+
+[briefing]
+context = """
+This cloud server was installed from an image without any swap. When a nightly batch job
+needs more memory than usual, the kernel's out-of-memory killer ends it. The team wants 2 GiB
+of swap as a safety margin — as a swap file, since there is no spare partition.
+(sudo password: letslinux)
+"""
+concept = """
+Swap is disk space the kernel can move rarely used memory pages to, so that a memory peak
+slows the system down instead of killing a process. A swap file works like a swap partition:
+create it with its full size (fallocate -l 2G, or dd), make it readable by root only (chmod
+600: it may hold anybody's memory), format it with mkswap and enable it with swapon. A line
+"/swapfile none swap sw 0 0" in /etc/fstab enables it at boot. free -h and sudo swapon --show
+show the result (swapon lives in /usr/sbin, which is not in ordinary users' PATH on Debian).
+"""
+objectives = ["Check for swap", "Create a swap file securely", "Enable it now and at boot"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "noswap"
+
+[[task]]
+id = "check"
+title = "Any swap?"
+kind = "guided"
+instructions = "Find out how much swap this machine has."
+skills = { "j.swap" = 1.0 }
+question = { prompt = "How much swap space is configured?", type = "choice", choices = ["None", "1 GiB", "As much as there is RAM"], answer = 0 }
+hints = ["free -h shows memory and swap.", "swapon --show lists active swap areas (as root: sudo swapon --show).", "The Swap: line of free -h is all zeros: (a)."]
+explanation = "No swap at all: when memory runs out, the kernel can only kill processes."
+
+[[task]]
+id = "create"
+title = "Create the swap file"
+kind = "independent"
+instructions = "Create a 2 GiB swap file /swapfile, owned by root and readable and writable by root only, and turn it on."
+skills = { "j.swap" = 1.0 }
+checks = [
+    { type = "swap_active", device = "/swapfile", min_mb = 2000 },
+    { type = "file_mode", path = "/swapfile", mode = "0600" },
+    { type = "file_owner", path = "/swapfile", user = "root" },
+]
+hints = [
+    "Four steps: create a 2G file, chmod 600, mkswap, swapon.",
+    "sudo fallocate -l 2G /swapfile (or: sudo dd if=/dev/zero of=/swapfile bs=1M count=2048)",
+    "sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile",
+]
+explanation = "sudo swapon --show lists /swapfile (type file, 2G) and free -h counts it."
+
+[[task]]
+id = "persist"
+title = "At every boot"
+kind = "independent"
+instructions = "Make the system enable /swapfile at boot, and check the line with findmnt --verify or swapon -a."
+skills = { "j.swap" = 1.0, "j.fstab-persistence" = 1.0 }
+checks = [
+    { type = "fstab_entry", target = "swap", device = "/swapfile", fstype = "swap" },
+    { type = "fstab_valid" },
+    { type = "after_reboot", checks = [{ type = "swap_active", device = "/swapfile", min_mb = 2000 }] },
+]
+persistent = true
+hints = ["A swap line in /etc/fstab: the device (or file), none as mount point, type swap, options sw, 0 0.", "/swapfile none swap sw 0 0", "echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab && sudo findmnt --verify"]
+explanation = "At boot systemd turns every swap line of fstab into a swap unit and enables it — swapon -a does the same now."
+
+[debrief]
+summary = """
+Swap file: fallocate (or dd) → chmod 600 → mkswap → swapon → fstab line → check with swapon
+--show and free -h.
+"""
+alternatives = ["A swap partition (mkswap /dev/sdXN) works the same way", "zram (compressed swap in RAM), as Fedora uses by default", "vm.swappiness tunes how eagerly the kernel swaps"]
+pitfalls = ["A world-readable swap file exposes other users' memory.", "On btrfs, swap files need special preparation (no copy-on-write).", "Swap hides memory leaks; it does not fix them."]
+next = "Next: an /etc/fstab that would not survive a reboot."
+
+[[solution]]
+name = "fallocate and tee"
+steps = [
+    "free -h",
+    ":answer a",
+    { input = ["letslinux"] },
+    "sudo fallocate -l 2G /swapfile",
+    "sudo chmod 600 /swapfile",
+    "sudo mkswap /swapfile",
+    "sudo swapon /swapfile",
+    "sudo swapon --show",
+    "echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab",
+    "sudo findmnt --verify",
+]
+
+[[solution]]
+name = "dd in a root shell"
+steps = [
+    "cat /proc/swaps",
+    ":answer None",
+    { input = ["letslinux"] },
+    "sudo -i",
+    "umask 077",
+    "dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none",
+    "mkswap -L swap /swapfile",
+    "echo '/swapfile  none  swap  defaults  0 0' >> /etc/fstab",
+    "swapon -a",
+    "free -h",
+    "exit",
+]
+
+[[counterexample]]
+name = "world-readable, not persistent"
+steps = [
+    ":answer a",
+    { input = ["letslinux"] },
+    "sudo fallocate -l 2G /swapfile",
+    "sudo mkswap /swapfile",
+    "sudo swapon /swapfile",
+]

@@ -1,0 +1,181 @@
+schema = 1
+
+[mission]
+id = "l03-permission-audit"
+title = "Doors Left Open"
+chapter = "L"
+kind = "troubleshooting"
+order = 5
+difficulty = 4
+requires = ["d05-shared-project", "b07-lost-and-found", "k01-cron-jobs", "l01b-audit-toolkit", "c08-the-method"]
+skills = ["l.permission-audit", "d.special-bits", "b.find-files"]
+review_for = ["f.file-ownership", "k.cron-basics"]
+xp = 180
+estimated_minutes = 30
+
+[briefing]
+context = """
+Before this Debian server goes into production, the security team wants a permission audit:
+programs that run with root's rights although nobody installed them, files that anyone may
+change but that root executes, and files whose owner no longer exists. A former
+administrator left in a hurry. (sudo password: letslinux)
+"""
+concept = """
+Three classic findings. Setuid-root programs (find / -xdev -perm -4000 -type f) run as root
+whoever starts them: every one should belong to a package (dpkg -S PATH) and have a reason.
+World-writable files (find / -xdev -type f -perm -0002) let anyone change them — fatal when
+root runs them, say from cron. Unowned files (find / -xdev -nouser -o -nogroup) belong to a
+deleted account; a new account that gets the same UID would own them. -xdev keeps find on one
+filesystem (no /proc, no network mounts); 2>/dev/null hides the noise.
+"""
+objectives = ["Find setuid programs and check where they come from", "Find world-writable files run by root", "Find files without an owner", "Fix the findings without breaking the system"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+helper = { choices = [".syslog-helper", ".dbus-launch", "kmod-load"] }
+olduid = { choices = ["1007", "1013", "1021"] }
+
+[[environment.setup]]
+action = "run"
+command = "cp /usr/bin/bash /usr/local/sbin/{{helper}} && chmod 4755 /usr/local/sbin/{{helper}} && touch -d '2025-11-02 03:14' /usr/local/sbin/{{helper}}"
+
+[[environment.setup]]
+action = "file"
+path = "/opt/maint/cleanup.sh"
+mode = "0777"
+content = """#!/bin/sh
+# remove old temporary exports
+find /var/tmp -name 'export-*' -mtime +7 -delete
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/etc/cron.d/cleanup"
+content = """# nightly cleanup (old admin)
+*/30 * * * * root /opt/maint/cleanup.sh
+"""
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /srv/projects/migration && for f in plan.txt dump.sql notes.md; do echo data > /srv/projects/migration/$f; done && chown -R {{olduid}}:{{olduid}} /srv/projects/migration"
+
+[[task]]
+id = "setuid"
+title = "Root's rights for everyone"
+kind = "troubleshooting"
+instructions = "List all setuid programs on the root filesystem and find the one that does not belong to any package."
+skills = { "l.permission-audit" = 1.0, "d.special-bits" = 0.5, "b.find-files" = 0.5 }
+question = { prompt = "Full path of the setuid program that no package installed?", type = "exact", accept = ["/usr/local/sbin/{{helper}}"] }
+hints = [
+    "find / -xdev -perm -4000 -type f 2>/dev/null",
+    "Packaged files live in /usr/bin, /usr/sbin, /usr/lib…; ask dpkg -S PATH for each candidate. /usr/local is never touched by packages.",
+    "ls -la /usr/local/sbin — the file name starts with a dot or imitates a system program.",
+]
+explanation = "A setuid-root copy of a shell: whoever runs it with -p gets a root shell. A classic backdoor — and dpkg -S says no package owns it."
+
+[[task]]
+id = "remove-setuid"
+title = "Close the backdoor"
+kind = "independent"
+instructions = "Make sure the unknown program can no longer give anyone root's rights (keep a copy for the investigators in /root if you like). passwd, sudo and su must keep working."
+skills = { "l.permission-audit" = 1.0, "d.special-bits" = 1.0 }
+checks = [
+    { type = "any_of", checks = [{ type = "path_absent", path = "/usr/local/sbin/{{helper}}" }, { type = "mode_lacks", path = "/usr/local/sbin/{{helper}}", bits = "4000" }] },
+    { type = "command_result", user = "root", command = "find / -xdev -perm -4000 -type f 2>/dev/null | while read f; do dpkg -S \"$f\" >/dev/null 2>&1 || echo \"$f\"; done", stdout_equals = "" },
+    { type = "mode_has", path = "/usr/bin/passwd", bits = "4000" },
+    { type = "mode_has", path = "/usr/bin/sudo", bits = "4000" },
+    { type = "mode_has", path = "/usr/bin/su", bits = "4000" },
+]
+hints = ["Either remove the setuid bit (chmod u-s) or remove the file.", "sudo chmod u-s /usr/local/sbin/{{helper}} — or sudo mv it to /root/evidence/ and strip the bit there.", "Do not 'fix' all setuid files at once: passwd needs it to write /etc/shadow."]
+explanation = "Removing the bit (or the file) closes the hole; the packaged setuid programs are needed — passwd writes /etc/shadow on behalf of ordinary users."
+
+[[task]]
+id = "writable"
+title = "Anyone may edit root's job"
+kind = "troubleshooting"
+instructions = "Find the world-writable regular file that root runs, and fix its permissions so that only root can change it. The cron job must still be able to run it."
+skills = { "l.permission-audit" = 1.0, "k.cron-basics" = 0.5 }
+checks = [
+    { type = "mode_lacks", path = "/opt/maint/cleanup.sh", bits = "0022" },
+    { type = "file_owner", path = "/opt/maint/cleanup.sh", user = "root" },
+    { type = "mode_has", path = "/opt/maint/cleanup.sh", bits = "0100" },
+    { type = "path_exists", path = "/etc/cron.d/cleanup" },
+]
+hints = [
+    "find / -xdev -type f -perm -0002 2>/dev/null (there is no /proc on the root filesystem, so -xdev keeps the list short).",
+    "Who runs it? grep -r cleanup /etc/cron* — root, every 30 minutes.",
+    "sudo chmod 755 /opt/maint/cleanup.sh (or 700): owner root writes, everyone else at most reads and runs.",
+]
+explanation = "Any user could have added a line to cleanup.sh and had root run it within half an hour — a privilege escalation without any exploit."
+
+[[task]]
+id = "orphans"
+title = "Files of a ghost"
+kind = "troubleshooting"
+instructions = "Find the files whose owner no longer exists."
+skills = { "l.permission-audit" = 1.0, "b.find-files" = 0.5 }
+question = { prompt = "Which UID owns them?", type = "exact", accept = ["{{olduid}}"] }
+hints = ["find / -xdev \\( -nouser -o -nogroup \\) 2>/dev/null", "ls -ln shows the numeric owner.", "ls -ln /srv/projects/migration"]
+explanation = "If someone creates a user that receives UID {{olduid}}, those files become theirs. Assign them to a current owner (chown -R) or archive and delete them."
+
+[[task]]
+id = "claim"
+title = "Give them an owner"
+kind = "independent"
+instructions = "Give /srv/projects/migration and everything in it to root (user and group)."
+skills = { "l.permission-audit" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "find / -xdev \\( -nouser -o -nogroup \\) 2>/dev/null", stdout_equals = "" },
+    { type = "file_owner", path = "/srv/projects/migration/dump.sql", user = "root", group = "root" },
+]
+hints = ["chown -R changes a whole tree.", "sudo chown -R root:root /srv/projects/migration", "Check with find / -xdev -nouser."]
+explanation = "Nothing without an owner remains; the audit is clean."
+
+[debrief]
+summary = """
+find / -xdev -perm -4000 (setuid), -perm -0002 -type f (world-writable), -nouser/-nogroup
+(orphans); compare setuid files with the package database (dpkg -S, rpm -qf); fix narrowly.
+"""
+alternatives = ["rpm -Va / dpkg -V finds modified packaged files", "Mount data filesystems with nosuid so setuid files there have no effect", "Tools such as lynis or AIDE automate these checks (not simulated)"]
+pitfalls = ["chmod -R or removing every setuid bit: passwd, sudo and su stop working.", "Deleting the backdoor without keeping evidence when an investigation follows.", "Forgetting -xdev: find then searches /proc and network mounts."]
+next = "Next: keeping packages patched."
+
+[[solution]]
+name = "audit with find and dpkg"
+steps = [
+    { input = ["letslinux"] },
+    "sudo find / -xdev -perm -4000 -type f 2>/dev/null",
+    "dpkg -S /usr/local/sbin/{{helper}}",
+    ":answer /usr/local/sbin/{{helper}}",
+    "sudo mkdir -p /root/evidence && sudo cp -a /usr/local/sbin/{{helper}} /root/evidence/ && sudo chmod u-s /root/evidence/{{helper}}",
+    "sudo rm /usr/local/sbin/{{helper}}",
+    "sudo find / -xdev -type f -perm -0002 2>/dev/null",
+    "grep -r cleanup /etc/cron.d",
+    "sudo chmod 755 /opt/maint/cleanup.sh",
+    "sudo find / -xdev -nouser 2>/dev/null",
+    "ls -ln /srv/projects/migration",
+    ":answer {{olduid}}",
+    "sudo chown -R root:root /srv/projects/migration",
+]
+
+[[solution]]
+name = "strip bits in place"
+steps = [
+    { input = ["letslinux"] },
+    "sudo find /usr/local -perm -u+s",
+    ":answer /usr/local/sbin/{{helper}}",
+    "sudo chmod u-s /usr/local/sbin/{{helper}}",
+    "sudo chmod go-w /opt/maint/cleanup.sh",
+    ":answer {{olduid}}",
+    "sudo find /srv -nouser -exec chown root:root {} +",
+]
+
+[[counterexample]]
+name = "remove every setuid bit"
+steps = [
+    { input = ["letslinux"] },
+    ":answer /usr/local/sbin/{{helper}}",
+    "sudo find / -xdev -perm -4000 -type f -exec chmod u-s {} +",
+    "sudo chmod 777 /opt/maint/cleanup.sh",
+]

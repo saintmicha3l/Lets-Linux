@@ -1,0 +1,149 @@
+schema = 1
+
+[mission]
+id = "r00-skill-check"
+title = "Skill Check R: Distributions"
+chapter = "R"
+placement = "R"
+kind = "assessment"
+order = 0
+difficulty = 4
+requires = []
+skills = ["r.distro-families", "r.package-translation", "r.admin-groups", "r.firewall-tools", "r.config-paths", "r.logging-differences"]
+xp = 80
+estimated_minutes = 20
+sequential = false
+
+[briefing]
+context = """
+This skill check covers chapter R: working on a distribution from another family. This server
+is not Debian. Find out what it is and do the usual jobs the way it intends. Tasks in any
+order; you have sudo (password: letslinux). Solve them all (one slip allowed) to test out of
+chapter R. :submit ends the check.
+"""
+concept = "No hints: show what you can do on your own. Some checks reboot a copy of the machine."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "fedora"
+
+[environment.vars]
+admin = { choices = ["ops", "sre", "oncall"] }
+fails = { choices = ["5", "8", "11"] }
+
+[[environment.setup]]
+action = "ssh_logins"
+entries = [{ user = "root", from = "198.51.100.23", ago = 120, failures = "{{fails}}", success = false }]
+
+[[task]]
+id = "which"
+title = "Where am I?"
+kind = "assessment"
+instructions = "Identify the distribution."
+skills = { "r.distro-families" = 1.0 }
+question = { prompt = "What is the value of ID in /etc/os-release?", type = "exact", accept = ["fedora"] }
+explanation = "/etc/os-release names the distribution (ID) and its family (ID_LIKE on derivatives)."
+
+[[task]]
+id = "dig"
+title = "The same tool, another name"
+kind = "assessment"
+instructions = "Install the package that provides the dig command."
+skills = { "r.package-translation" = 1.0 }
+checks = [{ type = "command_result", command = "command -v dig", stdout_contains = "dig" }]
+explanation = "On Debian it is dnsutils; on Fedora bind-utils (dnf provides '*/dig' finds it)."
+
+[[task]]
+id = "admin"
+title = "A new administrator"
+kind = "assessment"
+instructions = "Create the user {{admin}} and make it an administrator the way this distribution intends — by group membership, without editing sudoers."
+skills = { "r.admin-groups" = 1.0 }
+checks = [
+    { type = "in_group", user = "{{admin}}", group = "wheel" },
+    { type = "command_result", user = "root", command = "sudo -l -U {{admin}}", stdout_contains = ["(ALL"] },
+]
+explanation = "Fedora, RHEL and Arch use the wheel group (Debian and Ubuntu: sudo): useradd -m -G wheel {{admin}}."
+
+[[task]]
+id = "firewall"
+title = "The firewall, this distribution's way"
+kind = "assessment"
+instructions = "Allow the http service through the firewall and stop allowing cockpit (port 9090) — now and after reboots. SSH must stay open."
+skills = { "r.firewall-tools" = 1.0 }
+checks = [
+    { type = "after_reboot", checks = [
+        { type = "not", check = { type = "firewall_blocks", from = "10.0.2.40", port = 80 } },
+        { type = "firewall_blocks", from = "10.0.2.40", port = 9090 },
+        { type = "not", check = { type = "firewall_blocks", from = "10.0.2.40", port = 22 } },
+    ] },
+]
+explanation = "Fedora uses firewalld: firewall-cmd --permanent --add-service=http --remove-service=cockpit, then --reload (or the runtime commands and --runtime-to-permanent)."
+
+[[task]]
+id = "nginx"
+title = "Where configuration lives"
+kind = "assessment"
+instructions = "A colleague used to Debian wants to add an nginx website here."
+skills = { "r.config-paths" = 1.0 }
+question = { prompt = "Where does a new nginx site belong on Fedora?", type = "choice", choices = ["/etc/nginx/sites-available/ plus a link in sites-enabled/", "A file /etc/nginx/conf.d/NAME.conf", "/var/www/nginx.conf", "/etc/httpd/sites/"], answer = 1 }
+explanation = "sites-available/sites-enabled is a Debian convention; Fedora's nginx includes /etc/nginx/conf.d/*.conf."
+
+[[task]]
+id = "logs"
+title = "No auth.log"
+kind = "assessment"
+instructions = "Someone tried to log in as root over SSH a few hours ago. This system has no /var/log/auth.log."
+skills = { "r.logging-differences" = 1.0, "h.journalctl" = 0.5 }
+question = { prompt = "How many failed password attempts for root does the log show?", type = "number", accept = ["{{fails}}"] }
+explanation = "Fedora keeps logs in the journal only: sudo journalctl -u sshd | grep -c 'Failed password for root'."
+
+[debrief]
+summary = """
+The check covered chapter R: identifying a distribution, translating package names, admin
+groups, the firewall front-end, configuration paths and where logs live.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "dnf and firewall-cmd --permanent"
+steps = [
+    { input = ["letslinux"] },
+    "cat /etc/os-release",
+    ":answer fedora",
+    "dnf provides '*/dig'",
+    "sudo dnf install -y bind-utils",
+    "sudo useradd -m -G wheel {{admin}}",
+    "sudo firewall-cmd --permanent --add-service=http",
+    "sudo firewall-cmd --permanent --remove-service=cockpit",
+    "sudo firewall-cmd --reload",
+    ":answer b",
+    "sudo journalctl -u sshd | grep -c 'Failed password for root'",
+    ":answer {{fails}}",
+]
+
+[[solution]]
+name = "runtime then permanent"
+steps = [
+    { input = ["letslinux"] },
+    "grep ^ID= /etc/os-release",
+    ":answer fedora",
+    "sudo dnf install -y /usr/bin/dig",
+    "sudo useradd {{admin}} && sudo usermod -aG wheel {{admin}}",
+    "sudo firewall-cmd --add-service=http --remove-service=cockpit && sudo firewall-cmd --runtime-to-permanent",
+    ":answer 2",
+    "sudo journalctl -u sshd --since today | grep 'Failed password for root' | wc -l",
+    ":answer {{fails}}",
+]
+
+[[counterexample]]
+name = "the Debian way"
+steps = [
+    { input = ["letslinux"] },
+    ":answer debian",
+    "sudo dnf install -y dnsutils",
+    "sudo useradd -m -G sudo {{admin}}",
+    "sudo firewall-cmd --add-service=http",
+    ":answer a",
+    ":answer {{fails}}",
+]

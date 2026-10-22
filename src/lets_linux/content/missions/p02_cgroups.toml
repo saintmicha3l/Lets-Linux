@@ -1,0 +1,186 @@
+schema = 1
+
+[mission]
+id = "p02-cgroups"
+title = "Fences for Greedy Services"
+chapter = "P"
+kind = "troubleshooting"
+order = 3
+difficulty = 6
+requires = ["p01-namespaces", "o02-memory", "o00b-performance-instruments", "p01b-control-groups", "c08-the-method"]
+skills = ["p.cgroups", "o.memory-analysis", "o.cpu-analysis"]
+review_for = ["h.unit-files", "h.journalctl"]
+xp = 240
+estimated_minutes = 35
+
+[briefing]
+context = """
+Two services share this Debian server with everything else. During the day the search
+reindexer keeps both CPUs busy and the web shop crawls; last night the image cache grew
+until the kernel had to kill something. Neither team can fix its program this month. Keep
+both services running — but fence them in, so neither can hurt the rest of the server, now
+and after reboots. (sudo password: letslinux)
+"""
+concept = """
+systemd runs every service in its own control group (cgroup v2): system.slice/NAME.service.
+The kernel accounts CPU, memory, I/O and tasks per group and enforces limits on it.
+systemd-cgls shows the tree, systemd-cgtop the usage per group, /proc/PID/cgroup where a
+process lives, and /sys/fs/cgroup/… the kernel's own files (cpu.max, memory.max,
+memory.current, memory.events). Set limits as unit settings: CPUQuota=50% (at most half of
+one CPU — 200% would be two CPUs), MemoryMax=512M (the hard limit: beyond it the kernel's
+OOM killer kills inside that group only), MemoryHigh= (throttling, not simulated), TasksMax=.
+systemctl set-property UNIT CPUQuota=50% applies at once and persists as a drop-in in
+/etc/systemd/system.control/ (--runtime: in /run, gone at reboot); a drop-in written by hand
+(systemctl edit) needs daemon-reload. Pair MemoryMax with Restart=on-failure so a killed
+service comes back.
+"""
+objectives = ["Find which cgroup uses the CPU", "Limit a service's CPU without stopping it", "Read an OOM kill in the kernel log", "Contain a memory leak with MemoryMax and Restart", "Make limits survive a reboot"]
+
+[environment]
+profile = "debian"
+packages = ["stress-ng", "imgcache"]
+
+[[environment.setup]]
+action = "service"
+name = "reindex.service"
+enable = true
+start = true
+content = """[Unit]
+Description=Search index rebuild (vendor job; simulated with stress-ng)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/stress-ng --cpu 2 --quiet
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "oom"
+unit = "imgcache.service"
+rss_kb = 4890000
+ago = 420
+
+[[task]]
+id = "who"
+title = "Who has the CPUs?"
+kind = "troubleshooting"
+instructions = "Find out which service's control group uses the CPU time."
+skills = { "p.cgroups" = 1.0, "o.cpu-analysis" = 0.5 }
+question = { prompt = "Which unit uses the CPUs?", type = "exact", accept = ["reindex.service", "reindex"] }
+hints = ["top shows processes; systemd-cgtop shows the groups they belong to.", "systemd-cgtop, or ps -eo pid,pcpu,cgroup,comm --sort=-pcpu | head", "/system.slice/reindex.service"]
+explanation = "Two stress-ng workers use a full CPU each; both live in /system.slice/reindex.service — the group is what systemd can limit, however many processes the service starts."
+
+[[task]]
+id = "cap"
+title = "Half a CPU, permanently"
+kind = "independent"
+instructions = "Limit reindex.service to at most half of one CPU, all its processes together — without stopping it, and so that the limit is still there after a reboot."
+skills = { "p.cgroups" = 1.0 }
+checks = [
+    { type = "unit_state", unit = "reindex.service", active = "active" },
+    { type = "command_result", user = "root", command = "cat /sys/fs/cgroup/system.slice/reindex.service/cpu.max", stdout_regex = "\\A([1-9][0-9]{3}|[1-4][0-9]{4}|50000) 100000\\s*\\Z" },
+    { type = "after_reboot", checks = [
+        { type = "unit_state", unit = "reindex.service", active = "active" },
+        { type = "command_result", user = "root", command = "cat /sys/fs/cgroup/system.slice/reindex.service/cpu.max", stdout_regex = "\\A([1-9][0-9]{3}|[1-4][0-9]{4}|50000) 100000\\s*\\Z" },
+    ] },
+]
+hints = ["The unit setting is CPUQuota= — 50% means half of one CPU.", "sudo systemctl set-property reindex.service CPUQuota=50% (without --runtime, so it persists).", "sudo systemctl set-property reindex.service CPUQuota=50%; cat /sys/fs/cgroup/system.slice/reindex.service/cpu.max"]
+explanation = "cpu.max now says 50000 100000: 50 ms of CPU time per 100 ms period for the whole group. The two workers share it (25% each in ps). set-property wrote /etc/systemd/system.control/reindex.service.d/50-CPUQuota.conf, which systemd reads at every boot."
+
+[[task]]
+id = "night"
+title = "What happened last night?"
+kind = "troubleshooting"
+instructions = "imgcache.service is not running. Find out how it ended."
+skills = { "o.memory-analysis" = 1.0, "p.cgroups" = 0.5 }
+question = { prompt = "With which result did systemd record the end of imgcache.service?", type = "exact", accept = ["oom-kill", "oom kill"] }
+hints = ["systemctl status imgcache shows the result in the Active: line.", "journalctl -k | grep -i 'out of memory' shows the kernel's side.", "oom-kill"]
+explanation = "The leak used up RAM and swap; the kernel's OOM killer chose the largest process system-wide (it could as well have been the database) and systemd recorded Result: oom-kill."
+
+[[task]]
+id = "contain"
+title = "Contain the leak"
+kind = "independent"
+instructions = "Run imgcache.service again, limited to at most 512 MiB of memory, and make systemd start it again whenever it is killed. The limit and the restart must survive reboots. (The leak itself remains — the developers fix it next month.)"
+skills = { "p.cgroups" = 1.0, "h.unit-files" = 0.5 }
+checks = [
+    { type = "unit_state", unit = "imgcache.service", active = "active" },
+    { type = "unit_setting", unit = "imgcache.service", section = "Service", key = "Restart", regex = "^(on-failure|always|on-abnormal)$" },
+    { type = "command_result", user = "root", command = "v=$(cat /sys/fs/cgroup/system.slice/imgcache.service/memory.max); [ \"$v\" != max ] && [ \"$v\" -le 536870912 ]", status = 0 },
+    { type = "command_result", user = "root", command = "sleep 3h; systemctl is-active imgcache; dmesg | grep -c 'Memory cgroup out of memory: Killed process'; pgrep -x sshd >/dev/null && echo sshd-ok", stdout_regex = "\\Aactive\\n[1-9][0-9]*\\nsshd-ok\\n\\Z" },
+    { type = "after_reboot", checks = [
+        { type = "unit_state", unit = "imgcache.service", active = "active" },
+        { type = "command_result", user = "root", command = "cat /sys/fs/cgroup/system.slice/imgcache.service/memory.max", stdout_regex = "\\A[0-9]+\\s*\\Z" },
+    ] },
+]
+hints = ["Two settings: MemoryMax= limits the group, Restart= brings the service back after the kill.", "sudo systemctl set-property imgcache MemoryMax=512M — and a drop-in with [Service] Restart=on-failure (systemctl edit imgcache), then start it.", "sudo systemctl set-property imgcache.service MemoryMax=512M; sudo systemctl edit imgcache (Restart=on-failure); sudo systemctl start imgcache"]
+explanation = "Now the leak can only exhaust the service's own allowance: at 512 MiB the kernel kills imgcache — inside its cgroup, nothing else — systemd starts it again a moment later, and the rest of the server never notices. The check let three hours pass on a copy of the server to see exactly that."
+
+[[task]]
+id = "why"
+title = "Why fences?"
+kind = "explanation"
+instructions = "Think about last night once more."
+skills = { "p.cgroups" = 1.0 }
+question = { prompt = "What is the main gain of MemoryMax= over leaving the service unlimited?", type = "choice", choices = ["The program uses less memory", "When the limit is reached the OOM killer acts inside that service's cgroup only, instead of picking a victim anywhere on the machine", "The kernel compresses the service's memory"], answer = 1 }
+hints = ["The leak did not stop.", "Who could have been killed last night?", "(b)"]
+explanation = "Limits do not fix programs; they decide who pays for their faults. Containers use exactly this: an engine creates a cgroup per container and writes the same memory.max and cpu.max files."
+
+[debrief]
+summary = """
+systemd-cgtop / systemd-cgls / ps -o cgroup → find the group; systemctl set-property UNIT
+CPUQuota=50% MemoryMax=512M (persistent drop-ins in /etc/systemd/system.control) or a drop-in
+via systemctl edit + daemon-reload; Restart=on-failure brings a killed service back; the
+kernel's view lives in /sys/fs/cgroup/<slice>/<unit>/ (cpu.max, memory.max, memory.events).
+"""
+alternatives = ["systemd-run --scope -p MemoryMax=1G -p CPUQuota=50% COMMAND — limits for a one-off command", "Slices (Slice=batch.slice) to fence a whole group of services together", "CPUWeight= shares CPU under contention instead of capping it"]
+pitfalls = ["set-property --runtime: the limit is gone after the next reboot.", "CPUQuota=50% means half of ONE CPU, not half of the machine.", "MemoryMax without Restart=: the service is fenced in — and stays dead."]
+next = "Next: containers — the same parts, assembled by an engine."
+
+[[solution]]
+name = "set-property and systemctl edit"
+steps = [
+    "systemd-cgtop",
+    ":answer reindex.service",
+    { input = ["letslinux"] },
+    "sudo systemctl set-property reindex.service CPUQuota=50%",
+    "cat /sys/fs/cgroup/system.slice/reindex.service/cpu.max",
+    "systemctl status imgcache",
+    ":answer oom-kill",
+    "sudo systemctl set-property imgcache.service MemoryMax=512M",
+    { edit = "[Service]\nRestart=on-failure\n" },
+    "sudo systemctl edit imgcache",
+    "sudo systemctl start imgcache",
+    ":answer b",
+]
+
+[[solution]]
+name = "drop-in files by hand"
+steps = [
+    "ps -eo pid,pcpu,cgroup,comm --sort=-pcpu",
+    ":answer reindex",
+    { input = ["letslinux"] },
+    "sudo mkdir -p /etc/systemd/system/reindex.service.d /etc/systemd/system/imgcache.service.d",
+    "printf '[Service]\\nCPUQuota=40%%\\n' | sudo tee /etc/systemd/system/reindex.service.d/limits.conf",
+    "sudo systemctl daemon-reload",
+    "journalctl -k | grep -i 'out of memory'",
+    ":answer oom-kill",
+    "printf '[Service]\\nMemoryMax=400M\\nRestart=always\\n' | sudo tee /etc/systemd/system/imgcache.service.d/limits.conf",
+    "sudo systemctl daemon-reload",
+    "sudo systemctl start imgcache",
+    ":answer When the limit is reached the OOM killer acts inside that service's cgroup only, instead of picking a victim anywhere on the machine",
+]
+
+[[counterexample]]
+name = "runtime limits and no restart"
+steps = [
+    ":answer reindex.service",
+    { input = ["letslinux"] },
+    "sudo systemctl set-property --runtime reindex.service CPUQuota=50%",
+    ":answer oom-kill",
+    "sudo systemctl set-property imgcache.service MemoryMax=512M",
+    "sudo systemctl start imgcache",
+    ":answer b",
+]

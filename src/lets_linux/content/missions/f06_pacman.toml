@@ -1,0 +1,142 @@
+schema = 1
+
+[mission]
+id = "f06-pacman"
+title = "Same Job, Other Tools: Arch"
+chapter = "F"
+kind = "lesson"
+order = 8
+difficulty = 3
+requires = ["f01-installing-software"]
+skills = ["f.pacman-basics", "f.upgrades-versions"]
+review_for = ["f.file-ownership"]
+xp = 140
+estimated_minutes = 20
+
+[briefing]
+context = """
+Arch Linux is a rolling release: there are no versions of the distribution, just a stream
+of package updates. This Arch machine has not been updated for a while. Bring it up to
+date, install what the team asked for, and remove it again cleanly — with pacman.
+(sudo password: letslinux)
+"""
+concept = """
+pacman uses single-letter operations: -S sync (install from the repositories), -R remove,
+-Q query the local database, combined with options: -Syu refreshes the databases (y) and
+upgrades everything (u) — the normal way to update Arch; -Ss searches; -Qi/-Ql/-Qo show
+info, files and the owner of a file; -Qu lists available updates; -Rns removes a package
+together with dependencies nobody needs (s) and without keeping its configuration (n).
+Never refresh without upgrading (pacman -Sy PKG): installing new packages against a
+half-updated system is a "partial upgrade", which Arch does not support.
+"""
+objectives = ["Upgrade an Arch system", "Install, query and remove with pacman", "Understand why partial upgrades are dangerous"]
+
+[environment]
+profile = "arch"
+
+[[task]]
+id = "upgrade"
+title = "Up to date"
+kind = "guided"
+instructions = "Refresh the package databases and upgrade the whole system."
+skills = { "f.pacman-basics" = 1.0, "f.upgrades-versions" = 1.0 }
+checks = [
+    { type = "package_state", name = "sudo", upgraded = true },
+    { type = "package_state", name = "tar", upgraded = true },
+]
+hints = ["pacman -Qu lists pending updates (after a refresh).", "-S with y (refresh) and u (upgrade).", "sudo pacman -Syu"]
+explanation = "Everything is current. On Arch, upgrade often: the longer you wait, the larger and riskier the jump."
+
+[[task]]
+id = "install"
+title = "Install"
+kind = "guided"
+instructions = "Install nginx and tree."
+skills = { "f.pacman-basics" = 1.0 }
+checks = [
+    { type = "package_state", name = "nginx", state = "installed" },
+    { type = "package_state", name = "tree", state = "installed" },
+]
+hints = ["-S installs.", "sudo pacman -S nginx tree", "Confirm with Enter (the default is yes) or add --noconfirm."]
+explanation = "Like Fedora, Arch does not start services on installation."
+
+[[task]]
+id = "owner"
+title = "Who owns ss?"
+kind = "independent"
+instructions = "Find out which package installed /usr/bin/ss."
+skills = { "f.pacman-basics" = 1.0, "f.file-ownership" = 0.5 }
+question = { prompt = "Package name?", type = "exact", accept = ["iproute2"] }
+hints = ["-Q queries the local database; one option finds the owner of a file.", "pacman -Qo /usr/bin/ss", "iproute2"]
+explanation = "pacman -Qo is Arch's dpkg -S / rpm -qf."
+
+[[task]]
+id = "remove"
+title = "Remove cleanly"
+kind = "independent"
+instructions = "nginx was a test: remove it together with its configuration, so that nothing of it is left in /etc/nginx. Keep tree."
+skills = { "f.pacman-basics" = 1.0 }
+checks = [
+    { type = "package_state", name = "nginx", state = "absent" },
+    { type = "command_result", user = "root", command = "ls -A /etc/nginx 2>/dev/null | wc -l", stdout_equals = "0\n" },
+    { type = "package_state", name = "tree", state = "installed" },
+]
+hints = ["-R removes; options add dependency and configuration handling.", "Without n, pacman keeps modified configuration files as .pacsave.", "sudo pacman -Rns nginx"]
+explanation = "-Rns leaves no trace. A plain -R would have kept configuration you changed as nginx.conf.pacsave."
+
+[[task]]
+id = "partial"
+title = "Partial upgrades"
+kind = "explanation"
+instructions = "A forum answer suggests 'pacman -Sy htop' to install something quickly."
+skills = { "f.pacman-basics" = 1.0, "f.upgrades-versions" = 0.5 }
+question = { prompt = "Why is that a bad idea?", type = "choice", choices = ["htop does not exist", "-Sy refreshes the package lists without upgrading: htop is then built against newer libraries than the installed system has — a partial upgrade that can break programs", "-y skips the confirmation"], answer = 1 }
+hints = ["What does y do, and what is missing?", "Refresh and upgrade belong together on a rolling release.", "(b) — use pacman -Syu htop."]
+explanation = "pacman -Syu PKG upgrades and installs in one consistent step."
+
+[debrief]
+summary = """
+pacman -Syu (update) · -S PKG · -Ss WORD · -Qi/-Ql/-Qo · -Qu · -Rns PKG. Refresh only
+together with an upgrade.
+"""
+alternatives = ["pacman -Qdt lists orphans; pacman -Rns $(pacman -Qdtq) removes them", "/etc/pacman.conf: IgnorePkg holds packages back (with care)"]
+pitfalls = ["pacman -Sy PKG (partial upgrade).", "Expecting services to start after installation.", "Forgetting .pacsave files after removals."]
+next = "Next: software that no package manager knows about."
+
+[[solution]]
+name = "noconfirm"
+steps = [
+    { input = ["letslinux"] },
+    "sudo pacman -Syu --noconfirm",
+    "sudo pacman -S --noconfirm nginx tree",
+    "pacman -Qo /usr/bin/ss",
+    ":answer iproute2",
+    "sudo pacman -Rns --noconfirm nginx",
+    ":answer b",
+]
+
+[[solution]]
+name = "interactive"
+steps = [
+    { input = ["letslinux", "y"] },
+    "sudo pacman -Syu",
+    { input = ["y"] },
+    "sudo pacman -S nginx tree",
+    "pacman -Qo $(which ss)",
+    ":answer iproute2",
+    { input = ["y"] },
+    "sudo pacman -Rn nginx",
+    ":answer -Sy refreshes the package lists without upgrading: htop is then built against newer libraries than the installed system has — a partial upgrade that can break programs",
+]
+
+[[counterexample]]
+name = "keep config"
+steps = [
+    { input = ["letslinux"] },
+    "sudo pacman -Syu --noconfirm",
+    "sudo pacman -S --noconfirm nginx tree",
+    "sudo sh -c 'echo \"# tuned\" >> /etc/nginx/nginx.conf'",
+    ":answer iproute2",
+    "sudo pacman -R --noconfirm nginx",
+    ":answer b",
+]

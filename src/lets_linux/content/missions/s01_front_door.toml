@@ -1,0 +1,266 @@
+schema = 1
+
+[mission]
+id = "s01-front-door"
+title = "The Front Door"
+chapter = "S"
+kind = "troubleshooting"
+order = 2
+difficulty = 5
+requires = ["m04-multi-fault", "i12-https-for-the-lab", "m00b-building-a-timeline", "s00b-web-server-basics", "c08-the-method"]
+skills = ["s.web-server-ops", "h.failed-services", "i.http-curl", "m.evidence-correlation"]
+review_for = ["h.failed-services", "i.http-curl"]
+xp = 230
+estimated_minutes = 35
+sequential = false
+
+[briefing]
+context = """
+The online shop moved to this server last night: nginx serves the pages from /var/www/shop
+and passes /api/ on to the shop API (a small service on 127.0.0.1:8080, shop-api.service).
+Since the move customers see errors. When the shop works again, the security team has two
+wishes and one question. The shop is http://shop.example.lan (this server); you can test
+from the build server too (ssh ci@build, password letslinux). (sudo password: letslinux)
+"""
+concept = """
+A reverse proxy answers the clients and forwards some requests (proxy_pass) to application
+servers behind it. The status code tells you which layer failed: 403 — nginx was not allowed
+to read the file (or an access rule said no); 404 — nothing there; 502 Bad Gateway — nginx
+works, but its upstream did not answer; 504 — the upstream was too slow. nginx's error log
+(/var/log/nginx/error.log) gives the reason, its access log one line per request: client,
+time, request, status, size. curl -I shows the response headers; curl -H 'Host: name' talks
+to a virtual host by name.
+"""
+objectives = ["Map HTTP status codes to layers", "Fix file permissions for the web server user", "Bring up an upstream service", "Harden response headers", "Restrict a location by network", "Find an attacker in the access log"]
+
+[environment]
+profile = "debian"
+packages = ["nginx", "curl"]
+
+[[environment.setup]]
+action = "user"
+name = "shop"
+system = true
+shell = "/usr/sbin/nologin"
+home = "/opt/shop"
+
+[[environment.setup]]
+action = "file"
+path = "/opt/shop/public/api/products"
+content = "[{\"id\": 1, \"name\": \"Tea pot\", \"price\": 24.5}, {\"id\": 2, \"name\": \"Mug\", \"price\": 7.0}]\n"
+
+[[environment.setup]]
+action = "file"
+path = "/opt/shop/public/api/health"
+content = "{\"status\": \"ok\"}\n"
+
+[[environment.setup]]
+action = "service"
+name = "shop-api.service"
+content = """[Unit]
+Description=Shop API
+After=network.target
+
+[Service]
+User=shop
+ExecStart=/usr/bin/python3 -m http.server 8080 --bind 127.0.0.1 --directory /opt/shop/public
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/var/www/shop/index.html"
+mode = "0600"
+content = "<html><body><h1>Welcome to the shop</h1><p>Fresh offers every day.</p></body></html>\n"
+
+[[environment.setup]]
+action = "file"
+path = "/var/www/shop/admin/index.html"
+content = "<html><body><h1>Shop administration</h1></body></html>\n"
+
+[[environment.setup]]
+action = "file"
+path = "/etc/nginx/sites-available/shop"
+content = """server {
+    listen 80;
+    server_name shop.example.lan;
+    root /var/www/shop;
+    index index.html;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8080;
+    }
+
+    location /admin/ {
+    }
+}
+"""
+
+[[environment.setup]]
+action = "run"
+command = "ln -s /etc/nginx/sites-available/shop /etc/nginx/sites-enabled/shop && systemctl reload nginx"
+
+[[environment.setup]]
+action = "dns"
+name = "shop.example.lan"
+value = "10.0.2.15"
+
+[[environment.setup]]
+action = "run"
+command = "for i in $(seq 1 40); do echo \"{{attacker}} - - [02/Mar/2026:07:1$((i % 10)):0$((i % 6)) +0000] \\\"POST /login HTTP/1.1\\\" 404 153 \\\"-\\\" \\\"python-requests/2.31.0\\\"\" >> /var/log/nginx/access.log; done; for ip in 10.0.2.40 10.0.2.45 10.0.2.66; do echo \"$ip - - [02/Mar/2026:07:30:00 +0000] \\\"GET / HTTP/1.1\\\" 403 153 \\\"-\\\" \\\"Mozilla/5.0\\\"\" >> /var/log/nginx/access.log; done"
+
+[[environment.setup]]
+action = "remote"
+host = "build"
+user = "ci"
+password = "letslinux"
+packages = ["curl"]
+
+[environment.vars]
+attacker = { choices = ["203.0.113.77", "198.51.100.23", "192.0.2.199"] }
+
+[[task]]
+id = "front"
+title = "403 on the start page"
+kind = "troubleshooting"
+instructions = "`curl -s http://shop.example.lan/` shows 403 Forbidden. Find out why and fix it at the cause."
+skills = { "s.web-server-ops" = 1.0, "i.http-curl" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "curl -s http://shop.example.lan/", stdout_contains = "Welcome to the shop" },
+    { type = "command_result", user = "root", command = "stat -c %a /var/www/shop/index.html", stdout_regex = "^[0-7][0-7][4-7]\\n|^[0-7][4-7][0-7]\\n" },
+]
+persistent = true
+hints = [
+    "nginx writes the reason for every 403 into /var/log/nginx/error.log.",
+    "'open() \"/var/www/shop/index.html\" failed (13: Permission denied)': the worker processes run as www-data and cannot read the file (ls -l).",
+    "sudo chmod 644 /var/www/shop/index.html",
+]
+explanation = "nginx's master runs as root, but the workers that read the files run as www-data. A file copied with restrictive permissions (or a restrictive umask) is invisible to them."
+
+[[task]]
+id = "api"
+title = "502 on the API"
+kind = "troubleshooting"
+instructions = "The product list, http://shop.example.lan/api/products, answers 502 Bad Gateway. Make it work — also after the next reboot."
+skills = { "s.web-server-ops" = 1.0, "h.failed-services" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "curl -s http://shop.example.lan/api/products", stdout_contains = "Tea pot" },
+    { type = "after_reboot", checks = [{ type = "command_result", user = "root", command = "curl -s http://shop.example.lan/api/products", stdout_contains = "Tea pot" }] },
+]
+persistent = true
+hints = [
+    "502 is generated by nginx itself: it could not get an answer from its upstream. Which one? The error log says.",
+    "'connect() failed (111: Connection refused) … upstream: \"http://127.0.0.1:8080…\"' — nothing listens on 8080 (ss -tlnp). systemctl status shop-api.",
+    "sudo systemctl enable --now shop-api",
+]
+explanation = "The service was installed by the migration but never enabled or started. ss -tlnp now shows python3 listening on 127.0.0.1:8080 — reachable for nginx, not from the network."
+
+[[task]]
+id = "headers"
+title = "Say less, protect more"
+kind = "independent"
+instructions = """
+The security team wants nginx to stop announcing its version in the Server header, and every
+successful response of the shop to carry the header X-Content-Type-Options: nosniff.
+"""
+skills = { "s.web-server-ops" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "curl -sI http://shop.example.lan/", stdout_regex = "(?m)^Server: nginx\\r?$", stdout_contains = "X-Content-Type-Options: nosniff" },
+    { type = "command_result", user = "root", command = "nginx -t", status = 0 },
+]
+persistent = true
+hints = ["Two directives: one about 'tokens', one that adds a header. Both can go into the server block.", "server_tokens off; and add_header X-Content-Type-Options nosniff;", "Add both lines to /etc/nginx/sites-available/shop inside server { }, then sudo nginx -t && sudo systemctl reload nginx"]
+explanation = "Hiding the version does not fix vulnerabilities but stops advertising which ones apply. nosniff stops browsers from guessing content types (and running uploaded files as scripts). Note: add_header in a location replaces all inherited ones."
+
+[[task]]
+id = "admin"
+title = "Office only"
+kind = "independent"
+instructions = "/admin/ must be reachable from the office network 10.0.2.0/24 only — everyone else gets 403."
+skills = { "s.web-server-ops" = 1.0 }
+checks = [
+    { type = "command_result", on = "build", command = "curl -s -o /dev/null -w '%{http_code}' http://shop.example.lan/admin/", stdout_equals = "200" },
+    { type = "command_result", user = "root", command = "curl -s -o /dev/null -w '%{http_code}' -H 'Host: shop.example.lan' http://127.0.0.1/admin/", stdout_equals = "403" },
+    { type = "command_result", user = "root", command = "curl -s -o /dev/null -w '%{http_code}' http://shop.example.lan/", stdout_equals = "200" },
+]
+persistent = true
+hints = ["Access rules (allow/deny) are checked in order; the first that matches decides.", "In the location /admin/ block: allow 10.0.2.0/24; deny all;", "location /admin/ { allow 10.0.2.0/24; deny all; } — then nginx -t and reload."]
+explanation = "Requests from 127.0.0.1 (the server itself) are now refused too: they do not come from 10.0.2.0/24. Network rules in nginx complement, not replace, authentication."
+
+[[task]]
+id = "attacker"
+title = "Knocking at /login"
+kind = "troubleshooting"
+instructions = "The security team saw many failed login attempts last night. Find the client address that sent them, from the access log."
+skills = { "s.web-server-ops" = 1.0, "m.evidence-correlation" = 1.0 }
+question = { prompt = "Which address sent the most POST /login requests?", type = "regex", accept = ["\\s*{{attacker}}\\s*"] }
+hints = ["The first field of an access log line is the client address.", "grep 'POST /login' /var/log/nginx/access.log | awk '{print $1}' | sort | uniq -c | sort -rn | head", "{{attacker}}"]
+explanation = "One address, forty attempts in minutes, a script's User-Agent — a brute-force attempt. Next steps: block it (firewall or deny), rate-limit the login (limit_req) and check the application's accounts."
+
+[[task]]
+id = "proxy"
+title = "Why a proxy?"
+kind = "explanation"
+instructions = "A developer asks why the API is not simply published on port 8080 itself."
+skills = { "s.web-server-ops" = 1.0 }
+question = { prompt = "Which is the best reason?", type = "choice", choices = ["nginx makes the API faster", "One hardened front door: TLS, headers, access rules, logging and static files in nginx; the application listens on 127.0.0.1 only and can be restarted, scaled or replaced behind it", "Port 8080 is blocked by browsers", "Python cannot listen on public addresses"], answer = 1 }
+hints = ["Where does each concern live?", "The API binds 127.0.0.1 — unreachable from outside.", "Answer (b)."]
+explanation = "The reverse proxy separates the public interface from the application: one place for TLS and policy, application servers that are never exposed directly."
+
+[debrief]
+summary = """
+Status codes point to layers: 403 permissions or rules, 502 the upstream, and the error log
+says which file or upstream. Workers run as www-data; upstream services must be enabled.
+server_tokens off, add_header, allow/deny shape what the front door shows and admits; the
+access log is the record of who knocked.
+"""
+alternatives = ["Fixing with ACLs (setfacl -m u:www-data:r) when the owner must stay restrictive", "limit_req_zone/limit_req for rate limiting the login", "Fail2ban reading the access log to ban brute-forcers automatically"]
+pitfalls = ["chmod 777 on web roots", "Starting the upstream by hand without enabling it", "add_header in a location silently dropping the server-level headers"]
+next = "Next: the database behind the shop."
+
+[[solution]]
+name = "layer by layer"
+steps = [
+    { input = ["letslinux"] },
+    "curl -s http://shop.example.lan/",
+    "sudo tail -3 /var/log/nginx/error.log",
+    "sudo chmod 644 /var/www/shop/index.html",
+    "curl -s http://shop.example.lan/api/products",
+    "systemctl status shop-api",
+    "sudo systemctl enable --now shop-api",
+    { edit = "server {\n    listen 80;\n    server_name shop.example.lan;\n    root /var/www/shop;\n    index index.html;\n    server_tokens off;\n    add_header X-Content-Type-Options nosniff;\n\n    location /api/ {\n        proxy_pass http://127.0.0.1:8080;\n    }\n\n    location /admin/ {\n        allow 10.0.2.0/24;\n        deny all;\n    }\n}\n" },
+    "sudo nano /etc/nginx/sites-available/shop",
+    "sudo nginx -t",
+    "sudo systemctl reload nginx",
+    "grep 'POST /login' /var/log/nginx/access.log | awk '{print $1}' | sort | uniq -c | sort -rn | head -3",
+    ":answer {{attacker}}",
+    ":answer 2",
+]
+
+[[solution]]
+name = "acl and sed"
+steps = [
+    { input = ["letslinux"] },
+    "sudo setfacl -m u:www-data:r /var/www/shop/index.html",
+    "sudo chmod o+r /var/www/shop/index.html",
+    "sudo systemctl start shop-api",
+    "sudo systemctl enable shop-api",
+    "sudo sed -i 's/    index index.html;/    index index.html;\\n    server_tokens off;\\n    add_header X-Content-Type-Options nosniff;/' /etc/nginx/sites-available/shop",
+    "sudo sed -i 's#    location /admin/ {#    location /admin/ {\\n        allow 10.0.2.0/24;\\n        deny all;#' /etc/nginx/sites-available/shop",
+    "sudo nginx -t && sudo systemctl reload nginx",
+    { answer_with = "awk '/POST \\/login/ {print $1}' /var/log/nginx/access.log | sort | uniq -c | sort -rn | awk 'NR==1 {print $2}'" },
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "started by hand, everything open"
+steps = [
+    { input = ["letslinux"] },
+    "sudo chmod 777 /var/www/shop/index.html",
+    "sudo systemctl start shop-api",
+    ":answer {{attacker}}",
+    ":answer 2",
+]

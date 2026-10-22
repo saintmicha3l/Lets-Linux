@@ -1,0 +1,196 @@
+schema = 1
+
+[mission]
+id = "q01-toolchain"
+title = "From Source to Program"
+chapter = "Q"
+kind = "lesson"
+order = 1
+difficulty = 4
+requires = ["f07-local-software", "e02-first-script"]
+skills = ["q.toolchain"]
+review_for = ["f.apt-basics", "e.path-lookup"]
+xp = 190
+estimated_minutes = 30
+
+[briefing]
+context = """
+The lab wants two small C tools on this Debian server: a temperature converter whose source
+a student left half-finished in ~/src, and a hypotenuse calculator. There is no compiler
+yet. Install one, build the tools, and learn to read what the compiler and linker say.
+(sudo password: letslinux)
+"""
+concept = """
+gcc turns C source into a program in stages: the preprocessor pastes in #include files and
+expands macros (gcc -E), the compiler checks the code and translates it (errors appear as
+FILE:LINE:COLUMN: error: …), the assembler makes an object file (gcc -c → .o), and the
+linker (ld) joins objects with libraries into an executable (gcc -o NAME). The linker
+resolves every function a program calls: those of the C library (libc) automatically,
+others only from libraries named with -lNAME — the maths functions need -lm. "undefined
+reference to `x'" is the linker's complaint, "implicit declaration of function" the
+compiler's (the right #include is missing; gcc 14 makes it an error). Debian collects the
+toolchain in the build-essential package; file and ldd show what came out.
+"""
+objectives = ["Install a C toolchain", "Fix a compile error from gcc's message", "Link against a library with -l", "Tell compiler errors from linker errors"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "dir"
+path = "/home/learner/src"
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/src/tempconv.c"
+owner = "learner"
+group = "learner"
+content = """/* tempconv: convert Celsius to Fahrenheit */
+#include <stdio.h>
+
+int to_fahrenheit(int celsius)
+{
+    return celsius * 9 / 5 + 32;
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc < 2) {
+        fprintf(stderr, "usage: tempconv CELSIUS\\n");
+        return 1;
+    }
+    int c = atoi(argv[1])
+    printf("%d C = %d F\\n", c, to_fahrenheit(c));
+    return 0;
+}
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/src/hyp.c"
+owner = "learner"
+group = "learner"
+content = """/* hyp: the hypotenuse of a right triangle */
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(int argc, char *argv[])
+{
+    if (argc < 3) {
+        fprintf(stderr, "usage: hyp A B\\n");
+        return 1;
+    }
+    double a = atof(argv[1]);
+    double b = atof(argv[2]);
+    printf("%.2f\\n", sqrt(a * a + b * b));
+    return 0;
+}
+"""
+
+[[task]]
+id = "install"
+title = "A compiler"
+kind = "guided"
+instructions = "Install Debian's toolchain meta-package, then check which gcc you got."
+skills = { "q.toolchain" = 1.0, "f.apt-basics" = 0.5 }
+checks = [
+    { type = "package_state", name = "build-essential", state = "installed" },
+    { type = "command_used", command = ["gcc", "cc"], args_contain = ["--version"], scope = "history" },
+]
+hints = ["The package is build-essential.", "sudo apt install build-essential — then gcc --version.", "sudo apt install -y build-essential; gcc --version"]
+explanation = "build-essential pulls in gcc, make, the C library's headers (libc6-dev) and binutils (the linker and friends)."
+
+[[task]]
+id = "fix"
+title = "Read the compiler"
+kind = "troubleshooting"
+instructions = "Build ~/src/tempconv.c into ~/bin/tempconv. It does not compile; fix the source so that it builds cleanly with gcc -Wall -Werror and converts correctly."
+skills = { "q.toolchain" = 1.0 }
+checks = [
+    { type = "command_result", user = "learner", command = "gcc -Wall -Werror -o /tmp/check-tempconv ~/src/tempconv.c && /tmp/check-tempconv 100", status = 0, stdout_equals = "100 C = 212 F\n" },
+    { type = "command_result", user = "learner", command = "~/bin/tempconv 37", status = 0, stdout_equals = "37 C = 98 F\n" },
+]
+hints = ["gcc -Wall -o ~/bin/tempconv ~/src/tempconv.c — read the first error: file, line, column, and what it expected.", "A missing ';' at the end of line 15; and atoi needs a declaration: #include <stdlib.h> (the implicit-declaration warning).", "Add the semicolon after atoi(argv[1]) and #include <stdlib.h>; mkdir -p ~/bin; gcc -Wall -o ~/bin/tempconv ~/src/tempconv.c"]
+explanation = "The error points just after the statement that lacks its ';'. The warning about atoi is a second, separate problem: without a declaration the compiler guesses the function's type — modern gcc refuses that outright."
+
+[[task]]
+id = "link"
+title = "Read the linker"
+kind = "independent"
+instructions = "Build ~/src/hyp.c into ~/bin/hyp. (Do not change the source.)"
+skills = { "q.toolchain" = 1.0 }
+checks = [
+    { type = "command_result", user = "learner", command = "~/bin/hyp 3 4", status = 0, stdout_equals = "5.00\n" },
+]
+hints = ["The first attempt compiles but fails to link: undefined reference to `sqrt'.", "sqrt lives in the maths library, libm: link it with -lm (after the source file).", "gcc -o ~/bin/hyp ~/src/hyp.c -lm"]
+explanation = "The header math.h only declares sqrt; the code is in libm.so.6, which gcc links only when asked (-lm). ldd ~/bin/hyp now lists libm.so.6 next to libc.so.6."
+
+[[task]]
+id = "stages"
+title = "Who complained?"
+kind = "explanation"
+instructions = "Think back over the two failures."
+skills = { "q.toolchain" = 1.0 }
+question = { prompt = "Which stage reports \"undefined reference to `sqrt'\"?", type = "choice", choices = ["The preprocessor: math.h was not found", "The compiler: sqrt was not declared", "The linker: no object or library given to it defines sqrt", "The program, when it runs"], answer = 2 }
+hints = ["The message ended with collect2: error: ld returned 1 exit status.", "ld is the linker.", "(c)"]
+explanation = "Compiling succeeded — the declaration in math.h was enough for that. Only when joining the pieces did ld find nobody providing sqrt. Errors with FILE:LINE:COLUMN come from the compiler; 'undefined reference' and 'cannot find -lX' from the linker."
+
+[debrief]
+summary = """
+gcc -Wall -o PROG FILE.c [-lNAME]: preprocess → compile → assemble → link. Compiler errors
+name a file, line and column; linker errors ("undefined reference", "cannot find -lX")
+mean a missing object or library. -lNAME links libNAME.so; the C library comes free, the
+maths library needs -lm. build-essential installs the toolchain on Debian.
+"""
+alternatives = ["gcc -c file.c builds file.o; gcc -o prog a.o b.o links separately", "gcc -E file.c shows the preprocessed source", "clang works the same way and has similar options"]
+pitfalls = ["-lm before the source file: older linkers then ignore it.", "Ignoring warnings: implicit declarations are real bugs (and errors in gcc 14).", "Expecting the header alone to provide the code."]
+next = "Next: shared libraries and the dynamic loader."
+
+[[solution]]
+name = "fix and link"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt install -y build-essential",
+    "gcc --version",
+    "gcc -Wall -o ~/bin/tempconv ~/src/tempconv.c",
+    "sed -i 's/atoi(argv\\[1\\])$/atoi(argv[1]);/' ~/src/tempconv.c",
+    "sed -i 's|#include <stdio.h>|#include <stdio.h>\\n#include <stdlib.h>|' ~/src/tempconv.c",
+    "mkdir -p ~/bin",
+    "gcc -Wall -o ~/bin/tempconv ~/src/tempconv.c",
+    "gcc -o ~/bin/hyp ~/src/hyp.c",
+    "gcc -o ~/bin/hyp ~/src/hyp.c -lm",
+    ":answer c",
+]
+
+[[solution]]
+name = "objects first"
+steps = [
+    { input = ["letslinux", "y"] },
+    "sudo apt-get install build-essential",
+    "cc --version",
+    "cd ~/src",
+    "sed -i '15s/$/;/' tempconv.c",
+    "sed -i '2a #include <stdlib.h>' tempconv.c",
+    "gcc -Wall -Werror -c tempconv.c",
+    "mkdir -p ~/bin",
+    "gcc -o ~/bin/tempconv tempconv.o",
+    "gcc -c hyp.c",
+    "gcc -o ~/bin/hyp hyp.o -lm",
+    ":answer The linker: no object or library given to it defines sqrt",
+]
+
+[[counterexample]]
+name = "only the semicolon"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt install -y build-essential",
+    "gcc --version",
+    "sed -i 's/atoi(argv\\[1\\])$/atoi(argv[1]);/' ~/src/tempconv.c",
+    "mkdir -p ~/bin",
+    "gcc -o ~/bin/tempconv ~/src/tempconv.c",
+    "gcc -o ~/bin/hyp ~/src/hyp.c -lm",
+    ":answer c",
+]

@@ -1,0 +1,202 @@
+schema = 1
+
+[mission]
+id = "d06-umask-and-acls"
+title = "Beyond Owner, Group and Others"
+chapter = "D"
+kind = "lesson"
+order = 8
+difficulty = 3
+requires = ["d05-shared-project"]
+skills = ["d.umask", "d.acls"]
+review_for = ["d.permission-bits", "d.group-management"]
+xp = 160
+estimated_minutes = 30
+
+[briefing]
+context = """
+The team directory /srv/team works with the group "team" (you and dave are members). Three
+requests arrived: your new files are readable by every user on the server; the external
+auditor carol must read the quarterly report — only that file, and no group membership for
+her; and files people drop into /srv/team/shared must always be editable by the whole team,
+whatever their personal settings. (sudo password: letslinux)
+"""
+concept = """
+The umask removes permissions from every file and directory a process creates: files are
+requested as 666, directories as 777, and umask 022 turns them into 644 and 755; umask 027
+gives 640 and 750 (nothing for others). umask shows or sets it for the current shell; put it
+in ~/.bashrc or ~/.profile to keep it. Access control lists extend owner/group/other with
+entries for named users and groups: setfacl -m u:carol:r FILE, setfacl -m g:audit:rx DIR,
+setfacl -x u:carol FILE removes an entry, setfacl -b all of them; getfacl FILE shows them
+(ls -l marks such files with +). The mask (the group bits of the mode) limits every named
+entry — getfacl prints "#effective:" where it cuts. A directory's default ACL (setfacl -d -m
+…) is inherited by everything created inside it, replacing the umask's effect there.
+Remember the directories: to reach a file, a user needs x on every directory on the way.
+"""
+objectives = ["Read and set the umask", "Make a umask permanent", "Grant one user access with an ACL", "Make a directory's new files group-writable with a default ACL", "Explain the ACL mask"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "group"
+name = "team"
+members = ["learner"]
+
+[[environment.setup]]
+action = "user"
+name = "dave"
+groups = ["team"]
+password = "dave-pass"
+
+[[environment.setup]]
+action = "user"
+name = "carol"
+password = "carol-pass"
+
+[[environment.setup]]
+action = "dir"
+path = "/srv/team"
+mode = "2770"
+owner = "root"
+group = "team"
+
+[[environment.setup]]
+action = "dir"
+path = "/srv/team/shared"
+mode = "2770"
+owner = "root"
+group = "team"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/team/report.txt"
+mode = "0660"
+owner = "dave"
+group = "team"
+content = "Q1 report: all projects on schedule.\n"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/team/budget.txt"
+mode = "0660"
+owner = "dave"
+group = "team"
+content = "Confidential budget figures\n"
+
+[[task]]
+id = "current"
+title = "Your current umask"
+kind = "guided"
+instructions = "Create a test file in your home directory, look at its permissions, and display your umask."
+skills = { "d.umask" = 1.0 }
+question = { prompt = "What is your current umask (four digits, as umask prints it)?", type = "state", state = { command = "su - learner -c umask" } }
+hints = ["umask without arguments prints it.", "touch ~/test; ls -l ~/test — 666 minus 022 is 644.", "0022"]
+explanation = "0022 removes write permission for group and others: new files are rw-r--r--, readable by everyone."
+
+[[task]]
+id = "permanent"
+title = "Private by default"
+kind = "independent"
+instructions = "Make sure that from now on, files you create are not accessible to other users at all (group may read), also in future logins."
+skills = { "d.umask" = 1.0 }
+checks = [
+    { type = "command_result", user = "learner", login = true, command = "umask", stdout_regex = "\\A00[0-7]7\\s*\\Z" },
+    { type = "command_result", user = "learner", login = true, command = "rm -f /tmp/.umask-check && touch /tmp/.umask-check && stat -c %a /tmp/.umask-check", stdout_regex = "\\A6[0-6]0\\s*\\Z" },
+]
+hints = ["umask 027 sets it for the current shell only.", "Put the umask command into ~/.bashrc (or ~/.profile) — run at every login.", "echo 'umask 027' >> ~/.bashrc"]
+explanation = "With umask 027 a new file is 640 and a new directory 750. The check started a fresh login shell to confirm it lasts."
+
+[[task]]
+id = "auditor"
+title = "One file for the auditor"
+kind = "independent"
+instructions = "Let carol read /srv/team/report.txt — but not change it, not read anything else in /srv/team, and without adding her to a group or changing the files' owners, groups or base permissions."
+skills = { "d.acls" = 1.0, "d.permission-bits" = 0.5 }
+checks = [
+    { type = "user_can_access", user = "carol", path = "/srv/team/report.txt", access = "r" },
+    { type = "user_cannot_access", user = "carol", path = "/srv/team/report.txt", access = "w" },
+    { type = "user_cannot_access", user = "carol", path = "/srv/team/budget.txt", access = "r" },
+    { type = "not_in_group", user = "carol", group = "team" },
+    { type = "file_owner", path = "/srv/team/report.txt", user = "dave", group = "team" },
+    { type = "command_result", user = "carol", command = "ls /srv/team", status_not = 0 },
+]
+hints = ["Two things: x on the directory (to reach the file) and r on the file — as ACL entries for carol.", "setfacl -m u:carol:x /srv/team (x, not r: she may pass through but not list it) and setfacl -m u:carol:r /srv/team/report.txt", "sudo setfacl -m u:carol:x /srv/team; sudo setfacl -m u:carol:r /srv/team/report.txt; getfacl /srv/team/report.txt"]
+explanation = "x on a directory lets her reach a file whose name she knows; without r she cannot list the directory. getfacl shows user:carol:r-- next to the base entries; ls -l shows the + sign."
+
+[[task]]
+id = "shared"
+title = "Always editable by the team"
+kind = "independent"
+instructions = "Make every file created in /srv/team/shared readable and writable by the group team — whatever umask the creator has."
+skills = { "d.acls" = 1.0, "d.umask" = 0.5 }
+checks = [
+    { type = "command_result", user = "learner", command = "umask 077; echo draft > /srv/team/shared/acl-check.txt", status = 0, checks = [
+        { type = "user_can_access", user = "dave", path = "/srv/team/shared/acl-check.txt", access = "w" },
+        { type = "user_cannot_access", user = "carol", path = "/srv/team/shared/acl-check.txt", access = "r" },
+    ] },
+]
+hints = ["A default ACL on the directory is inherited by new files — and ignores the creator's umask.", "setfacl -d -m g:team:rw /srv/team/shared (add -m g:team:rwx to the directory itself, too, if needed).", "sudo setfacl -d -m g:team:rwX /srv/team/shared"]
+explanation = "The new file got group:team:rw- from the default ACL; the umask did not apply. setgid on the directory (the 2 in 2770) already gave it the group team."
+
+[[task]]
+id = "mask"
+title = "The mask"
+kind = "explanation"
+instructions = "Someone ran chmod g=r /srv/team/report.txt."
+skills = { "d.acls" = 1.0 }
+question = { prompt = "What happens to the ACL entries on that file?", type = "choice", choices = ["They are deleted", "The mask becomes r--: every named entry and the owning group are limited to read (getfacl shows #effective)", "Nothing: chmod and ACLs are unrelated", "carol gets write access"], answer = 1 }
+hints = ["With an ACL, the mode's group bits are the mask.", "Try it on a copy and run getfacl.", "(b)"]
+explanation = "chmod on a file with an ACL sets the mask. The entries stay, but their effective permissions are cut — a common surprise after a careless chmod -R."
+
+[debrief]
+summary = """
+umask (shell; ~/.bashrc to keep): 022 → 644/755, 027 → 640/750, 077 → 600/700. ACLs:
+setfacl -m u:NAME:PERMS / g:NAME:PERMS, -x to remove, -b to clear, -d -m for a directory's
+default ACL; getfacl to read (#effective = cut by the mask); ls -l shows +. Users need x on
+every directory on the path.
+"""
+alternatives = ["A dedicated group plus setgid directories (chapter D) when many users share access", "setfacl -R -m … for existing files, -d for future ones", "UMask= in a systemd unit or /etc/login.defs for system-wide defaults"]
+pitfalls = ["Forgetting x on the parent directories.", "chmod -R after setting ACLs (it changes the masks).", "Copying files with cp: the ACL is not copied unless cp -a/--preserve=all."]
+next = "Next: shell scripting."
+
+[[solution]]
+name = "bashrc and setfacl"
+steps = [
+    "touch ~/test",
+    "ls -l ~/test",
+    "umask",
+    { answer_with = "su - learner -c umask" },
+    "echo 'umask 027' >> ~/.bashrc",
+    { input = ["letslinux"] },
+    "sudo setfacl -m u:carol:x /srv/team",
+    "sudo setfacl -m u:carol:r /srv/team/report.txt",
+    "getfacl /srv/team/report.txt",
+    "sudo setfacl -d -m g:team:rwX /srv/team/shared",
+    ":answer b",
+]
+
+[[solution]]
+name = "profile and explicit masks"
+steps = [
+    { answer_with = "su - learner -c umask" },
+    "echo 'umask 0077' >> ~/.profile",
+    "echo 'umask 0027' >> ~/.bashrc",
+    { input = ["letslinux"] },
+    "sudo setfacl -m user:carol:--x /srv/team",
+    "sudo setfacl -m user:carol:r-- /srv/team/report.txt",
+    "sudo setfacl -m d:g:team:rw-,g:team:rwx /srv/team/shared",
+    ":answer The mask becomes r--: every named entry and the owning group are limited to read (getfacl shows #effective)",
+]
+
+[[counterexample]]
+name = "everything readable"
+steps = [
+    { answer_with = "su - learner -c umask" },
+    "umask 027",
+    { input = ["letslinux"] },
+    "sudo chmod o+rx /srv/team",
+    "sudo chmod o+r /srv/team/report.txt",
+    "sudo chmod 2777 /srv/team/shared",
+    ":answer b",
+]

@@ -1,0 +1,278 @@
+schema = 1
+
+[mission]
+id = "t03-new-server"
+title = "Capstone: The New Server"
+chapter = "T"
+kind = "capstone"
+order = 3
+difficulty = 6
+requires = ["h03-your-own-service", "i07-firewall", "d04-sudo-and-accounts", "j01-new-disk", "s02-order-book"]
+skills = ["t.server-buildout", "h.unit-files", "i.firewalls", "d.group-management", "j.fstab-persistence", "k.backup-automation"]
+review_for = ["h.unit-files", "i.firewalls", "d.group-management", "j.fstab-persistence", "k.backup-automation"]
+xp = 420
+estimated_minutes = 60
+sequential = false
+
+[briefing]
+context = """
+A fresh Debian server has been handed to you to provision for the "{{team}}" team's internal
+notes service. The ticket gives a specification; build the whole thing so it works and
+survives a reboot. A second disk (/dev/sdb, {{disksize}}) is attached for the data. The
+service program is already on the machine at /opt/notes/bin/notesd. (sudo password: letslinux)
+
+Specification:
+  1. Group "notes"; service user "notesd" (system account, no login, home /var/lib/notes);
+     and a human operator "{{operator}}" who may use sudo and is a member of the notes group.
+  2. The second disk holds an ext4 filesystem mounted at /var/lib/notes, in /etc/fstab so it
+     comes back after a reboot, owned by notesd:notes.
+  3. A systemd service "notes.service" runs /opt/notes/bin/notesd as notesd, enabled at boot,
+     listening on port 8080.
+  4. A firewall that allows SSH (22) and the notes port (8080) from anywhere and drops other
+     new inbound connections.
+  5. A nightly backup of /var/lib/notes to /var/backups/notes at 01:30 (cron or a timer).
+"""
+concept = """
+A capstone build-out: turn a specification into a working, persistent system, in a sensible
+order. Storage before the data that lives on it; the group and users before the files and
+services that reference them; the service before the firewall rule that exposes it; and
+everything written to disk (fstab, enabled units, crontab, a saved ruleset) so a reboot does
+not undo your work. Verify each item against the spec, not against your memory of having
+typed a command.
+"""
+objectives = ["Create groups and users to spec", "Prepare and persist a filesystem", "Write and enable a service unit", "Configure a persistent firewall", "Automate backups", "Verify the whole build, including after a reboot"]
+
+[environment]
+profile = "debian"
+packages = ["nftables"]
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "{{disksize}}"
+
+[[environment.setup]]
+action = "file"
+path = "/opt/notes/bin/notesd"
+mode = "0755"
+content = """#!/bin/sh
+# notesd: the notes service (a small HTTP server on PORT, default 8080)
+cd /var/lib/notes 2>/dev/null || cd /opt/notes
+exec python3 -m http.server "${PORT:-8080}" --bind 0.0.0.0
+"""
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /var/backups"
+
+[environment.vars]
+team = { choices = ["Aurora", "Beacon", "Cobalt"] }
+operator = { choices = ["mina", "raj", "lena"] }
+disksize = { choices = ["4G", "6G", "8G"] }
+
+[[task]]
+id = "accounts"
+title = "Groups and users"
+kind = "independent"
+instructions = """
+Create the group notes; the system user notesd (no login shell, home /var/lib/notes, in the
+notes group); and the operator {{operator}} (an ordinary account that may use sudo and is in
+the notes group).
+"""
+skills = { "t.server-buildout" = 1.0, "d.group-management" = 1.0 }
+checks = [
+    { type = "group_exists", name = "notes" },
+    { type = "user_exists", name = "notesd", shell = "/usr/sbin/nologin" },
+    { type = "in_group", user = "notesd", group = "notes" },
+    { type = "in_group", user = "{{operator}}", group = "notes" },
+    { type = "command_result", user = "root", command = "id -u {{operator}} >/dev/null && groups {{operator}} | grep -Ewc 'sudo|wheel'", stdout_equals = "1" },
+]
+persistent = true
+hints = [
+    "sudo groupadd notes; sudo useradd --system -g notes -s /usr/sbin/nologin -d /var/lib/notes notesd.",
+    "sudo useradd -m -G notes,sudo {{operator}} (sudo is the admin group on Debian); give them a password if you like.",
+    "Check with id notesd and groups {{operator}}.",
+]
+explanation = "A system account for the daemon (no login, its own group) and a normal account for the human, with sudo for administration — never a shared root login."
+
+[[task]]
+id = "storage"
+title = "The data disk"
+kind = "independent"
+instructions = """
+Put an ext4 filesystem on the second disk and mount it at /var/lib/notes, owned by
+notesd:notes, so it is mounted automatically after a reboot. (You can make one partition or
+use the whole disk — either is fine.)
+"""
+skills = { "t.server-buildout" = 1.0, "j.fstab-persistence" = 1.0 }
+checks = [
+    { type = "mounted", target = "/var/lib/notes", fstype = "ext4" },
+    { type = "fstab_entry", target = "/var/lib/notes" },
+    { type = "fstab_valid" },
+    { type = "command_result", user = "root", command = "stat -c '%U:%G' /var/lib/notes", stdout_equals = "notesd:notes" },
+    { type = "after_reboot", checks = [{ type = "mounted", target = "/var/lib/notes", fstype = "ext4" }] },
+]
+persistent = true
+hints = [
+    "sudo mkfs.ext4 /dev/sdb (or partition first with fdisk/parted, then mkfs on /dev/sdb1).",
+    "Add a line to /etc/fstab (by UUID is best: blkid /dev/sdb), then sudo mount /var/lib/notes; check with findmnt --verify.",
+    "After mounting, sudo chown notesd:notes /var/lib/notes.",
+]
+explanation = "The filesystem is on disk, the mount is in fstab (so the boot remounts it), and the service's user owns its data directory."
+
+[[task]]
+id = "service"
+title = "The service"
+kind = "independent"
+instructions = """
+Write /etc/systemd/system/notes.service: it runs /opt/notes/bin/notesd as the user notesd,
+and is enabled so it starts at boot. Start it now; it must be listening on port 8080.
+"""
+skills = { "t.server-buildout" = 1.0, "h.unit-files" = 1.0 }
+checks = [
+    { type = "unit_state", unit = "notes.service", active = "active", sub = "running" },
+    { type = "unit_enabled", unit = "notes.service" },
+    { type = "command_result", user = "root", command = "systemctl show -p User --value notes.service", stdout_equals = "notesd" },
+    { type = "port_listening", port = 8080 },
+    { type = "after_reboot", checks = [{ type = "port_listening", port = 8080 }] },
+]
+persistent = true
+hints = [
+    "A minimal unit: [Unit] Description=…  / [Service] User=notesd  ExecStart=/opt/notes/bin/notesd / [Install] WantedBy=multi-user.target.",
+    "sudo systemctl daemon-reload, then sudo systemctl enable --now notes.service.",
+    "systemctl status notes and sudo ss -ltnp | grep 8080 to confirm.",
+]
+explanation = "A unit file makes the service reproducible and, once enabled, persistent across reboots — unlike a command you run by hand."
+
+[[task]]
+id = "firewall"
+title = "The firewall"
+kind = "independent"
+instructions = """
+Set up a firewall that accepts SSH (22) and the notes port (8080) and drops other new
+inbound connections — and that is reloaded from its configuration at boot. Keep your own SSH
+session working.
+"""
+skills = { "t.server-buildout" = 1.0, "i.firewalls" = 1.0 }
+checks = [
+    { type = "port_open_from", from = "intranet", to = "10.0.2.15", port = 8080 },
+    { type = "port_open_from", from = "intranet", to = "10.0.2.15", port = 22 },
+    { type = "firewall_blocks", from = "intranet", port = 9999 },
+    { type = "after_reboot", checks = [{ type = "firewall_blocks", from = "intranet", port = 9999 }, { type = "port_open_from", from = "intranet", to = "10.0.2.15", port = 8080 }] },
+]
+persistent = true
+hints = [
+    "Edit /etc/nftables.conf: a table inet filter with an input chain, policy drop, accepting lo, established/related, tcp dport { 22, 8080 }, and echo-request.",
+    "Enable it so it loads at boot: sudo systemctl enable --now nftables; apply with sudo nft -f /etc/nftables.conf.",
+    "Always allow established,related and lo, or you lock yourself out; test from another host (port_open_from) not only locally.",
+]
+explanation = "A default-drop input policy with explicit allows is the safe shape; writing it to /etc/nftables.conf and enabling the service makes it survive a reboot."
+
+[[task]]
+id = "backup"
+title = "Nightly backups"
+kind = "independent"
+instructions = """
+Schedule a nightly backup at 01:30 that copies /var/lib/notes into /var/backups/notes (cron
+or a systemd timer). Prove it works by running it once and leaving a backup behind.
+"""
+skills = { "t.server-buildout" = 1.0, "k.backup-automation" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "grep -rilE 'backup|/var/lib/notes|/var/backups/notes' /etc/cron.d /etc/crontab /var/spool/cron /etc/systemd/system 2>/dev/null | head -1", stdout_regex = "\\S" },
+    { type = "command_result", user = "root", command = "test -d /var/backups/notes && echo yes || echo no", stdout_equals = "yes" },
+    { type = "command_result", user = "root", command = "ls -A /var/backups/notes | grep -c .", stdout_regex = "^[1-9]" },
+]
+persistent = true
+hints = [
+    "A script in /usr/local/sbin that runs rsync -a /var/lib/notes/ /var/backups/notes/ (or tar) — then run it once by hand to create the first backup.",
+    "Schedule it: echo '30 1 * * * root /usr/local/sbin/backup-notes' | sudo tee /etc/cron.d/backup-notes (or a .timer with OnCalendar=*-*-* 01:30).",
+    "The checks look for a schedule that mentions /var/lib/notes (or your script) and at least one file under /var/backups/notes.",
+]
+explanation = "Automated, scheduled, and proven by an actual backup on disk — a cron entry nobody has ever seen run is not a backup."
+
+[[task]]
+id = "review"
+title = "The build review"
+kind = "explanation"
+instructions = "Before handover, a colleague asks which single check best proves the build is really finished."
+skills = { "t.server-buildout" = 1.0 }
+question = { prompt = "Which is the strongest evidence?", type = "choice", choices = ["That every command you typed exited 0", "A reboot followed by verifying the spec end to end: the mount is back, the service listens, the firewall is loaded, and a backup exists — persistence is where hand-built servers fail", "That the service was running at some point", "That /etc/fstab has a line for the disk"], answer = 1 }
+hints = ["What is the difference between 'works now' and 'provisioned'?", "Most build mistakes only show up after a restart.", "Answer (b)."]
+explanation = "A provisioned server is defined by its state after a reboot, not by the commands that got it there — which is also why configuration management exists."
+
+[debrief]
+summary = """
+Build to a specification in order: storage, then accounts, then the service, then the
+firewall that exposes it, then backups — each written to disk (fstab, enabled units,
+nftables.conf, a crontab/timer) and verified against the spec, including after a reboot.
+"""
+alternatives = ["A systemd timer instead of cron; mount by UUID instead of device name", "ProtectSystem=/PrivateTmp= on the unit to harden it further (see Least Privilege)", "An Ansible playbook to make the whole build reproducible across many servers"]
+pitfalls = ["Mounting the disk but forgetting fstab", "Starting the service but not enabling it", "nft rules added by hand and lost at reboot", "A backup job scheduled but never test-run"]
+next = "You have reached the end of the built curriculum."
+
+[[solution]]
+name = "full build"
+steps = [
+    { input = ["letslinux"] },
+    "sudo groupadd notes",
+    "sudo useradd --system -g notes -s /usr/sbin/nologin -d /var/lib/notes notesd",
+    "sudo useradd -m -G notes,sudo {{operator}}",
+    "sudo mkfs.ext4 -q /dev/sdb",
+    "echo \"UUID=$(sudo blkid -s UUID -o value /dev/sdb) /var/lib/notes ext4 defaults 0 2\" | sudo tee -a /etc/fstab",
+    "sudo mkdir -p /var/lib/notes && sudo mount /var/lib/notes",
+    "sudo chown notesd:notes /var/lib/notes",
+    "findmnt --verify",
+    { edit = "[Unit]\nDescription=Notes service for the {{team}} team\nAfter=network.target\n\n[Service]\nUser=notesd\nEnvironment=PORT=8080\nExecStart=/opt/notes/bin/notesd\nRestart=on-failure\n\n[Install]\nWantedBy=multi-user.target\n" },
+    "sudo nano /etc/systemd/system/notes.service",
+    "sudo systemctl daemon-reload",
+    "sudo systemctl enable --now notes.service",
+    "sudo ss -ltnp | grep 8080",
+    { edit = "#!/usr/sbin/nft -f\nflush ruleset\ntable inet filter {\n    chain input {\n        type filter hook input priority filter; policy drop;\n        ct state established,related accept\n        iif \"lo\" accept\n        icmp type echo-request accept\n        tcp dport { 22, 8080 } accept\n    }\n}\n" },
+    "sudo nano /etc/nftables.conf",
+    "sudo systemctl enable --now nftables",
+    "sudo nft -f /etc/nftables.conf",
+    { edit = "#!/bin/sh\nset -e\nmkdir -p /var/backups/notes\nrsync -a /var/lib/notes/ /var/backups/notes/\n" },
+    "sudo nano /usr/local/sbin/backup-notes",
+    "sudo chmod 755 /usr/local/sbin/backup-notes",
+    "echo '30 1 * * * root /usr/local/sbin/backup-notes' | sudo tee /etc/cron.d/backup-notes",
+    "sudo touch /var/lib/notes/first-note.txt",
+    "sudo /usr/local/sbin/backup-notes",
+    ":answer 2",
+]
+
+[[solution]]
+name = "partition, timer, tar"
+steps = [
+    { input = ["letslinux"] },
+    "sudo groupadd notes && sudo useradd -r -g notes -s /usr/sbin/nologin -d /var/lib/notes notesd && sudo useradd -m -G notes,sudo {{operator}}",
+    "sudo apt-get install -y parted",
+    "sudo parted -s /dev/sdb mklabel gpt mkpart data ext4 1MiB 100%",
+    "sudo mkfs.ext4 -q /dev/sdb1",
+    "sudo mkdir -p /var/lib/notes",
+    "echo '/dev/sdb1 /var/lib/notes ext4 defaults 0 2' | sudo tee -a /etc/fstab",
+    "sudo mount -a && sudo chown notesd:notes /var/lib/notes",
+    "printf '[Unit]\\nDescription=Notes\\nAfter=network.target\\n[Service]\\nUser=notesd\\nEnvironment=PORT=8080\\nExecStart=/opt/notes/bin/notesd\\n[Install]\\nWantedBy=multi-user.target\\n' | sudo tee /etc/systemd/system/notes.service",
+    "sudo systemctl daemon-reload && sudo systemctl enable --now notes.service",
+    "printf '#!/usr/sbin/nft -f\\nflush ruleset\\ntable inet filter {\\n chain input {\\n  type filter hook input priority 0; policy drop;\\n  ct state established,related accept\\n  iif lo accept\\n  icmp type echo-request accept\\n  tcp dport { 22, 8080 } accept\\n }\\n}\\n' | sudo tee /etc/nftables.conf",
+    "sudo systemctl enable --now nftables && sudo nft -f /etc/nftables.conf",
+    "printf '#!/bin/sh\\nmkdir -p /var/backups/notes\\ntar -C /var/lib/notes -czf /var/backups/notes/notes-$(date +%%F).tar.gz .\\n' | sudo tee /usr/local/sbin/backup-notes",
+    "sudo chmod +x /usr/local/sbin/backup-notes",
+    "printf '[Unit]\\nDescription=Nightly notes backup\\n[Timer]\\nOnCalendar=*-*-* 01:30\\n[Install]\\nWantedBy=timers.target\\n' | sudo tee /etc/systemd/system/backup-notes.timer",
+    "printf '[Unit]\\nDescription=Notes backup\\n[Service]\\nType=oneshot\\nExecStart=/usr/local/sbin/backup-notes\\n' | sudo tee /etc/systemd/system/backup-notes.service",
+    "sudo systemctl daemon-reload && sudo systemctl enable --now backup-notes.timer",
+    "echo hello | sudo tee /var/lib/notes/readme && sudo /usr/local/sbin/backup-notes",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "works now, not persistent"
+steps = [
+    { input = ["letslinux"] },
+    "sudo groupadd notes && sudo useradd --system -g notes -s /usr/sbin/nologin -d /var/lib/notes notesd && sudo useradd -m -G notes,sudo {{operator}}",
+    "sudo mkfs.ext4 -q /dev/sdb && sudo mkdir -p /var/lib/notes && sudo mount /dev/sdb /var/lib/notes && sudo chown notesd:notes /var/lib/notes",
+    "printf '[Unit]\\nDescription=Notes\\n[Service]\\nUser=notesd\\nEnvironment=PORT=8080\\nExecStart=/opt/notes/bin/notesd\\n[Install]\\nWantedBy=multi-user.target\\n' | sudo tee /etc/systemd/system/notes.service",
+    "sudo systemctl daemon-reload && sudo systemctl start notes.service",
+    "sudo nft add table inet filter && sudo nft add chain inet filter input '{ type filter hook input priority 0; policy drop; }' && sudo nft add rule inet filter input ct state established,related accept && sudo nft add rule inet filter input iif lo accept && sudo nft add rule inet filter input tcp dport '{ 22, 8080 }' accept",
+    "sudo mkdir -p /var/backups/notes && sudo cp -a /var/lib/notes/. /var/backups/notes/ 2>/dev/null; sudo touch /var/backups/notes/.done",
+    ":answer 2",
+]

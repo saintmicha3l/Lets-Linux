@@ -1,0 +1,240 @@
+schema = 1
+
+[mission]
+id = "k05-safe-at-night"
+title = "Safe at Night"
+chapter = "K"
+kind = "lesson"
+order = 6
+difficulty = 4
+requires = ["k01-cron-jobs", "e09-scripting-checkpoint"]
+skills = ["k.safe-automation", "e.idempotency", "h.journalctl"]
+review_for = ["e.idempotency", "k.cron-basics"]
+xp = 200
+estimated_minutes = 30
+
+[briefing]
+context = """
+Two jobs run unattended on this server: purge-cache empties the application cache every
+night, and sync-reports copies reports to the archive every five minutes. Nobody watches
+them — which is exactly why they must be safe: fail loudly instead of doing damage, be
+testable without consequences, leave a trace, and never run twice at once. (sudo password:
+letslinux)
+"""
+concept = """
+Defensive scripting for automation: set -euo pipefail stops at the first failing command,
+unset variable or failed pipeline; ${VAR:?message} refuses to continue without a value;
+check preconditions ([ -d "$DIR" ]) before destructive commands. A --dry-run mode shows
+what would happen. logger -t TAG writes to the system journal (journalctl -t TAG). flock
+prevents overlapping runs: exec 9>/run/lock/NAME.lock; flock -n 9 || exit 1 — the lock is
+released automatically when the script ends, however it ends.
+"""
+objectives = ["Spot a destructive failure mode", "Make a script stop on errors and missing values", "Add a dry-run mode", "Log to the journal", "Prevent overlapping runs with flock"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "file"
+path = "/etc/app/cache.conf"
+content = "# where the application keeps its cache\nCACHE_DIR=/var/cache/app\n"
+
+[[environment.setup]]
+action = "files"
+dir = "/var/cache/app"
+count = 12
+prefix = "page-"
+size = 4096
+
+[[environment.setup]]
+action = "file"
+path = "/srv/data/orders.db"
+content = "the business\n"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/purge-cache"
+mode = "0755"
+content = """#!/bin/bash
+# purge-cache: empty the application cache (cron: 30 2 * * *)
+source /etc/app/cache.conf
+rm -rf "$CACHE_DIR"/*
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/sync-reports"
+mode = "0755"
+content = """#!/bin/bash
+# sync-reports: copy new reports to the archive (cron: */5 * * * *; a run can take 12 minutes)
+echo "syncing reports"
+mkdir -p /srv/archive/reports
+cp -a /srv/reports/. /srv/archive/reports/
+"""
+
+[[environment.setup]]
+action = "files"
+dir = "/srv/reports"
+count = 5
+prefix = "report-"
+
+[[environment.setup]]
+action = "file"
+path = "/etc/cron.d/app-jobs"
+content = "30 2 * * * root /usr/local/bin/purge-cache\n*/5 * * * * root /usr/local/bin/sync-reports\n"
+
+[[task]]
+id = "danger"
+title = "Read it like a pessimist"
+kind = "guided"
+instructions = "Read /usr/local/bin/purge-cache. Imagine the night when /etc/app/cache.conf is missing (a botched deployment, a typo in its name)."
+skills = { "k.safe-automation" = 1.0 }
+question = { prompt = "What would the script do as root?", type = "choice", choices = ["Nothing: source fails, so the script stops", "source fails but the script continues; CACHE_DIR is empty, so it runs rm -rf /* — it deletes the whole system", "It deletes /var/cache only", "cron refuses to run it"], answer = 1 }
+hints = ["Without set -e, a failed command does not stop a bash script.", "\"$CACHE_DIR\"/* with an empty variable is /*."]
+explanation = "Bash carries on after errors and expands unset variables to nothing — an empty variable turned 'empty the cache' into 'empty the disk'. This exact bug has deleted real users' home directories."
+
+[[task]]
+id = "guard"
+title = "Fail loudly, not destructively"
+kind = "independent"
+instructions = """
+Change purge-cache so that it stops at the first error and refuses to delete anything when
+CACHE_DIR is empty or not a directory — while still emptying /var/cache/app when the
+configuration is correct.
+"""
+skills = { "k.safe-automation" = 1.0, "e.idempotency" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", setup = ["rm -f /etc/app/cache.conf"], command = "/usr/local/bin/purge-cache", status_not = 0, checks = [{ type = "path_exists", path = "/srv/data/orders.db" }, { type = "path_exists", path = "/etc/hostname" }] },
+    { type = "command_result", user = "root", setup = ["echo CACHE_DIRECTORY=/var/cache/app > /etc/app/cache.conf"], command = "/usr/local/bin/purge-cache", status_not = 0, checks = [{ type = "path_exists", path = "/srv/data/orders.db" }] },
+    { type = "command_result", user = "root", setup = ["echo CACHE_DIR=/var/cache/nonexistent > /etc/app/cache.conf"], command = "/usr/local/bin/purge-cache", status_not = 0, checks = [{ type = "path_exists", path = "/srv/data/orders.db" }] },
+    { type = "command_result", user = "root", command = "/usr/local/bin/purge-cache", status = 0, checks = [{ type = "tree_count", path = "/var/cache/app", max = 0 }, { type = "path_exists", path = "/var/cache/app", kind = "dir" }] },
+]
+persistent = true
+hints = [
+    "Three defences: set -euo pipefail at the top; a check that the variable is set and non-empty; a check that it names a directory.",
+    "set -euo pipefail makes 'source' of a missing file fatal and an unset CACHE_DIR an error; ${CACHE_DIR:?} or [ -n \"$CACHE_DIR\" ] and [ -d \"$CACHE_DIR\" ] || exit 1 cover the rest.",
+    "#!/bin/bash\nset -euo pipefail\nsource /etc/app/cache.conf\n: \"${CACHE_DIR:?CACHE_DIR is not set}\"\n[ -d \"$CACHE_DIR\" ] || { echo \"$CACHE_DIR is not a directory\" >&2; exit 1; }\nrm -rf -- \"${CACHE_DIR:?}\"/*",
+]
+explanation = """
+Each test ran the script on a copy of the machine with a broken configuration — your script
+refused every time and the data survived. ${VAR:?} is the cheapest seat belt in shell
+scripting; use it on every variable that ends up in rm, mv or chmod.
+"""
+
+[[task]]
+id = "dryrun"
+title = "Look before you leap"
+kind = "independent"
+instructions = "Give purge-cache a --dry-run option: it lists what it would delete (one path per line) and deletes nothing."
+skills = { "k.safe-automation" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", setup = ["touch /var/cache/app/page-x"], command = "/usr/local/bin/purge-cache --dry-run", status = 0, stdout_contains = "/var/cache/app/page-x", checks = [{ type = "path_exists", path = "/var/cache/app/page-x" }] },
+    { type = "command_result", user = "root", setup = ["touch /var/cache/app/page-y"], command = "/usr/local/bin/purge-cache", status = 0, checks = [{ type = "path_absent", path = "/var/cache/app/page-y" }] },
+]
+persistent = true
+hints = [
+    "Look at \"$1\" (with set -u, use \"${1:-}\") and branch.",
+    "In dry-run mode print the paths instead of deleting them: printf '%s\\n' \"$CACHE_DIR\"/* or ls -d \"$CACHE_DIR\"/*.",
+    "if [ \"${1:-}\" = --dry-run ]; then printf '%s\\n' \"$CACHE_DIR\"/*; exit 0; fi",
+]
+explanation = "A dry run is how you test automation on a production machine: same code path, same expansions, no consequences."
+
+[[task]]
+id = "log"
+title = "Leave a trace"
+kind = "independent"
+instructions = "Make every real (not dry) run of purge-cache record in the system journal what it did, with the tag purge-cache."
+skills = { "k.safe-automation" = 1.0, "h.journalctl" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "/usr/local/bin/purge-cache >/dev/null 2>&1; journalctl -t purge-cache --no-pager", stdout_regex = "purge-cache(\\[\\d+\\])?: \\S" },
+]
+persistent = true
+hints = ["logger writes to the journal (and syslog).", "logger -t purge-cache \"message\" — afterwards: journalctl -t purge-cache.", "Count first: n=$(find \"$CACHE_DIR\" -mindepth 1 -maxdepth 1 | wc -l); … ; logger -t purge-cache \"purged $n entries from $CACHE_DIR\""]
+explanation = "Cron mails output only if a mail system exists; the journal is always there. A line per run turns 'did it run last night?' into a one-line question: journalctl -t purge-cache --since yesterday."
+
+[[task]]
+id = "lock"
+title = "One at a time"
+kind = "independent"
+instructions = """
+sync-reports starts every five minutes but can take twelve, so runs overlap. Make it exit
+immediately (with a message, and without copying anything) while another run holds the lock
+file /run/lock/sync-reports.lock.
+"""
+skills = { "k.safe-automation" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", setup = ["exec 8>/run/lock/sync-reports.lock", "flock -n 8"], command = "/usr/local/bin/sync-reports", stdout_not_contains = "syncing", status_not = 0 },
+    { type = "command_result", user = "root", command = "/usr/local/bin/sync-reports", stdout_contains = "syncing", status = 0 },
+]
+persistent = true
+hints = [
+    "flock takes a lock on a file; with -n it fails at once instead of waiting.",
+    "Open the lock file on a spare descriptor and lock that: the lock lasts as long as the script, and is released even if the script crashes.",
+    "Near the top: exec 9>/run/lock/sync-reports.lock; flock -n 9 || { echo 'sync-reports: already running' >&2; exit 1; }",
+]
+explanation = "The check ran your script while another shell held the lock — it stepped back. Alternatively the cron line itself can do it: flock -n /run/lock/sync-reports.lock /usr/local/bin/sync-reports."
+
+[[task]]
+id = "twice"
+title = "Run it twice"
+kind = "explanation"
+instructions = "A colleague asks why it matters that these jobs can safely run twice in a row."
+skills = { "k.safe-automation" = 1.0, "e.idempotency" = 1.0 }
+question = { prompt = "Why?", type = "choice", choices = ["It does not: cron runs each job exactly once", "Automation gets re-run — after failures, by retries, by a colleague, by a catch-up after downtime; a job whose second run changes nothing (idempotent) is safe to retry", "Only to save CPU time", "Because the journal requires it"], answer = 1 }
+hints = ["What happens after a reboot, a retry, a manual run?", "Idempotent: f(f(x)) = f(x).", "Answer (b)."]
+explanation = "Idempotency — 'make it so' rather than 'do this' — is the foundation of reliable automation and of configuration management tools."
+
+[debrief]
+summary = """
+Unattended scripts: set -euo pipefail; ${VAR:?} and precondition checks before rm; a
+--dry-run mode; logger -t TAG for a trace; flock -n against overlap. Test the failure
+modes, not only the happy path.
+"""
+alternatives = ["systemd timers instead of cron: a unit never starts twice while running, and output lands in the journal", "flock in the crontab line: flock -n LOCK COMMAND", "rm -rf -- \"${DIR:?}\"/* as a one-line guard"]
+pitfalls = ["set -e alone does not catch failures inside pipelines (pipefail) or in if conditions", "Lock files checked with [ -e ] (stale after a crash) instead of flock", "Testing only with a correct configuration"]
+next = "Next: describing the desired state instead of the steps."
+
+[[solution]]
+name = "rewrite both scripts"
+steps = [
+    { input = ["letslinux"] },
+    "cat /usr/local/bin/purge-cache",
+    ":answer 2",
+    { edit = "#!/bin/bash\n# purge-cache: empty the application cache (cron: 30 2 * * *)\nset -euo pipefail\nsource /etc/app/cache.conf\n: \"${CACHE_DIR:?CACHE_DIR is not set}\"\n[ -d \"$CACHE_DIR\" ] || { echo \"purge-cache: $CACHE_DIR is not a directory\" >&2; exit 1; }\nif [ \"${1:-}\" = --dry-run ]; then\n    printf '%s\\n' \"$CACHE_DIR\"/*\n    exit 0\nfi\nn=$(find \"$CACHE_DIR\" -mindepth 1 -maxdepth 1 | wc -l)\nrm -rf -- \"${CACHE_DIR:?}\"/*\nlogger -t purge-cache \"purged $n entries from $CACHE_DIR\"\n" },
+    "sudo nano /usr/local/bin/purge-cache",
+    { edit = "#!/bin/bash\n# sync-reports: copy new reports to the archive (cron: */5 * * * *; a run can take 12 minutes)\nexec 9>/run/lock/sync-reports.lock\nflock -n 9 || { echo 'sync-reports: already running' >&2; exit 1; }\necho \"syncing reports\"\nmkdir -p /srv/archive/reports\ncp -a /srv/reports/. /srv/archive/reports/\n" },
+    "sudo nano /usr/local/bin/sync-reports",
+    ":answer 2",
+]
+
+[[solution]]
+name = "guards in if statements"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    { edit = "#!/bin/bash\nset -eu -o pipefail\n. /etc/app/cache.conf\nif [ -z \"${CACHE_DIR:-}\" ] || [ ! -d \"$CACHE_DIR\" ]; then\n    logger -t purge-cache \"refusing: bad CACHE_DIR '${CACHE_DIR:-}'\"\n    exit 2\nfi\nDRY=no\n[ \"${1:-}\" = \"--dry-run\" ] && DRY=yes\nfor f in \"$CACHE_DIR\"/*; do\n    [ -e \"$f\" ] || continue\n    if [ \"$DRY\" = yes ]; then echo \"$f\"; else rm -rf -- \"$f\"; fi\ndone\n[ \"$DRY\" = yes ] || logger -t purge-cache \"cache $CACHE_DIR emptied\"\n" },
+    "sudo nano /usr/local/bin/purge-cache",
+    "sudo sed -i '2i exec 9>/run/lock/sync-reports.lock\\nflock -n 9 || { echo already running >\\&2; exit 1; }' /usr/local/bin/sync-reports",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "set -e only"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    "sudo sed -i '2i set -e' /usr/local/bin/purge-cache",
+    "sudo sed -i '2i exec 9>/run/lock/sync-reports.lock\\nflock -n 9 || exit 1' /usr/local/bin/sync-reports",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "a lock file that is only tested"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    { edit = "#!/bin/bash\nset -euo pipefail\nsource /etc/app/cache.conf\n: \"${CACHE_DIR:?}\"\n[ -d \"$CACHE_DIR\" ] || exit 1\nif [ \"${1:-}\" = --dry-run ]; then printf '%s\\n' \"$CACHE_DIR\"/*; exit 0; fi\nrm -rf -- \"$CACHE_DIR\"/*\nlogger -t purge-cache done\n" },
+    "sudo nano /usr/local/bin/purge-cache",
+    "sudo sed -i '2i [ -e /run/lock/sync-reports.pid ] \\&\\& exit 1' /usr/local/bin/sync-reports",
+    ":answer 2",
+]

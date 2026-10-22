@@ -1,0 +1,128 @@
+schema = 1
+
+[mission]
+id = "b06-links"
+title = "Links"
+chapter = "B"
+kind = "lesson"
+order = 6
+difficulty = 3
+requires = ["b03-making-things", "b02-looking-around"]
+skills = ["b.links-symbolic", "b.links-hard-inodes"]
+xp = 70
+estimated_minutes = 15
+
+[briefing]
+context = """
+The deployment tool unpacks each release into ~/releases/vN and expects a stable path,
+~/current, that always points at the live release. Someone also wants a second name for a
+configuration file that survives if the original name is deleted.
+"""
+concept = """
+A symbolic link (ln -s TARGET LINK) is a small file containing a path; following it leads to
+the target. If the target disappears, the link dangles. A hard link (ln TARGET LINK) is a
+second name for the same inode: the data stays until the last name is removed. ls -l shows
+symlinks as name -> target; ls -i shows inode numbers; the link count is column two.
+"""
+objectives = ["Create and repoint symbolic links", "Create hard links and read inode numbers", "Fix a dangling link"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+ver = { range = [3, 9] }
+
+[[environment.setup]]
+action = "file"
+path = "~/releases/v{{ver}}/app.txt"
+content = "release {{ver}}\n"
+
+[[environment.setup]]
+action = "file"
+path = "~/releases/v1/app.txt"
+content = "release 1\n"
+
+[[environment.setup]]
+action = "file"
+path = "~/app/config"
+content = "threads=4\n"
+
+[[environment.setup]]
+action = "file"
+path = "~/logs/today.log"
+content = "all good\n"
+
+[[environment.setup]]
+action = "symlink"
+path = "~/latest-log"
+target = "logs/missing.log"
+
+[[task]]
+id = "current"
+title = "Point at the live release"
+kind = "guided"
+instructions = "Create a symbolic link ~/current pointing to ~/releases/v{{ver}}."
+skills = { "b.links-symbolic" = 1.0 }
+checks = [{ type = "symlink_to", path = "~/current", target = "~/releases/v{{ver}}" }]
+hints = ["Symbolic links are made with ln and an option.", "ln -s TARGET LINKNAME (target first!).", "Type: ln -s ~/releases/v{{ver}} ~/current"]
+explanation = "ls -l ~/current shows current -> /home/learner/releases/v{{ver}}; cat ~/current/app.txt follows it."
+
+[[task]]
+id = "hard"
+title = "A second name"
+kind = "guided"
+instructions = "Create a hard link ~/config.bak to ~/app/config, then compare their inode numbers with ls -i."
+skills = { "b.links-hard-inodes" = 1.0 }
+checks = [{ type = "same_inode", a = "~/config.bak", b = "~/app/config" }]
+hints = ["A hard link is created with ln without -s.", "ln EXISTING NEWNAME.", "Type: ln ~/app/config ~/config.bak"]
+explanation = "Both names now refer to one inode: the link count is 2 and editing either name changes the same data."
+
+[[task]]
+id = "predict"
+title = "What survives?"
+kind = "prediction"
+instructions = "Reason about the two link types."
+skills = { "b.links-hard-inodes" = 1.0, "b.links-symbolic" = 0.5 }
+question = { prompt = "If you delete ~/app/config, what happens to ~/config.bak?", type = "choice", choices = ["It is deleted too", "It still contains the data", "It becomes a dangling link", "It becomes empty"], answer = 1 }
+hints = ["The data belongs to the inode, not to a name.", "Removing one name decrements the link count.", "The answer is (b): the inode stays until its last name is removed."]
+explanation = "rm only removes a name. The data is freed when the link count reaches zero (and no process holds it open)."
+
+[[task]]
+id = "dangling"
+title = "Fix a dangling link"
+kind = "troubleshooting"
+instructions = "cat ~/latest-log fails. Investigate, then make ~/latest-log point to the existing ~/logs/today.log."
+skills = { "b.links-symbolic" = 1.0 }
+checks = [{ type = "symlink_to", path = "~/latest-log", target = "~/logs/today.log" }]
+hints = ["ls -l ~/latest-log shows where the link points.", "The target does not exist. Replace the link: ln -sf forces replacement.", "Type: ln -sf ~/logs/today.log ~/latest-log"]
+explanation = "A dangling link points at a path that no longer exists. ln -sf replaces it; ln -sfn also works when the old target was a directory."
+
+[[task]]
+id = "switch"
+title = "Roll back"
+kind = "independent"
+instructions = "Release {{ver}} has a bug. Repoint ~/current to ~/releases/v1."
+skills = { "b.links-symbolic" = 1.0 }
+checks = [{ type = "symlink_to", path = "~/current", target = "~/releases/v1" }]
+hints = ["Replacing a link that points to a directory needs care: ln may create the new link inside the old target.", "Use ln -sfn (n: treat the link name as a normal file).", "Type: ln -sfn ~/releases/v1 ~/current"]
+explanation = "Without -n, ln -sf ~/releases/v1 ~/current would follow ~/current and create a link inside v{{ver}}. Switching a symlink is how many deployment tools roll back instantly."
+
+[debrief]
+summary = """
+Symbolic links are paths that can dangle; hard links are extra names for one inode. Inode
+numbers and link counts (ls -i, ls -l, stat) reveal what is really going on.
+"""
+alternatives = ["readlink ~/current prints the target", "rm ~/current && ln -s ~/releases/v1 ~/current also rolls back"]
+pitfalls = ["Hard links cannot span filesystems or point to directories.", "ln -s with a relative target is resolved relative to the link's directory, not your current directory."]
+next = "Next: finding files with find."
+
+[[solution]]
+name = "absolute targets"
+steps = ["ln -s ~/releases/v{{ver}} ~/current", "ln ~/app/config ~/config.bak", "ls -i ~/app/config ~/config.bak", ":answer b", "ls -l ~/latest-log", "ln -sf ~/logs/today.log ~/latest-log", "ln -sfn ~/releases/v1 ~/current"]
+
+[[solution]]
+name = "relative targets and rm"
+steps = ["ln -s releases/v{{ver}} current", "ln app/config config.bak", ":answer It still contains the data", "rm latest-log && ln -s logs/today.log latest-log", "rm current && ln -s releases/v1 current"]
+
+[[counterexample]]
+name = "copies instead of links"
+steps = ["cp -r ~/releases/v{{ver}} ~/current", "cp ~/app/config ~/config.bak"]

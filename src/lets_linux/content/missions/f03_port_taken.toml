@@ -1,0 +1,137 @@
+schema = 1
+
+[mission]
+id = "f03-port-taken"
+title = "Address Already in Use"
+chapter = "F"
+kind = "troubleshooting"
+order = 5
+difficulty = 4
+requires = ["f02b-when-installs-go-wrong", "h02-reading-the-journal", "c08-the-method"]
+skills = ["f.apt-basics", "f.conflicts-broken", "i.ports-sockets", "h.failed-services"]
+review_for = ["h.failed-services", "g.signals-kill"]
+xp = 150
+estimated_minutes = 22
+sequential = false
+
+[briefing]
+context = """
+The new intranet should run on nginx. Install it and get it serving on port 80. A colleague
+mentions that "some old web thing" was tried on this box a while ago... Diagnose from
+evidence, not guesses. (sudo password: letslinux)
+"""
+concept = """
+Only one program can listen on a TCP port (for the same address). When a service fails with
+"Address already in use", find the current owner of the port: ss -tlnp lists listening
+sockets with their processes (as root). Then decide whether that program should go, and make
+sure it does not come back.
+"""
+objectives = ["Install a service package", "Diagnose a port conflict", "Free the port and start the service"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+old = { choices = ["legacy-httpd", "webproxyd", "minihttpd"] }
+
+[[environment.setup]]
+action = "process"
+comm = "{{old}}"
+argv = ["/opt/{{old}}/bin/{{old}}", "--port", "80", "--docroot", "/opt/{{old}}/www"]
+user = "root"
+listen = [80]
+age_minutes = 52000
+rss_kb = 14000
+pid_var = "old_pid"
+
+[[task]]
+id = "install"
+title = "Install nginx"
+kind = "troubleshooting"
+instructions = "Install the nginx package."
+skills = { "f.apt-basics" = 1.0 }
+checks = [{ type = "package_state", name = "nginx", state = "installed" }]
+persistent = true
+hints = ["apt install, as root.", "sudo apt install nginx", "Type: sudo apt install nginx — and read the end of the output."]
+explanation = "The package installed, but its service failed to start — apt printed the systemd error."
+
+[[task]]
+id = "why"
+title = "What does nginx say?"
+kind = "troubleshooting"
+instructions = "Find nginx's own error message about the failed start."
+skills = { "h.failed-services" = 1.0 }
+question = { prompt = "Which error does nginx report?", type = "choice", choices = ["Permission denied", "Address already in use", "No such file or directory", "unknown directive"], answer = 1 }
+hints = ["systemctl status nginx shows the last log lines.", "journalctl -u nginx shows them all.", "bind() to 0.0.0.0:80 failed (98: Address already in use) — answer (b)."]
+explanation = "nginx's configuration is fine (the ExecStartPre test passed); binding port 80 failed."
+
+[[task]]
+id = "who"
+title = "Who has the port?"
+kind = "troubleshooting"
+instructions = "Find the program that listens on port 80."
+skills = { "i.ports-sockets" = 1.0 }
+question = { prompt = "Which program listens on port 80?", type = "exact", accept = ["{{old}}", "/opt/{{old}}/bin/{{old}}"] }
+hints = ["ss lists listening sockets; -p adds processes (needs root for other users' sockets).", "sudo ss -tlnp", "It is {{old}} (PID {{old_pid}})."]
+explanation = "ss -tlnp is the first command to reach for in port conflicts (lsof -i :80 is an alternative)."
+
+[[task]]
+id = "fix"
+title = "nginx on port 80"
+kind = "troubleshooting"
+instructions = "The old program is abandoned. Stop it and get nginx running on port 80."
+skills = { "f.conflicts-broken" = 1.0, "h.failed-services" = 1.0, "g.signals-kill" = 0.5 }
+checks = [
+    { type = "process_absent", comm = "{{old}}" },
+    { type = "unit_state", unit = "nginx.service", active = "active" },
+    { type = "port_listening", port = 80, comm = "nginx" },
+]
+persistent = true
+hints = ["Stop the old program, then start nginx again.", "sudo kill {{old_pid}}; then sudo systemctl start nginx (reset-failed first if it failed too often).", "sudo kill {{old_pid}} && sudo systemctl restart nginx"]
+explanation = "Freeing the port was enough: nginx starts cleanly. On a real system you would also check how the old program was started (cron, rc.local, a unit) so it does not return at the next boot."
+
+[debrief]
+summary = """
+Service fails → read its log → "Address already in use" → ss -tlnp finds the owner → stop it
+→ start the service → verify with ss and systemctl.
+"""
+alternatives = ["sudo lsof -i :80 (not simulated yet)", "sudo fuser -k 80/tcp (not simulated yet)", "Moving nginx to another port with listen 8080 in the site configuration"]
+pitfalls = ["Killing whatever holds the port without checking what it is.", "Forgetting how the old program is started: it may come back after a reboot."]
+next = "Chapter F continues with repositories and trust (planned)."
+
+[[solution]]
+name = "ss and kill"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt install -y nginx",
+    "systemctl status nginx",
+    ":answer b",
+    "sudo ss -tlnp",
+    ":answer {{old}}",
+    "sudo kill {{old_pid}}",
+    "sudo systemctl restart nginx",
+    "sudo ss -tlnp",
+]
+
+[[solution]]
+name = "journal and pkill"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt-get install -y nginx",
+    "journalctl -u nginx -n 5",
+    ":answer Address already in use",
+    "sudo ss -tlp | grep http",
+    ":answer /opt/{{old}}/bin/{{old}}",
+    "sudo pkill {{old}}",
+    "sudo systemctl reset-failed nginx",
+    "sudo systemctl start nginx",
+]
+
+[[counterexample]]
+name = "restart without freeing the port"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt install -y nginx",
+    ":answer b",
+    ":answer {{old}}",
+    "sudo systemctl restart nginx",
+]

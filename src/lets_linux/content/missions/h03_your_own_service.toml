@@ -1,0 +1,212 @@
+schema = 1
+
+[mission]
+id = "h03-your-own-service"
+title = "Your Own Service"
+chapter = "H"
+kind = "lesson"
+order = 3
+difficulty = 4
+requires = ["h01-meet-the-services", "b03-making-things"]
+skills = ["h.unit-files", "h.restart-policies", "h.enable-disable"]
+xp = 130
+estimated_minutes = 25
+
+[briefing]
+context = """
+The warehouse team wrote /opt/inventory/inventory-sync, a program that watches a directory
+for inventory updates. Right now someone starts it by hand in a terminal, and it dies at
+logout. Turn it into a proper service: running as its own unprivileged user, restarted if it
+crashes, started at boot. (sudo password: letslinux)
+"""
+concept = """
+A service is described by a unit file in /etc/systemd/system (yours) or /usr/lib/systemd/system
+(packaged). [Unit] has Description= and ordering such as After=network.target. [Service] has
+ExecStart= (absolute path), User=, Environment=KEY=value, Restart= (on-failure restarts after
+crashes) and RestartSec=. [Install] WantedBy=multi-user.target is what systemctl enable uses.
+After creating or changing unit files, run systemctl daemon-reload. Override single settings
+with a drop-in: /etc/systemd/system/NAME.service.d/*.conf (systemctl edit NAME creates one).
+"""
+objectives = ["Write a service unit", "Run a service as an unprivileged user", "Configure restarts", "Override settings with drop-ins"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "user"
+name = "inventory"
+shell = "/usr/sbin/nologin"
+create_home = false
+
+[[environment.setup]]
+action = "dir"
+path = "/srv/inventory"
+owner = "inventory"
+group = "inventory"
+mode = "0750"
+
+[[environment.setup]]
+action = "file"
+path = "/opt/inventory/inventory-sync"
+mode = "0755"
+content = """#!/bin/bash
+# inventory-sync: watches $INVENTORY_DIR for updates
+if [ -z "$INVENTORY_DIR" ]; then
+    echo "<3>inventory-sync: INVENTORY_DIR is not set"
+    exit 2
+fi
+if ! touch "$INVENTORY_DIR/.heartbeat" 2>/dev/null; then
+    echo "<3>inventory-sync: cannot write to $INVENTORY_DIR"
+    exit 1
+fi
+echo "inventory-sync: watching $INVENTORY_DIR as $(whoami)"
+sleep 86400
+"""
+
+[[task]]
+id = "write"
+title = "Write the unit file"
+kind = "independent"
+instructions = """
+Create /etc/systemd/system/inventory-sync.service so that it: runs /opt/inventory/inventory-sync,
+as user inventory, with the environment variable INVENTORY_DIR=/srv/inventory, restarts on
+failure, and can be enabled for multi-user.target.
+"""
+skills = { "h.unit-files" = 1.0 }
+checks = [
+    { type = "unit_setting", unit = "inventory-sync.service", on_disk = true, section = "Service", key = "ExecStart", regex = "^/opt/inventory/inventory-sync\\b" },
+    { type = "unit_setting", unit = "inventory-sync.service", on_disk = true, section = "Service", key = "User", value = "inventory" },
+    { type = "unit_setting", unit = "inventory-sync.service", on_disk = true, section = "Service", key = "Environment", regex = "INVENTORY_DIR=/srv/inventory" },
+    { type = "unit_setting", unit = "inventory-sync.service", on_disk = true, section = "Service", key = "Restart", value = "on-failure" },
+    { type = "unit_setting", unit = "inventory-sync.service", on_disk = true, section = "Install", key = "WantedBy", regex = "multi-user\\.target" },
+]
+hints = [
+    "Three sections: [Unit], [Service], [Install]. Create the file as root (sudo nano, or sudo tee).",
+    "[Service] needs ExecStart=, User=, Environment=INVENTORY_DIR=/srv/inventory and Restart=on-failure; [Install] needs WantedBy=multi-user.target.",
+    "[Unit]\\nDescription=Inventory sync\\n\\n[Service]\\nExecStart=/opt/inventory/inventory-sync\\nUser=inventory\\nEnvironment=INVENTORY_DIR=/srv/inventory\\nRestart=on-failure\\n\\n[Install]\\nWantedBy=multi-user.target",
+]
+explanation = "That is a complete service. Lines in the wrong section are ignored, so systemctl cat and the journal's warnings are worth checking."
+
+[[task]]
+id = "run"
+title = "Start it"
+kind = "independent"
+instructions = "Start the service and confirm in its log that it is watching the directory as the inventory user."
+skills = { "h.unit-files" = 1.0, "h.systemctl-control" = 0.5 }
+checks = [
+    { type = "unit_state", unit = "inventory-sync.service", active = "active", sub = "running" },
+    { type = "unit_runs_as", unit = "inventory-sync.service", user = "inventory" },
+    { type = "journal_contains", unit = "inventory-sync.service", text = "watching /srv/inventory as inventory" },
+]
+hints = ["systemctl start, then systemctl status (or journalctl -u).", "A brand-new unit can be started directly; after edits, daemon-reload first.", "Type: sudo systemctl daemon-reload && sudo systemctl start inventory-sync"]
+explanation = "The service runs without a terminal, as an unprivileged user that can only touch its own directory — least privilege for daemons."
+
+[[task]]
+id = "enable"
+title = "Survive reboots"
+kind = "independent"
+instructions = "Make inventory-sync start at boot."
+skills = { "h.enable-disable" = 1.0 }
+checks = [
+    { type = "unit_enabled", unit = "inventory-sync.service" },
+    { type = "after_reboot", checks = [{ type = "unit_state", unit = "inventory-sync.service", active = "active" }] },
+]
+persistent = true
+hints = ["The [Install] section is used by one systemctl verb.", "systemctl enable", "Type: sudo systemctl enable inventory-sync"]
+explanation = "enable created /etc/systemd/system/multi-user.target.wants/inventory-sync.service, a symlink to your unit."
+
+[[task]]
+id = "crash"
+title = "Crash test"
+kind = "independent"
+instructions = "Prove that Restart=on-failure works: kill the service's main process with SIGKILL and check that systemd starts it again."
+skills = { "h.restart-policies" = 1.0, "g.signals-kill" = 0.5 }
+checks = [{ type = "unit_state", unit = "inventory-sync.service", active = "active", min_restarts = 1 }]
+hints = ["Find the main PID with systemctl status (or systemctl show -P MainPID inventory-sync).", "sudo kill -9 PID — or let systemctl send the signal: systemctl kill -s KILL inventory-sync.", "Type: sudo kill -9 $(systemctl show -P MainPID inventory-sync)   then: systemctl status inventory-sync"]
+explanation = "The journal shows 'Main process exited, code=killed, status=9/KILL', then 'Scheduled restart job, restart counter is at 1'. SIGTERM would have counted as a clean exit and not been restarted by on-failure."
+
+[[task]]
+id = "dropin"
+title = "Override, don't edit"
+kind = "independent"
+instructions = """
+The warehouse wants a 5-second pause before restarts. Set RestartSec=5 with a drop-in file in
+/etc/systemd/system/inventory-sync.service.d/ — leave the main unit file unchanged — and make
+systemd use it.
+"""
+skills = { "h.unit-files" = 1.0, "h.restart-policies" = 1.0 }
+checks = [
+    { type = "unit_setting", unit = "inventory-sync.service", section = "Service", key = "RestartSec", regex = "^5(s|sec)?$" },
+    { type = "unit_reloaded", unit = "inventory-sync.service" },
+    { type = "path_exists", path = "/etc/systemd/system/inventory-sync.service.d", kind = "dir" },
+    { type = "file_not_contains", path = "/etc/systemd/system/inventory-sync.service", text = "RestartSec" },
+]
+hints = ["systemctl edit NAME opens a drop-in and reloads systemd for you.", "Or create the .service.d directory, put [Service] and RestartSec=5 in a .conf file, then daemon-reload.", "Type: sudo systemctl edit inventory-sync   (write [Service] and RestartSec=5)"]
+explanation = "Drop-ins keep your change separate from the original — essential for packaged units, whose files are replaced on upgrades."
+
+[debrief]
+summary = """
+A unit file turns a program into a supervised service: ExecStart, User, Environment, Restart
+and [Install]. daemon-reload after changes, enable for boot, drop-ins for overrides.
+"""
+alternatives = ["systemctl edit --full --force inventory-sync creates a new unit file in the editor", "EnvironmentFile=/etc/default/inventory-sync keeps settings in a separate file", "systemctl enable --now inventory-sync"]
+pitfalls = ["Relative paths in ExecStart fail with status=203/EXEC.", "Forgetting daemon-reload: systemctl warns that the unit changed on disk and keeps the old definition.", "Running daemons as root when a dedicated user would do."]
+next = "Next: a service that refuses to start."
+
+[[solution]]
+name = "tee and drop-in file"
+steps = [
+    { input = ["letslinux"] },
+    """sudo tee /etc/systemd/system/inventory-sync.service > /dev/null <<'EOF'
+[Unit]
+Description=Inventory sync
+After=network.target
+
+[Service]
+ExecStart=/opt/inventory/inventory-sync
+User=inventory
+Environment=INVENTORY_DIR=/srv/inventory
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF""",
+    "sudo systemctl daemon-reload",
+    "sudo systemctl start inventory-sync",
+    "systemctl status inventory-sync",
+    "sudo systemctl enable inventory-sync",
+    "sudo kill -9 $(systemctl show -P MainPID inventory-sync)",
+    "systemctl status inventory-sync",
+    "sudo mkdir -p /etc/systemd/system/inventory-sync.service.d",
+    "printf '[Service]\\nRestartSec=5\\n' | sudo tee /etc/systemd/system/inventory-sync.service.d/restart.conf",
+    "sudo systemctl daemon-reload",
+]
+
+[[solution]]
+name = "editor and systemctl edit"
+steps = [
+    { edit = "[Unit]\nDescription=Inventory synchronisation daemon\n\n[Service]\nType=simple\nUser=inventory\nEnvironment=\"INVENTORY_DIR=/srv/inventory\"\nExecStart=/opt/inventory/inventory-sync\nRestart=on-failure\n\n[Install]\nWantedBy=multi-user.target\n" },
+    { input = ["letslinux"] },
+    "sudo nano /etc/systemd/system/inventory-sync.service",
+    "sudo systemctl enable --now inventory-sync",
+    "journalctl -u inventory-sync -n 5",
+    "sudo systemctl kill -s KILL --kill-whom=main inventory-sync",
+    { edit = "[Service]\nRestartSec=5s\n" },
+    "sudo systemctl edit inventory-sync",
+]
+
+[[counterexample]]
+name = "running as root"
+steps = [
+    { input = ["letslinux"] },
+    """sudo tee /etc/systemd/system/inventory-sync.service > /dev/null <<'EOF'
+[Service]
+ExecStart=/opt/inventory/inventory-sync
+Environment=INVENTORY_DIR=/srv/inventory
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF""",
+    "sudo systemctl enable --now inventory-sync",
+]

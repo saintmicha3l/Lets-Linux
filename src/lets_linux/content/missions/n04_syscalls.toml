@@ -1,0 +1,153 @@
+schema = 1
+
+[mission]
+id = "n04-syscalls"
+title = "What Is It Really Doing?"
+chapter = "N"
+kind = "troubleshooting"
+order = 5
+difficulty = 5
+requires = ["n02-kernel-cmdline", "d05-shared-project", "e06-debugging-scripts", "n03b-watching-syscalls", "c08-the-method"]
+skills = ["n.syscalls", "n.kernel-userspace", "m.permission-rca"]
+review_for = ["d.group-management", "g.file-descriptors"]
+xp = 200
+estimated_minutes = 25
+
+[briefing]
+context = """
+The reporting tool report-gen fails for you with nothing but "configuration problem". Its
+author left the company; the tool is a shell script, but reading code is not always an
+option — so watch what it does instead. Make it work for your account without weakening
+the protection of its configuration (it contains the database password).
+(sudo password: letslinux)
+"""
+concept = """
+Programs cannot touch files, the network or other processes themselves: they ask the
+kernel through system calls, and the kernel decides. strace prints those requests and the
+kernel's answers. Read it bottom-up from the failure: the last call that returned -1 before
+the error message usually names the problem — openat(…, "/path", …) = -1 ENOENT (no such
+file), EACCES (permission denied), ECONNREFUSED… A shell script does its work in child
+processes (cat, grep …): use strace -f to follow them, and -e trace=openat,execve to cut
+the noise. Group memberships take effect at the next login: a running shell keeps the
+groups it started with (id shows them; newgrp or logging in again picks up new ones).
+"""
+objectives = ["Trace a failing program with strace", "Find the failing system call and its errno", "Fix access without loosening permissions", "Understand when group changes take effect"]
+
+[environment]
+profile = "ubuntu"
+
+[[environment.setup]]
+action = "group"
+name = "reportgen"
+
+[[environment.setup]]
+action = "file"
+path = "/etc/reportgen/report.conf"
+mode = "0640"
+owner = "root"
+group = "reportgen"
+content = """# report-gen settings
+db_host = db.example.lan
+db_password = Wq7-reports-2026
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/report-gen"
+mode = "0755"
+content = """#!/bin/sh
+# report-gen 0.9
+cat /etc/reportgen/report.conf > /dev/null 2>&1 || { echo "report-gen: configuration problem" >&2; exit 2; }
+echo "report-gen: monthly report written to ~/report.txt"
+echo "report for $(date +%Y-%m)" > "$HOME/report.txt"
+"""
+
+[[task]]
+id = "trace"
+title = "Watch it fail"
+kind = "troubleshooting"
+instructions = "Run report-gen under strace and find the system call that fails."
+skills = { "n.syscalls" = 1.0, "n.kernel-userspace" = 0.5 }
+question = { prompt = "Which file can it not open?", type = "exact", accept = ["/etc/reportgen/report.conf"] }
+hints = ["strace report-gen shows only the script's own calls — the work happens in a child process.", "strace -f -e trace=openat,execve report-gen", "openat(AT_FDCWD, \"/etc/reportgen/report.conf\", O_RDONLY) = -1 EACCES (Permission denied)"]
+explanation = "cat, started by the script, was refused access. The script threw the real reason away (2>&1 into /dev/null) and printed its own vague message."
+
+[[task]]
+id = "errno"
+title = "Which error?"
+kind = "troubleshooting"
+instructions = "Look at the result of that call."
+skills = { "n.syscalls" = 1.0, "m.permission-rca" = 0.5 }
+question = { prompt = "Which errno did the kernel return?", type = "exact", accept = ["EACCES", "eacces"] }
+hints = ["After = -1 comes the error name.", "EACCES — not ENOENT: the file exists.", "EACCES"]
+explanation = "EACCES: the file exists, but the permission check failed. ls -l shows mode 640, owner root, group reportgen."
+
+[[task]]
+id = "fix"
+title = "Access the right way"
+kind = "independent"
+instructions = "Let your account read the configuration — without making it readable for everyone or changing its owner, group or mode."
+skills = { "m.permission-rca" = 1.0, "d.group-management" = 0.5 }
+checks = [
+    { type = "file_mode", path = "/etc/reportgen/report.conf", mode = "0640" },
+    { type = "file_owner", path = "/etc/reportgen/report.conf", user = "root", group = "reportgen" },
+    { type = "in_group", user = "learner", group = "reportgen" },
+    { type = "command_result", user = "learner", login = true, command = "report-gen", status = 0, stdout_contains = ["report written"] },
+    { type = "user_cannot_access", user = "www-data", path = "/etc/reportgen/report.conf", access = "r" },
+]
+hints = ["The group reportgen may read the file.", "sudo usermod -aG reportgen learner — then log in again (or run newgrp reportgen / su - learner) before testing.", "sudo usermod -aG reportgen learner; su - learner -c report-gen"]
+explanation = "Membership in the file's group was the intended way in. The game tested in a fresh login, which has the new group."
+
+[[task]]
+id = "kernel"
+title = "Who said no?"
+kind = "explanation"
+instructions = "One more look at the trace."
+skills = { "n.kernel-userspace" = 1.0, "n.syscalls" = 0.5 }
+question = { prompt = "Who decided that cat may not open the file?", type = "choice", choices = ["cat itself, after reading the mode bits", "The kernel, when cat called openat(): it checks the process's user and groups against the file's mode before returning a file descriptor", "The shell"], answer = 1 }
+hints = ["Where does a program's request to open a file go?", "The permission check is part of the system call.", "(b)"]
+explanation = "Every access is checked by the kernel at the moment of the system call — the program cannot skip the check, and strace shows the verdict."
+
+[debrief]
+summary = """
+strace -f -e trace=openat,execve PROGRAM → find the last call with = -1 before the error →
+errno names the problem (ENOENT, EACCES, ECONNREFUSED, …) → fix the cause.
+"""
+alternatives = ["strace -o trace.log -f … and grep -E '= -1 ' trace.log", "ltrace shows library calls instead of system calls", "For scripts: sh -x shows the commands as they run"]
+pitfalls = ["Tracing a script without -f.", "chmod 644 on a file with a password in it.", "Testing group access in the shell that was open before usermod."]
+next = "Chapter N is complete."
+
+[[solution]]
+name = "strace -f and usermod"
+steps = [
+    "report-gen",
+    "strace -f -e trace=openat,execve report-gen",
+    ":answer /etc/reportgen/report.conf",
+    ":answer EACCES",
+    "ls -l /etc/reportgen/report.conf",
+    { input = ["letslinux"] },
+    "sudo usermod -aG reportgen learner",
+    ":answer b",
+]
+
+[[solution]]
+name = "trace to a file, gpasswd"
+steps = [
+    "strace -f -o /tmp/rg.trace report-gen",
+    "grep -- '= -1' /tmp/rg.trace",
+    ":answer /etc/reportgen/report.conf",
+    ":answer eacces",
+    { input = ["letslinux"] },
+    "sudo gpasswd -a learner reportgen",
+    ":answer The kernel, when cat called openat(): it checks the process's user and groups against the file's mode before returning a file descriptor",
+]
+
+[[counterexample]]
+name = "chmod everyone"
+steps = [
+    ":answer /etc/reportgen/report.conf",
+    ":answer EACCES",
+    { input = ["letslinux"] },
+    "sudo chmod 644 /etc/reportgen/report.conf",
+    ":answer b",
+]

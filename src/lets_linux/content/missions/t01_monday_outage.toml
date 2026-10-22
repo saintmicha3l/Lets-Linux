@@ -1,0 +1,372 @@
+schema = 1
+
+[mission]
+id = "t01-monday-outage"
+title = "Capstone: The Monday Outage"
+chapter = "T"
+kind = "capstone"
+order = 1
+difficulty = 5
+requires = ["m04-multi-fault", "f03-port-taken", "k02-cron-environment", "d05-shared-project", "s01-front-door", "j02b-measuring-space"]
+skills = ["t.web-outage", "m.multi-fault", "f.conflicts-broken", "k.cron-environment", "d.chown-chgrp", "i.firewalls", "j.disk-full-incident"]
+review_for = ["m.multi-fault", "k.cron-environment", "i.firewalls", "j.disk-full-incident"]
+xp = 400
+estimated_minutes = 60
+sequential = false
+
+[briefing]
+context = """
+Monday, 08:10. The shop server has been broken since some time over the weekend, while two
+colleagues "tried things" — nobody wrote down what. The ticket says only:
+
+  * Customers in the office (and the monitoring host build) cannot open
+    http://shop.example.lan/.
+  * The product catalog page (/catalog.html) shows Friday's prices. It is rebuilt every
+    five minutes by a job of the user shopgen.
+
+Get the shop fully back, make sure it stays back after a reboot, and be ready to explain
+what happened. You can test from the office side with `ssh ci@build` (password letslinux).
+(sudo password: letslinux)
+"""
+concept = """
+A capstone: no step-by-step instructions. Work like on a real incident — gather evidence
+before changing things (systemctl --failed, journalctl, ss -ltnp, df -h, the logs of the
+job), fix one cause at a time, and verify each fix from where the users are, not only from
+the server itself. Several faults can hide behind one symptom, and fixing one may reveal the
+next.
+"""
+objectives = ["Investigate several interacting faults", "Prioritise: service first, then data, then prevention", "Verify fixes from the client side and across a reboot", "Explain the chain of causes"]
+
+[environment]
+profile = "debian"
+packages = ["nginx", "curl", "nftables"]
+
+[[environment.setup]]
+action = "user"
+name = "shopgen"
+system = true
+shell = "/usr/sbin/nologin"
+home = "/srv/shop"
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "1G"
+partitions = [{ size = "rest", fs = "ext4", label = "shopdata", mount = "/srv/shop", fstab = true }]
+
+[[environment.setup]]
+action = "file"
+path = "/srv/shop/products.csv"
+owner = "shopgen"
+group = "shopgen"
+content = "sku,name,price\nA100,{{item1}},{{price1}}\nA200,{{item2}},12.40\nA300,Gift card,25.00\n"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/shop/www/index.html"
+owner = "shopgen"
+group = "shopgen"
+mode = "0600"
+content = "<html><head><title>{{shop}}</title></head><body><h1>{{shop}}</h1><p><a href=\"catalog.html\">Our products</a></p></body></html>\n"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/shop/www/catalog.html"
+owner = "shopgen"
+group = "shopgen"
+mode = "0644"
+age_days = 3
+content = "<html><body><h1>Catalog</h1><p>Generated: Fri Feb 27 18:00:01 UTC 2026</p><ul><li>{{item1}}: 9.99</li></ul></body></html>\n"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/catalog-render"
+mode = "0755"
+content = """#!/bin/sh
+# catalog-render CSV: the catalog page as HTML on standard output
+echo "<html><body><h1>Catalog</h1><p>Generated: $(date)</p><ul>"
+tail -n +2 "$1" | while IFS=, read -r sku name price; do
+    echo "<li>$name: $price</li>"
+done
+echo "</ul></body></html>"
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/build-catalog"
+mode = "0755"
+content = """#!/bin/sh
+# build-catalog [STAMP]: render the catalog and keep a snapshot of every build
+set -e
+stamp=${1:-$(date +%Y%m%d-%H%M)}
+snap=/srv/shop/snapshots/catalog-$stamp.html
+/usr/local/bin/catalog-render /srv/shop/products.csv > "$snap"
+cp "$snap" /srv/shop/www/catalog.html
+"""
+
+[[environment.setup]]
+action = "dir"
+path = "/srv/shop/snapshots"
+owner = "shopgen"
+group = "shopgen"
+
+[[environment.setup]]
+action = "dir"
+path = "/var/log/shop"
+owner = "shopgen"
+group = "shopgen"
+
+[[environment.setup]]
+action = "file"
+path = "/tmp/shopgen.cron"
+mode = "0644"
+content = "# rebuild the catalog every five minutes\n{{cronline}}\n"
+
+[[environment.setup]]
+action = "run"
+command = "crontab -u shopgen /tmp/shopgen.cron && rm /tmp/shopgen.cron"
+
+[[environment.setup]]
+action = "fill"
+dir = "/srv/shop/snapshots"
+count = 40
+prefix = "catalog-"
+suffix = ".html"
+age_from = 3
+age_to = 60
+owner = "shopgen"
+leave = "0"
+
+[[environment.setup]]
+action = "file"
+path = "/etc/nginx/sites-available/shop"
+content = """server {
+    listen 80 default_server;
+    server_name shop.example.lan;
+    root /srv/shop/www;
+{{badline}}
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
+"""
+
+[[environment.setup]]
+action = "run"
+command = "systemctl stop nginx && ln -sf /etc/nginx/sites-available/shop /etc/nginx/sites-enabled/shop && rm -f /etc/nginx/sites-enabled/default"
+
+[[environment.setup]]
+action = "service"
+name = "catalog-preview.service"
+enable = true
+start = true
+content = """[Unit]
+Description=Catalog preview for the price review (temporary - remove after Friday)
+After=network.target
+
+[Service]
+WorkingDirectory=/srv/shop/snapshots
+ExecStart=/usr/bin/python3 -m http.server 80
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "run"
+command = "systemctl restart nginx; true"
+
+[[environment.setup]]
+action = "file"
+path = "/etc/nftables.conf"
+mode = "0755"
+content = """#!/usr/sbin/nft -f
+# weekend: locked down while debugging -- {{colleague}}
+flush ruleset
+
+table inet filter {
+	chain input {
+		type filter hook input priority filter; policy drop;
+		ct state established,related accept
+		iif "lo" accept
+		tcp dport 22 accept
+		icmp type echo-request accept
+	}
+}
+"""
+
+[[environment.setup]]
+action = "run"
+command = "systemctl enable nftables >/dev/null 2>&1; systemctl restart nftables"
+
+[[environment.setup]]
+action = "dns"
+name = "shop.example.lan"
+value = "10.0.2.15"
+
+[[environment.setup]]
+action = "remote"
+host = "build"
+user = "ci"
+password = "letslinux"
+packages = ["curl"]
+
+[[environment.setup]]
+action = "clock"
+seconds = 1800
+run = true
+
+[environment.vars]
+shop = { choices = ["Harbour Tea Co.", "Maple Hardware", "Blue Fern Books"] }
+item1 = { choices = ["Earl Grey 250 g", "Hammer 500 g", "Atlas of Islands"] }
+price1 = { choices = ["11.50", "14.90", "32.00"] }
+item2 = { choices = ["Teapot", "Pliers", "Bookmark"] }
+colleague = { choices = ["jonas", "priya", "tomasz"] }
+badline = { choices = ["    index index.html", "    gzip_typess text/css;", "    index index.html;\n    location /old {\n        return 301 /;\n"] }
+cronline = { choices = ["*/5 * * * * build-catalog >> /var/log/shop/catalog.log 2>&1", "*/5 * * * * /usr/local/bin/build-catalog $(date +%Y%m%d-%H%M) >> /var/log/shop/catalog.log 2>&1"] }
+
+[[task]]
+id = "online"
+title = "The shop is reachable"
+kind = "troubleshooting"
+instructions = "Customers in the office — test from build — must get the shop's home page at http://shop.example.lan/, served by nginx."
+skills = { "t.web-outage" = 1.0, "m.multi-fault" = 1.0, "f.conflicts-broken" = 1.0, "d.chown-chgrp" = 1.0, "i.firewalls" = 1.0 }
+checks = [
+    { type = "command_result", on = "build", command = "curl -s -m 5 http://shop.example.lan/ | grep -c '<h1>{{shop}}</h1>'", stdout_equals = "1" },
+    { type = "command_result", on = "build", command = "curl -sI -m 5 http://shop.example.lan/ | tr -d '\\r' | grep -i '^server:'", stdout_regex = "(?i)^server: nginx" },
+    { type = "unit_state", unit = "nginx.service", active = "active", sub = "running" },
+]
+persistent = true
+hints = [
+    "Start with the evidence: systemctl --failed, then sudo nginx -t and journalctl -u nginx. One cause at a time.",
+    "After nginx's configuration, look at who holds port 80 (sudo ss -ltnp 'sport = :80'), then at what the office sees: curl from build, sudo nft list ruleset, and the permissions of /srv/shop/www.",
+    "Typical fixes: correct the line nginx -t names; sudo systemctl disable --now catalog-preview; allow tcp dport 80 in /etc/nftables.conf and reload nftables; make index.html readable for www-data (chmod 644).",
+]
+explanation = """
+Four faults stood between the users and the page: a broken nginx configuration, a forgotten
+preview service occupying port 80, a firewall that only let the server itself in — which is
+why curl on the server looked fine — and a page only its owner could read.
+"""
+
+[[task]]
+id = "catalog"
+title = "The catalog is current"
+kind = "troubleshooting"
+instructions = "The catalog page must be rebuilt by its job every five minutes again — check that a fresh build appears."
+skills = { "t.web-outage" = 1.0, "k.cron-environment" = 1.0, "j.disk-full-incident" = 1.0, "m.multi-fault" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "find /srv/shop/www/catalog.html -mmin -11 | grep -c . ; grep -c '{{item1}}: {{price1}}' /srv/shop/www/catalog.html", stdout_equals = "1\n1" },
+    { type = "command_result", user = "root", command = "crontab -l -u shopgen | grep -v '^#' | grep -c build-catalog", stdout_equals = "1" },
+    { type = "command_result", user = "root", command = "df -P /srv/shop | awk 'NR == 2 {print $5 + 0}'", stdout_regex = "^([0-8]?[0-9])$" },
+]
+persistent = true
+hints = [
+    "What does the job say? /var/log/shop/catalog.log (and cron's CMD lines in the journal: journalctl -t CRON).",
+    "Two things are in the way: how cron runs the job (its PATH, and what % means in a crontab), and room on /srv/shop (df -h /srv/shop; du -sh /srv/shop/*).",
+    "Fix the crontab (sudo crontab -u shopgen -e: use /usr/local/bin/build-catalog, without arguments), delete old snapshots (sudo find /srv/shop/snapshots -name 'catalog-*.html' -mtime +7 -delete), then wait for the next run (sleep 300) and check catalog.html.",
+]
+explanation = """
+The job had been failing since the weekend change to its crontab line. Fixing the crontab
+alone was not enough: the snapshots it keeps forever had filled /srv/shop, so the next build
+would have died with "No space left on device".
+"""
+
+[[task]]
+id = "reboot"
+title = "And after a reboot"
+kind = "troubleshooting"
+instructions = "Make sure everything survives a restart of the server."
+skills = { "t.web-outage" = 1.0, "m.multi-fault" = 0.5 }
+checks = [
+    { type = "after_reboot", checks = [
+        { type = "command_result", on = "build", command = "curl -s -m 5 http://shop.example.lan/ | grep -c '<h1>{{shop}}</h1>'", stdout_equals = "1" },
+        { type = "command_result", user = "root", command = "ss -ltnp | grep ':80 ' | grep -c nginx", stdout_equals = "1" },
+    ] },
+]
+persistent = true
+hints = ["Which of your fixes were runtime-only? nft add rule …, systemctl stop … ", "The firewall rules come from /etc/nftables.conf at boot; services start if enabled.", "sudo systemctl disable catalog-preview; edit /etc/nftables.conf; sudo systemctl enable nginx."]
+explanation = "Runtime fixes that a reboot undoes are traps for the next on-call engineer."
+
+[[task]]
+id = "chain"
+title = "The explanation"
+kind = "explanation"
+instructions = "The team lead asks why the catalog stopped updating — and why it would have stayed broken if you had only fixed the crontab."
+skills = { "t.web-outage" = 1.0, "m.multi-fault" = 1.0 }
+question = { prompt = "Which explanation is right?", type = "choice", choices = ["nginx was down, so the job could not publish the page", "The weekend's crontab line could not work under cron (its PATH, or an unescaped % that cron turns into a line break), and the job's snapshots — never deleted — had filled /srv/shop; both had to be fixed, and the snapshots need a clean-up so it does not happen again", "The firewall blocked the job", "The products.csv file was corrupt"], answer = 1 }
+hints = ["What did catalog.log say before and after your crontab fix?", "df -h /srv/shop", "Answer (b)."]
+explanation = "A retention rule (find … -mtime +14 -delete in the job or a timer, or systemd-tmpfiles) prevents the next disk-full outage."
+
+[debrief]
+summary = """
+Several independent faults produced one symptom: configuration error, port conflict,
+firewall, permissions — plus a scheduled job broken by its environment and a full
+filesystem. Evidence first (systemctl --failed, nginx -t, ss -ltnp, nft list ruleset, df,
+logs), one fix at a time, verification from the client side and after a reboot.
+"""
+alternatives = ["ss -ltnp shows the process holding a port; systemctl status PID names its unit", "An nftables rule for the office only: ip saddr 10.0.2.0/24 tcp dport 80 accept", "Retention inside build-catalog: find /srv/shop/snapshots -mtime +14 -delete"]
+pitfalls = ["Testing only from the server itself (the loopback is always allowed)", "Stopping the preview service without disabling it", "Fixing the crontab but not the full disk"]
+next = "Next capstone: the intrusion."
+
+[[solution]]
+name = "evidence first"
+steps = [
+    { input = ["letslinux", "yes", "letslinux", "yes", "letslinux"] },
+    "systemctl --failed",
+    "sudo nginx -t",
+    { edit = "server {\n    listen 80 default_server;\n    server_name shop.example.lan;\n    root /srv/shop/www;\n    index index.html;\n    location / {\n        try_files $uri $uri/ =404;\n    }\n}\n" },
+    "sudo nano /etc/nginx/sites-available/shop",
+    "sudo nginx -t",
+    "sudo systemctl restart nginx",
+    "sudo ss -ltnp 'sport = :80'",
+    "sudo systemctl disable --now catalog-preview",
+    "sudo systemctl restart nginx",
+    "curl -s http://localhost/",
+    "sudo chmod 644 /srv/shop/www/index.html",
+    "ssh ci@build curl -s -m 5 http://shop.example.lan/",
+    "sudo nft list ruleset",
+    "sudo sed -i 's/^\\t\\ttcp dport 22 accept$/\\t\\ttcp dport { 22, 80 } accept/' /etc/nftables.conf",
+    "sudo systemctl restart nftables",
+    "ssh ci@build curl -s -m 5 http://shop.example.lan/",
+    "sudo tail /var/log/shop/catalog.log",
+    "df -h /srv/shop",
+    "sudo find /srv/shop/snapshots -name 'catalog-*.html' -mtime +7 -delete",
+    "echo '*/5 * * * * /usr/local/bin/build-catalog >> /var/log/shop/catalog.log 2>&1' | sudo crontab -u shopgen -",
+    "sleep 300",
+    "cat /srv/shop/www/catalog.html",
+    ":answer 2",
+]
+
+[[solution]]
+name = "different tools"
+steps = [
+    { input = ["letslinux", "yes", "letslinux"] },
+    "sudo -i",
+    "printf 'server {\\n    listen 80 default_server;\\n    server_name shop.example.lan;\\n    root /srv/shop/www;\\n    index index.html;\\n}\\n' > /etc/nginx/sites-available/shop",
+    "systemctl stop catalog-preview; systemctl disable catalog-preview",
+    "chmod o+r /srv/shop/www/index.html",
+    "systemctl restart nginx",
+    "printf '#!/usr/sbin/nft -f\\nflush ruleset\\ntable inet filter {\\n\\tchain input {\\n\\t\\ttype filter hook input priority filter; policy drop;\\n\\t\\tct state established,related accept\\n\\t\\tiif \"lo\" accept\\n\\t\\ttcp dport 22 accept\\n\\t\\tip saddr 10.0.2.0/24 tcp dport 80 accept\\n\\t}\\n}\\n' > /etc/nftables.conf",
+    "nft -f /etc/nftables.conf",
+    "rm -f /srv/shop/snapshots/catalog-2026-0*",
+    "printf 'PATH=/usr/local/bin:/usr/bin:/bin\\n*/5 * * * * build-catalog >> /var/log/shop/catalog.log 2>&1\\n' | crontab -u shopgen -",
+    "sleep 360",
+    "exit",
+    ":answer b",
+]
+
+[[counterexample]]
+name = "only checked locally"
+steps = [
+    { input = ["letslinux"] },
+    "sudo -i",
+    "printf 'server {\\n    listen 80 default_server;\\n    server_name shop.example.lan;\\n    root /srv/shop/www;\\n    index index.html;\\n}\\n' > /etc/nginx/sites-available/shop",
+    "systemctl stop catalog-preview",
+    "chmod 644 /srv/shop/www/index.html",
+    "systemctl restart nginx",
+    "nft add rule inet filter input tcp dport 80 accept",
+    "printf '*/5 * * * * /usr/local/bin/build-catalog >> /var/log/shop/catalog.log 2>&1\\n' | crontab -u shopgen -",
+    "sleep 360",
+    "exit",
+    ":answer 2",
+]

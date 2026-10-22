@@ -1,0 +1,111 @@
+schema = 1
+
+[mission]
+id = "k01b-crons-world"
+title = "Cron's World"
+chapter = "K"
+kind = "lesson"
+order = 2
+difficulty = 3
+requires = ["k01-cron-jobs", "a05-environment"]
+skills = ["k.cron-environment"]
+review_for = ["k.cron-environment"]
+xp = 80
+estimated_minutes = 15
+
+[briefing]
+context = """
+"It works when I run it, but not from cron" is one of the most common complaints about
+scheduled jobs. The reason is almost always the environment cron runs jobs in. Look at that
+environment with your own eyes — by letting cron write it down.
+"""
+concept = """
+cron starts jobs without a login and without a terminal. Each job gets a minimal environment:
+PATH=/usr/bin:/bin, SHELL=/bin/sh (not bash), HOME and LOGNAME set, and none of your
+.bashrc or .profile settings — no aliases, no extra PATH entries. Anything a job prints is
+mailed to its owner; without a mail system it is lost. So:
+  - use absolute paths (/usr/local/bin/tool) or set PATH= at the top of the crontab;
+  - send output to a file:  ... >> /home/you/job.log 2>&1
+  - in a crontab line, % means "new line" — write \\% for a literal percent sign
+    (for example in  date +\\%F).
+"""
+objectives = ["See the environment cron gives jobs", "Capture a job's output", "Write crontab lines that work in that environment"]
+
+[environment]
+profile = "debian"
+
+[[task]]
+id = "capture"
+title = "Let cron write down its world"
+kind = "guided"
+instructions = "Add a job that saves its environment every minute, then wait for it:  echo '* * * * * env > /home/learner/cron-env.txt' | crontab -   then   sleep 70"
+skills = { "k.cron-environment" = 1.0, "k.cron-basics" = 0.5 }
+checks = [{ type = "file_contains", path = "~/cron-env.txt", text = "PATH=" }]
+hints = ["crontab - reads a whole new crontab from standard input.", "The job runs at the start of the next minute: sleep a little over 60 seconds.", "Type: echo '* * * * * env > /home/learner/cron-env.txt' | crontab -   then   sleep 70"]
+explanation = "Letting a job record its own environment is the quickest way to see what it really gets — a trick worth remembering for any 'works by hand, fails in cron' problem."
+
+[[task]]
+id = "path"
+title = "Cron's PATH"
+kind = "guided"
+instructions = "Read what cron gave the job:  cat ~/cron-env.txt   and compare it with your own:  echo $PATH"
+skills = { "k.cron-environment" = 1.0 }
+question = { prompt = "What is PATH for cron jobs?", type = "exact", accept = ["/usr/bin:/bin"] }
+hints = ["Look for the PATH= line in cron-env.txt.", "It is much shorter than yours.", "The answer is /usr/bin:/bin."]
+explanation = "/usr/local/bin, /usr/sbin and your ~/bin are missing. A command found there in your terminal is 'command not found' in cron."
+
+[[task]]
+id = "shell"
+title = "Which shell?"
+kind = "guided"
+instructions = "Find the SHELL line in ~/cron-env.txt:  grep SHELL ~/cron-env.txt"
+skills = { "k.cron-environment" = 1.0 }
+question = { prompt = "Which shell runs crontab lines?", type = "exact", accept = ["/bin/sh", "sh"] }
+hints = ["SHELL= names it.", "It is not bash.", "The answer is /bin/sh."]
+explanation = "On Debian /bin/sh is dash: bash-only syntax such as [[ ]], arrays or {1..5} fails in a crontab line. Put complex logic in a script with #!/bin/bash and call that."
+
+[[task]]
+id = "stamp"
+title = "A job that logs, with a date"
+kind = "independent"
+instructions = "Replace your crontab with one job that, every minute, appends today's date in the form YYYY-MM-DD (date +%F) to ~/stamps.log — together with any error messages. Wait until it has run."
+skills = { "k.cron-environment" = 1.0, "c.std-streams" = 0.5 }
+checks = [
+    { type = "file_contains", path = "~/stamps.log", regex = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    { type = "command_result", command = "crontab -l", stdout_regex = "2>&1", stdout_not_contains = "cron-env" },
+]
+persistent = true
+hints = ["% is special in crontab lines.", "Escape it as \\% and redirect both streams: >> /home/learner/stamps.log 2>&1", "echo '* * * * * date +\\%F >> /home/learner/stamps.log 2>&1' | crontab -   then sleep 70"]
+explanation = "Without the backslash, cron cuts the command at the first % and feeds the rest to it as input: the job silently prints the wrong thing or fails. 2>&1 makes errors land in the log too."
+
+[[task]]
+id = "where-output"
+title = "Lost output"
+kind = "prediction"
+instructions = "Think about a job without a redirection."
+skills = { "k.cron-environment" = 1.0 }
+question = { prompt = "A cron job prints an error but its line has no redirection. Where does the error go on a server without a mail system?", type = "choice", choices = ["To your terminal", "Nowhere you can see: cron tries to mail it, and without mail it is discarded", "To /var/log/syslog in full", "Into a file named after the job"], answer = 1 }
+hints = ["A cron job has no terminal.", "cron mails output to the job's owner.", "The answer is (b). cron's own log only records that the job started."]
+explanation = "That is why failing cron jobs look like 'cron does nothing'. Redirect output to a log file (or logger) in every job."
+
+[debrief]
+summary = """
+cron jobs run with PATH=/usr/bin:/bin, /bin/sh and none of your startup files, and their output
+is mailed or lost. Use absolute paths (or PATH=), redirect >> log 2>&1, escape % as \\%, and
+keep complex logic in scripts.
+"""
+alternatives = ["A PATH=/usr/local/bin:/usr/bin:/bin line at the top of the crontab applies to every job below it", "env -i PATH=/usr/bin:/bin sh -c 'COMMAND' imitates cron's environment in your terminal", "logger -t myjob sends job output to the journal"]
+pitfalls = ["Testing a job only in your interactive shell.", "Unescaped % in crontab lines.", "Relying on aliases or functions from .bashrc."]
+next = "Next: a sync job that works by hand and never from cron."
+
+[[solution]]
+name = "as instructed"
+steps = ["echo '* * * * * env > /home/learner/cron-env.txt' | crontab -", "sleep 70", "cat ~/cron-env.txt", "echo $PATH", ":answer /usr/bin:/bin", "grep SHELL ~/cron-env.txt", ":answer /bin/sh", "echo '* * * * * date +\\%F >> /home/learner/stamps.log 2>&1' | crontab -", "sleep 70", "cat ~/stamps.log", ":answer b"]
+
+[[solution]]
+name = "editor"
+steps = [{ edit = "* * * * * env > /home/learner/cron-env.txt\n" }, "crontab -e", "sleep 120", "grep ^PATH ~/cron-env.txt", ":answer /usr/bin:/bin", ":answer sh", { edit = "PATH=/usr/bin:/bin\n* * * * * /bin/date '+\\%F' >> $HOME/stamps.log 2>&1\n" }, "crontab -e", "sleep 61", ":answer 2"]
+
+[[counterexample]]
+name = "unescaped percent"
+steps = ["echo '* * * * * env > /home/learner/cron-env.txt' | crontab -", "sleep 70", ":answer /usr/bin:/bin", ":answer /bin/sh", "echo '* * * * * date +%F >> /home/learner/stamps.log 2>&1' | crontab -", "sleep 70", ":answer b"]

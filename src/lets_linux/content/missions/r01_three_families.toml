@@ -1,0 +1,180 @@
+schema = 1
+
+[mission]
+id = "r01-three-families"
+title = "Three Families"
+chapter = "R"
+kind = "lesson"
+order = 1
+difficulty = 5
+requires = ["f05-dnf", "f06-pacman", "i05-ssh"]
+skills = ["r.distro-families", "r.package-translation", "r.admin-groups", "r.config-paths"]
+review_for = ["f.search-info", "d.user-management"]
+xp = 200
+estimated_minutes = 35
+
+[briefing]
+context = """
+The team inherited two more servers: 'fed' (10.0.2.61) and 'arch' (10.0.2.62). Your own
+machine runs Debian. Find out what runs on them, install the DNS tools everywhere, and
+create an administrator account 'ops' on all three machines the way each family expects.
+Log in with ssh admin@fed and ssh admin@arch (password letslinux on both; admin may use
+sudo). (sudo password here: letslinux)
+"""
+concept = """
+/etc/os-release identifies a distribution: ID (debian, ubuntu, fedora, arch), ID_LIKE (the
+family it follows), VERSION_ID. The families differ in conventions more than in substance:
+- Packages: apt/dpkg (Debian, Ubuntu), dnf/rpm (Fedora, RHEL), pacman (Arch); names differ
+  too — dig comes from dnsutils (Debian), bind-utils (Fedora), bind (Arch). Search by file:
+  apt-file search / dnf provides / pacman -F.
+- Administrators: members of the group sudo (Debian, Ubuntu) or wheel (Fedora, RHEL, Arch)
+  may use sudo (see /etc/sudoers: %sudo / %wheel).
+- Configuration layout: nginx sites in sites-available/ + sites-enabled/ (Debian) versus
+  conf.d/*.conf (Fedora, Arch); Debian starts services on installation, the others do not.
+"""
+objectives = ["Identify a distribution and its family", "Translate package names between families", "Grant admin rights with sudo vs wheel", "Know where configuration lives on each family"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "peer"
+name = "fed"
+addresses = ["10.0.2.61"]
+
+[[environment.setup]]
+action = "dns"
+name = "fed.example.lan"
+value = "10.0.2.61"
+
+[[environment.setup]]
+action = "remote"
+host = "fed"
+profile = "fedora"
+
+[[environment.setup]]
+action = "peer"
+name = "arch"
+addresses = ["10.0.2.62"]
+
+[[environment.setup]]
+action = "dns"
+name = "arch.example.lan"
+value = "10.0.2.62"
+
+[[environment.setup]]
+action = "remote"
+host = "arch"
+profile = "arch"
+
+[[task]]
+id = "identify"
+title = "What runs there?"
+kind = "guided"
+instructions = "Find out which distribution runs on 10.0.2.62."
+skills = { "r.distro-families" = 1.0 }
+question = { prompt = "Value of ID in its /etc/os-release?", type = "exact", accept = ["arch"] }
+hints = ["Every modern distribution describes itself in /etc/os-release.", "ssh admin@arch cat /etc/os-release", "ID=arch"]
+explanation = "fed reports ID=fedora. Scripts that must work on several families read ID and ID_LIKE instead of guessing."
+
+[[task]]
+id = "dig"
+title = "dig everywhere"
+kind = "independent"
+instructions = "Install the package that provides the dig command on all three machines."
+skills = { "r.package-translation" = 1.0, "f.search-info" = 0.5, "r.distro-families" = 0.5 }
+checks = [
+    { type = "package_state", name = "dnsutils", state = "installed" },
+    { type = "on_host", host = "fed", checks = [{ type = "package_state", name = "dnsutils", state = "installed" }] },
+    { type = "on_host", host = "arch", checks = [{ type = "package_state", name = "dnsutils", state = "installed" }] },
+]
+hints = [
+    "Find the package by file on each: apt-file is not installed here, but dnf provides /usr/bin/dig works on fed and pacman -Ss dig (or the name 'bind') on arch.",
+    "Debian: dnsutils · Fedora: bind-utils · Arch: bind.",
+    "sudo apt install dnsutils; ssh admin@fed 'sudo dnf install -y bind-utils'; ssh admin@arch 'sudo pacman -S --noconfirm bind' (sudo asks for letslinux).",
+]
+explanation = "Same program, three package names. Each family packages upstream projects in its own way."
+
+[[task]]
+id = "ops"
+title = "An administrator everywhere"
+kind = "independent"
+instructions = "Create the user ops on all three machines and make it an administrator (allowed to use sudo) the way each distribution intends — by group membership, without editing sudoers."
+skills = { "r.admin-groups" = 1.0, "d.user-management" = 0.5 }
+checks = [
+    { type = "in_group", user = "ops", group = "sudo" },
+    { type = "on_host", host = "fed", checks = [{ type = "in_group", user = "ops", group = "wheel" }, { type = "command_result", user = "root", command = "sudo -l -U ops", stdout_contains = ["(ALL"] }] },
+    { type = "on_host", host = "arch", checks = [{ type = "in_group", user = "ops", group = "wheel" }, { type = "command_result", user = "root", command = "sudo -l -U ops", stdout_contains = ["(ALL"] }] },
+    { type = "command_result", user = "root", command = "sudo -l -U ops", stdout_contains = ["(ALL"] },
+]
+hints = ["Which group does /etc/sudoers name on each machine? grep '^%' /etc/sudoers", "Debian: sudo · Fedora and Arch: wheel.", "sudo useradd -m -G sudo ops here; ssh admin@fed 'sudo useradd -m -G wheel ops'; the same on arch."]
+explanation = "Group-based administration keeps sudoers untouched: removing someone's rights means removing them from one group."
+
+[[task]]
+id = "paths"
+title = "Where would the site go?"
+kind = "troubleshooting"
+instructions = "A colleague wants to add a website configuration for nginx on fed."
+skills = { "r.config-paths" = 1.0 }
+question = { prompt = "Where does a new nginx site belong on Fedora?", type = "choice", choices = ["/etc/nginx/sites-available/ plus a link in sites-enabled/", "A file /etc/nginx/conf.d/NAME.conf", "/var/www/nginx.conf"], answer = 1 }
+hints = ["Look at the include lines: ssh admin@fed grep include /etc/nginx/nginx.conf — or ask dnf which files nginx ships.", "sites-available/sites-enabled is a Debian convention.", "(b)"]
+explanation = "Fedora (and Arch) include conf.d/*.conf; Debian and Ubuntu add sites-available/sites-enabled. The nginx program is the same."
+
+[debrief]
+summary = """
+/etc/os-release (ID, ID_LIKE) → choose the tools: apt/dnf/pacman, sudo/wheel, Debian's
+sites-enabled vs conf.d, services started on install (Debian) or not (Fedora, Arch).
+"""
+alternatives = ["hostnamectl also shows the operating system", "Configuration management (Ansible) abstracts packages with per-family variables"]
+pitfalls = ["Copying instructions for another family verbatim.", "Editing /etc/sudoers instead of using the admin group.", "Assuming the same package names everywhere."]
+next = "Next: one security policy on three firewall front-ends."
+
+[[solution]]
+name = "per host"
+steps = [
+    { input = ["yes", "letslinux"] },
+    "ssh admin@arch cat /etc/os-release",
+    ":answer arch",
+    { input = ["letslinux"] },
+    "sudo apt-get install -y dnsutils",
+    { input = ["yes", "letslinux", "letslinux"] },
+    "ssh -t admin@fed 'sudo dnf install -y bind-utils'",
+    { input = ["letslinux", "letslinux"] },
+    "ssh -t admin@arch 'sudo pacman -S --noconfirm bind'",
+    "sudo useradd -m -G sudo ops",
+    { input = ["letslinux", "letslinux"] },
+    "ssh -t admin@fed 'sudo useradd -m -G wheel ops'",
+    { input = ["letslinux", "letslinux"] },
+    "ssh -t admin@arch 'sudo useradd -m -G wheel ops'",
+    ":answer b",
+]
+
+[[solution]]
+name = "usermod afterwards"
+steps = [
+    { input = ["yes", "letslinux"] },
+    "ssh admin@10.0.2.62 'grep ^ID= /etc/os-release'",
+    ":answer arch",
+    { input = ["letslinux"] },
+    "sudo apt install -y dnsutils",
+    "sudo adduser --disabled-password --gecos '' ops",
+    "sudo usermod -aG sudo ops",
+    { input = ["yes", "letslinux", "letslinux"] },
+    "ssh -t admin@fed 'sudo dnf install -y bind-utils && sudo useradd ops && sudo usermod -aG wheel ops'",
+    { input = ["letslinux", "letslinux"] },
+    "ssh -t admin@arch 'sudo pacman -Syu --noconfirm bind && sudo useradd -m ops && sudo gpasswd -a ops wheel'",
+    ":answer b",
+]
+
+[[counterexample]]
+name = "sudo group everywhere"
+steps = [
+    { input = ["yes", "letslinux"] },
+    ":answer arch",
+    { input = ["letslinux"] },
+    "sudo apt-get install -y dnsutils",
+    "sudo useradd -m -G sudo ops",
+    { input = ["yes", "letslinux", "letslinux"] },
+    "ssh -t admin@fed 'sudo dnf install -y bind-utils; sudo groupadd sudo; sudo useradd -m -G sudo ops'",
+    ":answer b",
+]

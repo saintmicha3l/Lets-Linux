@@ -1,0 +1,221 @@
+schema = 1
+
+[mission]
+id = "l00-skill-check"
+title = "Skill Check L: Security"
+chapter = "L"
+placement = "L"
+kind = "assessment"
+order = 0
+difficulty = 4
+requires = []
+skills = ["l.permission-audit", "l.secrets-management", "l.ssh-hardening", "l.account-security", "l.file-integrity", "l.service-exposure", "l.suspicious-processes", "l.mac-concepts"]
+xp = 90
+estimated_minutes = 20
+sequential = false
+
+[briefing]
+context = """
+This skill check covers chapter L: permission audits, secrets, SSH hardening, accounts, file
+integrity, exposed services, suspicious processes and mandatory access control. Tasks in any
+order; you have sudo (password: letslinux). Solve them all (one slip allowed) to test out of
+chapter L. Anything you cannot do is simply not counted — :submit ends the check.
+"""
+concept = "No hints: show what you can do on your own."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "debian"
+
+[environment.vars]
+tool = { choices = ["netprobe", "diskwatch", "pkgsync"] }
+app = { choices = ["billing", "crm", "intranet"] }
+olduser = { choices = ["temp-contractor", "intern2024", "olddeploy"] }
+changed = { choices = ["routes.conf", "users.list", "app.conf"] }
+port = { choices = ["5432", "6379", "9200"] }
+remote = { choices = ["203.0.113.45", "198.51.100.88", "192.0.2.201"] }
+fake = { choices = ["kworkerd", "dbus-helper", "systemd-agent"] }
+pw = { word = true }
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/{{tool}}"
+content = "#!/bin/sh\necho {{tool}}\n"
+mode = "4755"
+
+[[environment.setup]]
+action = "file"
+path = "/etc/{{app}}/db.conf"
+content = "host=db.example.lan\nuser={{app}}\npassword={{pw}}\n"
+mode = "0644"
+
+[[environment.setup]]
+action = "user"
+name = "{{olduser}}"
+password = "{{pw}}"
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /etc/inventory && cd /etc/inventory && printf 'a\\n' > routes.conf && printf 'b\\n' > users.list && printf 'c\\n' > app.conf && sha256sum /etc/inventory/routes.conf /etc/inventory/users.list /etc/inventory/app.conf > /root/inventory.sha256 && echo '# changed' >> /etc/inventory/{{changed}}"
+
+[[environment.setup]]
+action = "process"
+comm = "search-node"
+argv = ["/opt/search/bin/search-node", "--listen", "0.0.0.0:{{port}}"]
+user = "nobody"
+listen = ["{{port}}"]
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /var/tmp/.cache/.x && cp /usr/bin/sleep /var/tmp/.cache/.x/{{fake}} && chown -R www-data:www-data /var/tmp/.cache"
+
+[[environment.setup]]
+action = "process"
+comm = "{{fake}}"
+argv = ["/var/tmp/.cache/.x/{{fake}}"]
+user = "www-data"
+cwd = "/var/tmp/.cache/.x"
+cpu = 91.0
+exe = "/var/tmp/.cache/.x/{{fake}}"
+delete_exe = true
+connect = ["{{remote}}:6667"]
+
+[[task]]
+id = "setuid"
+title = "An unexplained setuid program"
+kind = "assessment"
+instructions = "One setuid-root program on this server does not belong to any package. Make sure it can no longer give anyone root's rights (keep the file itself). passwd and sudo must keep working."
+skills = { "l.permission-audit" = 1.0 }
+checks = [
+    { type = "mode_lacks", path = "/usr/local/bin/{{tool}}", bits = "4000" },
+    { type = "path_exists", path = "/usr/local/bin/{{tool}}" },
+    { type = "mode_has", path = "/usr/bin/passwd", bits = "4000" },
+    { type = "mode_has", path = "/usr/bin/sudo", bits = "4000" },
+]
+explanation = "find / -xdev -type f -perm -4000, then dpkg -S on each unusual one; chmod u-s removes the bit."
+
+[[task]]
+id = "secret"
+title = "A password for everyone"
+kind = "assessment"
+instructions = "A configuration file under /etc/{{app}} holds a database password and can be read by every account. Make it readable by root only, without changing its contents."
+skills = { "l.secrets-management" = 1.0 }
+checks = [
+    { type = "mode_lacks", path = "/etc/{{app}}/db.conf", bits = "077" },
+    { type = "file_contains", path = "/etc/{{app}}/db.conf", text = "password={{pw}}" },
+]
+explanation = "chmod 600 (root owns it). A real audit would also rotate the password: everyone could read it."
+
+[[task]]
+id = "ssh"
+title = "Harden SSH"
+kind = "assessment"
+instructions = "Configure the SSH server so that root cannot log in and password logins are refused, and apply it. (Key logins must keep working.)"
+skills = { "l.ssh-hardening" = 1.0 }
+checks = [{ type = "command_result", user = "root", command = "sshd -t && sshd -T", stdout_contains = ["permitrootlogin no", "passwordauthentication no"] }]
+explanation = "A drop-in such as /etc/ssh/sshd_config.d/10-hardening.conf with PermitRootLogin no and PasswordAuthentication no; sshd -t checks it, systemctl reload ssh applies it."
+
+[[task]]
+id = "account"
+title = "A leaver's account"
+kind = "assessment"
+instructions = "{{olduser}} has left. Make it impossible to log in with that account's password — without deleting the account or its files."
+skills = { "l.account-security" = 1.0 }
+checks = [{ type = "user_exists", name = "{{olduser}}", locked = true }]
+explanation = "passwd -l (or usermod -L) locks the password; usermod --expiredate 1 also disables the account."
+
+[[task]]
+id = "integrity"
+title = "What changed?"
+kind = "assessment"
+instructions = "Checksums of /etc/inventory were recorded in /root/inventory.sha256 when the server was set up."
+skills = { "l.file-integrity" = 1.0 }
+question = { prompt = "Which file in /etc/inventory has changed since then? (the file name)", type = "exact", accept = ["{{changed}}", "/etc/inventory/{{changed}}"] }
+explanation = "sudo sha256sum -c /root/inventory.sha256 marks it FAILED."
+
+[[task]]
+id = "exposed"
+title = "Open to the network"
+kind = "assessment"
+instructions = "Find the service that, besides SSH, accepts TCP connections from the network."
+skills = { "l.service-exposure" = 1.0, "i.ports-sockets" = 0.5 }
+question = { prompt = "On which port does it listen?", type = "number", accept = ["{{port}}"] }
+explanation = "sudo ss -tlnp: anything on 0.0.0.0 or [::] is reachable from every network the server is on."
+
+[[task]]
+id = "intruder"
+title = "Something is running"
+kind = "assessment"
+instructions = "A process on this server shows every sign of being malicious. Find out whom it talks to."
+skills = { "l.suspicious-processes" = 1.0 }
+question = { prompt = "Which remote IP address is it connected to?", type = "exact", accept = ["{{remote}}", "{{remote}}:6667"] }
+explanation = "It runs as www-data from a hidden directory in /var/tmp with a deleted executable; sudo ss -tnp shows its connection."
+
+[[task]]
+id = "mac"
+title = "Beyond permissions"
+kind = "assessment"
+instructions = "A web server process runs as root and is compromised."
+skills = { "l.mac-concepts" = 1.0 }
+question = { prompt = "What can an enforcing AppArmor (or SELinux) profile for it still do?", type = "choice", choices = ["Nothing: root bypasses every check", "Limit it to the files, capabilities and network access its profile allows, even though it runs as root", "Encrypt its files", "Restart it automatically"], answer = 1 }
+explanation = "Mandatory access control is checked in addition to permissions and applies to root too — that is its point."
+
+[debrief]
+summary = """
+The check covered chapter L's core. It does not test every chapter L skill (patching,
+firewall hardening, audit logging and incident response are practised in the missions);
+untested skills stay unseen. Solved tasks are evidence for their skills.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "find, chmod, drop-in"
+steps = [
+    { input = ["letslinux"] },
+    "sudo find / -xdev -type f -perm -4000 2>/dev/null",
+    "dpkg -S /usr/local/bin/{{tool}}",
+    "sudo chmod u-s /usr/local/bin/{{tool}}",
+    "grep -rl password /etc/{{app}}",
+    "sudo chmod 600 /etc/{{app}}/db.conf",
+    "printf 'PermitRootLogin no\\nPasswordAuthentication no\\n' | sudo tee /etc/ssh/sshd_config.d/10-hardening.conf",
+    "sudo sshd -t && sudo systemctl reload ssh",
+    "sudo passwd -l {{olduser}}",
+    "sudo sha256sum -c /root/inventory.sha256",
+    ":answer {{changed}}",
+    "sudo ss -tlnp",
+    ":answer {{port}}",
+    "sudo ss -tnp",
+    ":answer {{remote}}",
+    ":answer b",
+]
+
+[[solution]]
+name = "octal modes and usermod"
+steps = [
+    { input = ["letslinux"] },
+    "sudo chmod 0755 /usr/local/bin/{{tool}}",
+    "sudo chmod go= /etc/{{app}}/db.conf",
+    "sudo sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin no/; s/^#\\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config",
+    "sudo grep -q '^PasswordAuthentication no' /etc/ssh/sshd_config || echo 'PasswordAuthentication no' | sudo tee -a /etc/ssh/sshd_config",
+    "sudo grep -q '^PermitRootLogin no' /etc/ssh/sshd_config || echo 'PermitRootLogin no' | sudo tee -a /etc/ssh/sshd_config",
+    "sudo systemctl restart ssh",
+    "sudo usermod -L {{olduser}}",
+    ":answer /etc/inventory/{{changed}}",
+    "sudo lsof -i -P -n",
+    ":answer {{port}}",
+    ":answer {{remote}}:6667",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "deleting instead of fixing"
+steps = [
+    { input = ["letslinux"] },
+    "sudo rm /usr/local/bin/{{tool}}",
+    "sudo chmod 644 /etc/{{app}}/db.conf",
+    "sudo userdel {{olduser}}",
+    ":answer {{changed}}",
+    ":answer {{port}}",
+    ":answer {{remote}}",
+    ":answer b",
+]

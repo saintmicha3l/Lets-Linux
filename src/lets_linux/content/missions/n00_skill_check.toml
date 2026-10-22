@@ -1,0 +1,189 @@
+schema = 1
+
+[mission]
+id = "n00-skill-check"
+title = "Skill Check N: Kernel"
+chapter = "N"
+placement = "N"
+kind = "assessment"
+order = 0
+difficulty = 4
+requires = []
+skills = ["n.sysctl", "n.kernel-modules", "n.initramfs-cmdline", "n.device-files", "n.kernel-logs", "n.syscalls", "n.kernel-userspace"]
+xp = 90
+estimated_minutes = 20
+sequential = false
+
+[briefing]
+context = """
+This skill check covers chapter N: kernel parameters, modules, the kernel command line,
+device files, kernel messages and system calls. Tasks in any order; you have sudo (password:
+letslinux). Solve them all (one slip allowed) to test out of chapter N. :submit ends the check.
+"""
+concept = "No hints: show what you can do on your own. Some checks reboot a copy of the machine."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "debian"
+packages = ["strace"]
+
+[environment.vars]
+swappiness = { choices = ["10", "20", "30"] }
+mod = { choices = ["overlay", "br_netfilter"] }
+app = { choices = ["tariffs", "routing", "geoip"] }
+conf = { choices = ["zones.ini", "rates.conf", "map.yml"] }
+
+[[environment.setup]]
+action = "dir"
+path = "/etc/{{app}}"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/{{app}}"
+mode = "0755"
+content = """#!/bin/sh
+cat /etc/{{app}}/{{conf}} > /dev/null 2>&1 || { echo "{{app}}: startup failed" >&2; exit 1; }
+echo "{{app}}: ready"
+"""
+
+[[task]]
+id = "sysctl"
+title = "A kernel parameter"
+kind = "assessment"
+instructions = "Set the kernel parameter vm.swappiness to {{swappiness}} — now, and on every boot."
+skills = { "n.sysctl" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "sysctl -n vm.swappiness", stdout_equals = "{{swappiness}}" },
+    { type = "after_reboot", checks = [{ type = "command_result", user = "root", command = "sysctl -n vm.swappiness", stdout_equals = "{{swappiness}}" }] },
+]
+explanation = "sysctl -w vm.swappiness={{swappiness}} applies it now; a file in /etc/sysctl.d/ (then sysctl --system) keeps it."
+
+[[task]]
+id = "load"
+title = "A module at boot"
+kind = "assessment"
+instructions = "Load the kernel module {{mod}} now, and make sure it is loaded on every boot."
+skills = { "n.kernel-modules" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "lsmod", stdout_regex = "(?m)^{{mod}} " },
+    { type = "after_reboot", checks = [{ type = "command_result", user = "root", command = "lsmod", stdout_regex = "(?m)^{{mod}} " }] },
+]
+explanation = "modprobe {{mod}} now; a line in /etc/modules-load.d/*.conf at boot."
+
+[[task]]
+id = "block"
+title = "A module that must never load"
+kind = "assessment"
+instructions = "This virtual machine has no floppy drive, yet the floppy module is loaded. Unload it and make sure it can never be loaded again — not at boot and not by hand."
+skills = { "n.kernel-modules" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "lsmod", stdout_not_contains = "floppy" },
+    { type = "command_result", user = "root", command = "modprobe floppy", status_not = 0 },
+    { type = "after_reboot", checks = [{ type = "command_result", user = "root", command = "lsmod", stdout_not_contains = "floppy" }] },
+]
+explanation = "modprobe -r floppy; then in /etc/modprobe.d/: blacklist floppy (no automatic loading) and install floppy /bin/false (no loading at all)."
+
+[[task]]
+id = "cmdline"
+title = "How the kernel was started"
+kind = "assessment"
+instructions = "Find the options the running kernel was booted with."
+skills = { "n.initramfs-cmdline" = 1.0 }
+question = { prompt = "Which kernel image did the boot loader load (the BOOT_IMAGE value)?", type = "state", state = { command = "sed -n 's/^BOOT_IMAGE=\\([^ ]*\\).*/\\1/p' /proc/cmdline" } }
+explanation = "/proc/cmdline holds the command line the boot loader passed; changing it permanently means /etc/default/grub plus update-grub."
+
+[[task]]
+id = "device"
+title = "Devices are files"
+kind = "assessment"
+instructions = "Look at the device file of the first disk, /dev/sda."
+skills = { "n.device-files" = 1.0 }
+question = { prompt = "What is its major number (the driver's number)?", type = "number", accept = ["8"] }
+explanation = "ls -l /dev/sda shows b (block device) and 8, 0: major 8 is the SCSI disk driver, minor 0 the whole first disk."
+
+[[task]]
+id = "dmesg"
+title = "What the kernel said"
+kind = "assessment"
+instructions = "The kernel logs the modules it loaded at boot and anything it noticed about the hardware."
+skills = { "n.kernel-logs" = 1.0 }
+question = { prompt = "Which command shows the kernel's own messages of the current boot?", type = "choice", choices = ["journalctl -u kernel", "sudo dmesg (or journalctl -k)", "cat /var/log/boot.log only", "systemctl status kernel"], answer = 1 }
+explanation = "dmesg reads the kernel's ring buffer (root only when kernel.dmesg_restrict = 1); journalctl -k shows the same from the journal, also for earlier boots with -b -1."
+
+[[task]]
+id = "strace"
+title = "A vague failure"
+kind = "assessment"
+instructions = "{{app}} only says 'startup failed'. Find out what it is missing."
+skills = { "n.syscalls" = 1.0 }
+question = { prompt = "Which file does it fail to open? (full path)", type = "exact", accept = ["/etc/{{app}}/{{conf}}"] }
+explanation = "strace -f -e trace=openat {{app}} shows the openat that returns ENOENT, even though the script hides cat's message."
+
+[[task]]
+id = "boundary"
+title = "Who does what"
+kind = "assessment"
+instructions = "Think about the kernel's job."
+skills = { "n.kernel-userspace" = 1.0 }
+question = { prompt = "Which statement is right?", type = "choice", choices = ["systemd is part of the kernel", "Programs, even root's, run in user space and reach hardware and files only through system calls to the kernel", "The shell talks to the disk directly", "Kernel modules are user-space programs"], answer = 1 }
+explanation = "Only the kernel runs in the CPU's privileged mode; PID 1, root's shells and every daemon ask it through system calls."
+
+[debrief]
+summary = """
+The check covered chapter N: sysctl, modules (loading and blocking), the kernel command line,
+devices, kernel messages and strace. Boot-failure diagnosis is practised in the missions.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "files then apply"
+steps = [
+    { input = ["letslinux"] },
+    "echo 'vm.swappiness = {{swappiness}}' | sudo tee /etc/sysctl.d/90-swappiness.conf",
+    "sudo sysctl --system",
+    "echo {{mod}} | sudo tee /etc/modules-load.d/{{mod}}.conf",
+    "sudo modprobe {{mod}}",
+    "sudo modprobe -r floppy",
+    "printf 'blacklist floppy\\ninstall floppy /bin/false\\n' | sudo tee /etc/modprobe.d/no-floppy.conf",
+    "cat /proc/cmdline",
+    { answer_with = "sed -n 's/^BOOT_IMAGE=\\([^ ]*\\).*/\\1/p' /proc/cmdline" },
+    "ls -l /dev/sda",
+    ":answer 8",
+    ":answer b",
+    "{{app}}",
+    "strace -f -e trace=openat {{app}}",
+    ":answer /etc/{{app}}/{{conf}}",
+    ":answer b",
+]
+
+[[solution]]
+name = "sysctl -w and rmmod"
+steps = [
+    { input = ["letslinux"] },
+    "sudo sysctl -w vm.swappiness={{swappiness}}",
+    "echo 'vm.swappiness={{swappiness}}' | sudo tee -a /etc/sysctl.conf",
+    "sudo modprobe {{mod}} && echo {{mod}} | sudo tee -a /etc/modules-load.d/modules.conf",
+    "echo 'install floppy /bin/false' | sudo tee /etc/modprobe.d/floppy.conf",
+    "sudo rmmod floppy",
+    { answer_with = "sed -n 's/^BOOT_IMAGE=\\([^ ]*\\).*/\\1/p' /proc/cmdline" },
+    "stat -c '%t' /dev/sda",
+    ":answer 8",
+    ":answer 2",
+    "strace -f -o /tmp/t.txt {{app}}; grep ENOENT /tmp/t.txt",
+    ":answer /etc/{{app}}/{{conf}}",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "only for now"
+steps = [
+    { input = ["letslinux"] },
+    "sudo sysctl -w vm.swappiness={{swappiness}}",
+    "sudo modprobe {{mod}}",
+    "sudo rmmod floppy",
+    { answer_with = "sed -n 's/^BOOT_IMAGE=\\([^ ]*\\).*/\\1/p' /proc/cmdline" },
+    ":answer 8",
+    ":answer b",
+    ":answer /etc/{{app}}/{{conf}}",
+    ":answer b",
+]

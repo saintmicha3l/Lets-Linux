@@ -1,0 +1,104 @@
+schema = 1
+
+[mission]
+id = "i01-network-basics"
+title = "Where Am I on the Network?"
+chapter = "I"
+kind = "lesson"
+order = 1
+difficulty = 2
+requires = ["c02-pipelines"]
+skills = ["i.interfaces-addresses", "i.cidr-subnetting", "i.routing-gateways", "i.ping-reachability"]
+xp = 100
+estimated_minutes = 16
+
+[briefing]
+context = """
+You have just logged in to an unfamiliar server and need to understand its place on the
+network: its address, its network, the router it uses to reach everything else and the DNS
+server it asks for names. These four facts are where every network investigation starts.
+"""
+concept = """
+An interface (here enp0s3) has an IP address with a prefix length: 10.0.2.15/24 means the
+first 24 bits name the network (10.0.2.0/24) and hosts in it are reached directly. Everything
+else goes to the default gateway (a router), as the routing table shows. ip addr and ip route
+show these; /etc/resolv.conf lists the DNS servers; ping tests reachability step by step.
+"""
+objectives = ["Read addresses and prefix lengths", "Find the default gateway", "Find the DNS server", "Test reachability in order: gateway, LAN, Internet"]
+
+[environment]
+profile = "debian"
+
+[[task]]
+id = "addr"
+title = "My address"
+kind = "guided"
+instructions = "Show the interfaces and their addresses with `ip addr` (or `ip a`)."
+skills = { "i.interfaces-addresses" = 1.0 }
+question = { prompt = "What is this machine's IPv4 address on enp0s3 (without the /prefix)?", type = "exact", accept = ["10.0.2.15"] }
+hints = ["ip a lists every interface; lo is the loopback interface.", "Look for 'inet' under enp0s3.", "10.0.2.15"]
+explanation = "lo (127.0.0.1) only talks to the machine itself; enp0s3 is the network card. 'dynamic' means the address came from DHCP."
+
+[[task]]
+id = "prefix"
+title = "My network"
+kind = "independent"
+instructions = "The address is written as 10.0.2.15/24."
+skills = { "i.cidr-subnetting" = 1.0 }
+question = { prompt = "Which of these addresses is on the same network as this machine (reachable without a router)?", type = "choice", choices = ["10.0.3.20", "10.0.2.200", "10.1.2.15", "192.168.2.15"], answer = 1 }
+hints = ["/24 means the first three numbers must match.", "The network is 10.0.2.0/24: 10.0.2.0 to 10.0.2.255.", "The answer is (b): 10.0.2.200."]
+explanation = "With /24 the first 24 bits (three bytes) are the network part. ip route shows it as '10.0.2.0/24 dev enp0s3 ... scope link'."
+
+[[task]]
+id = "gateway"
+title = "The way out"
+kind = "independent"
+instructions = "Find the default gateway in the routing table."
+skills = { "i.routing-gateways" = 1.0 }
+question = { prompt = "What is the default gateway's address?", type = "exact", accept = ["10.0.2.2"] }
+hints = ["The routing table: ip route.", "The line starting with 'default via'.", "10.0.2.2"]
+explanation = "Packets for any address not covered by a more specific route go to the default gateway."
+
+[[task]]
+id = "dns"
+title = "Who answers names?"
+kind = "independent"
+instructions = "Find the DNS server this machine uses."
+skills = { "i.dns-resolution" = 0.5, "i.interfaces-addresses" = 0.5 }
+question = { prompt = "Which DNS server (nameserver) is configured?", type = "exact", accept = ["10.0.2.3"] }
+hints = ["Resolver settings live in a file under /etc.", "cat /etc/resolv.conf", "nameserver 10.0.2.3"]
+explanation = "The DHCP server handed out both the address and the DNS server; resolv.conf also has a search domain, so short names like 'intranet' work."
+
+[[task]]
+id = "ping"
+title = "Step by step"
+kind = "independent"
+instructions = "Test reachability from near to far: ping the gateway, then example.com, with 3 packets each."
+skills = { "i.ping-reachability" = 1.0 }
+checks = [
+    { type = "command_used", command = "ping", args_regex = "10\\.0\\.2\\.2", success = true, scope = "history" },
+    { type = "command_used", command = "ping", args_regex = "example\\.com", success = true, scope = "history" },
+]
+hints = ["ping -c COUNT HOST.", "First the gateway (10.0.2.2), then example.com.", "Type: ping -c 3 10.0.2.2   and then   ping -c 3 example.com"]
+explanation = "Testing near to far isolates problems: if the gateway answers but the Internet does not, the problem is beyond your machine. Note the higher TTL loss and time for example.com: more hops."
+
+[debrief]
+summary = """
+Address/prefix (ip a), network and default gateway (ip route), DNS servers (/etc/resolv.conf)
+and step-by-step pings answer "where am I and can I get out?".
+"""
+alternatives = ["ip -br a for a compact view", "ip route get 93.184.215.14 shows the route for one destination", "resolvectl status on systemd-resolved systems"]
+pitfalls = ["A failed ping does not prove a host is down: firewalls often drop pings.", "127.0.0.53 in resolv.conf (Ubuntu) is a local stub; the real servers are behind it."]
+next = "Next: names and addresses."
+
+[[solution]]
+name = "ip and ping"
+steps = ["ip a", ":answer 10.0.2.15", ":answer b", "ip route", ":answer 10.0.2.2", "cat /etc/resolv.conf", ":answer 10.0.2.3", "ping -c 3 10.0.2.2", "ping -c 3 example.com"]
+
+[[solution]]
+name = "brief forms"
+steps = ["ip -br a", ":answer 10.0.2.15", ":answer 10.0.2.200", "ip r | grep default", ":answer 10.0.2.2", "grep nameserver /etc/resolv.conf", ":answer 10.0.2.3", "ping -c 1 10.0.2.2 && ping -c 2 example.com"]
+
+[[counterexample]]
+name = "skipping the gateway"
+steps = [":answer 10.0.2.15", ":answer b", ":answer 10.0.2.2", ":answer 10.0.2.3", "ping -c 3 example.com"]

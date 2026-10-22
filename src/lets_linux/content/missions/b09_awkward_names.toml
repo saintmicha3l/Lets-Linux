@@ -1,0 +1,195 @@
+schema = 1
+
+[mission]
+id = "b09-awkward-names"
+title = "Awkward Names"
+chapter = "B"
+kind = "troubleshooting"
+order = 9
+difficulty = 2
+requires = ["b05-wildcards", "b07-lost-and-found"]
+skills = ["b.path-names"]
+review_for = ["b.globbing", "b.absolute-relative-paths"]
+xp = 110
+estimated_minutes = 20
+
+[briefing]
+context = """
+A shared upload folder, ~/uploads, collected files from every kind of computer: names with
+spaces, names that begin with a dash, a name made of a single star. Some scripts choke on
+them, and one file cannot even be deleted the usual way. Tidy up — carefully.
+"""
+concept = """
+A Linux file name may contain any byte except / and the NUL byte, up to 255 bytes — spaces,
+quotes, *, ?, leading dashes and even newlines are legal. The shell splits command lines at
+spaces and expands *, ? and [...] before a program runs, so such names must be quoted ('my
+file' or my\\ file) — Tab completion quotes them for you. A name starting with - looks like
+an option: write ./-name or put -- (end of options) before it. Quoting a pattern ('*') stops
+the shell from expanding it, so the program sees the literal character. Hidden files start
+with a dot. In scripts, always quote variables ("$f") and use find -print0 | xargs -0 or
+find -exec for lists of names.
+"""
+objectives = ["Quote names with spaces and special characters", "Handle names that start with a dash", "Match a literal * or ?", "Explain which characters a file name may not contain"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "dir"
+path = "/home/learner/uploads"
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/uploads/Quarterly Report (final).txt"
+owner = "learner"
+group = "learner"
+content = "Q1: revenue up 4%\n"
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/uploads/-rf"
+owner = "learner"
+group = "learner"
+content = "accidentally created by a broken script\n"
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/uploads/*"
+owner = "learner"
+group = "learner"
+content = "a file literally named star\n"
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/uploads/photo 1.jpg"
+owner = "learner"
+group = "learner"
+content = "JPEG"
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/uploads/photo 2.jpg"
+owner = "learner"
+group = "learner"
+content = "JPEG"
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/uploads/notes.txt"
+owner = "learner"
+group = "learner"
+content = "keep me\n"
+
+[[task]]
+id = "rename"
+title = "Spaces and parentheses"
+kind = "guided"
+instructions = "Rename 'Quarterly Report (final).txt' in ~/uploads to quarterly-report.txt."
+skills = { "b.path-names" = 1.0 }
+checks = [
+    { type = "path_exists", path = "/home/learner/uploads/quarterly-report.txt" },
+    { type = "path_absent", path = "/home/learner/uploads/Quarterly Report (final).txt" },
+]
+hints = ["Without quotes the shell sees four words — and parentheses are shell syntax.", "Put the whole name in single quotes (or press Tab to complete it).", "mv 'Quarterly Report (final).txt' quarterly-report.txt"]
+explanation = "Quotes keep the name together as one argument and stop the shell from interpreting ( and )."
+
+[[task]]
+id = "dash"
+title = "The file called -rf"
+kind = "troubleshooting"
+instructions = "Delete the file named -rf in ~/uploads — and nothing else."
+skills = { "b.path-names" = 1.0 }
+checks = [
+    { type = "path_absent", path = "/home/learner/uploads/-rf" },
+    { type = "path_exists", path = "/home/learner/uploads/notes.txt" },
+    { type = "path_exists", path = "/home/learner/uploads/photo 1.jpg" },
+]
+hints = ["rm -rf and rm '-rf' look the same to rm: quotes do not help, the name starts with a dash.", "Make it not start with a dash (./-rf), or end the options with --.", "rm ./-rf   or   rm -- -rf"]
+explanation = "Quoting is about the shell; options are about the program. ./-rf is the same file under a name that does not begin with -, and -- tells most programs that everything after it is a file name."
+
+[[task]]
+id = "star"
+title = "A file named *"
+kind = "troubleshooting"
+instructions = "Delete the file whose name is the single character * — without deleting anything else."
+skills = { "b.path-names" = 1.0, "b.globbing" = 0.5 }
+checks = [
+    { type = "path_absent", path = "/home/learner/uploads/*" },
+    { type = "path_exists", path = "/home/learner/uploads/notes.txt" },
+    { type = "path_exists", path = "/home/learner/uploads/photo 2.jpg" },
+    { type = "path_exists", path = "/home/learner/uploads/quarterly-report.txt" },
+]
+hints = ["rm * would delete everything: the shell expands the star before rm sees it.", "Quote it: '*' or \\* reaches rm as a literal star.", "rm '*'"]
+explanation = "Quoting stops pathname expansion. Before deleting with a pattern, echo it first (echo rm *) to see what the shell will pass."
+
+[[task]]
+id = "list"
+title = "Names with spaces in a pipeline"
+kind = "independent"
+instructions = "Move all .jpg files in ~/uploads into a new directory ~/uploads/photos, using a single find command line (their names contain spaces)."
+skills = { "b.path-names" = 1.0 }
+checks = [
+    { type = "path_exists", path = "/home/learner/uploads/photos/photo 1.jpg" },
+    { type = "path_exists", path = "/home/learner/uploads/photos/photo 2.jpg" },
+    { type = "command_used", command = ["find"], scope = "history" },
+]
+hints = ["for f in $(find …) breaks the names at the spaces.", "find can run the command itself: -exec mv {} DIR/ \\; — or use -print0 with xargs -0.", "mkdir ~/uploads/photos; find ~/uploads -maxdepth 1 -name '*.jpg' -exec mv {} ~/uploads/photos/ \\;"]
+explanation = "find -exec passes each name as one argument; -print0 | xargs -0 separates names with NUL — the one byte a name cannot contain."
+
+[[task]]
+id = "rules"
+title = "What a name may contain"
+kind = "explanation"
+instructions = "One more question about the rules."
+skills = { "b.path-names" = 1.0 }
+question = { prompt = "Which characters can never appear in a Linux file name?", type = "choice", choices = ["Spaces and *", "/ and the NUL byte", "Only /", "Anything that is not a letter, digit, dot, - or _"], answer = 1 }
+hints = ["/ separates the components of a path.", "C strings end at the NUL byte.", "(b)"]
+explanation = "Everything else is allowed — which is why robust scripts quote every variable and never parse ls output."
+
+[debrief]
+summary = """
+Quote names with spaces and special characters ('…', \\, Tab completion); ./-name or -- for
+names starting with a dash; '*' for a literal star; find -exec / -print0 | xargs -0 for lists
+of names. Only / and NUL are forbidden in names.
+"""
+alternatives = ["rm -i * asks for each file", "ls -b shows names with escapes; ls -Q quotes them", "In scripts: for f in ./*; do mv -- \"$f\" …; done"]
+pitfalls = ["Unquoted variables in scripts: mv $f breaks on spaces.", "for f in $(ls) — word splitting again.", "Testing a pattern with rm instead of echo."]
+next = "Next: permissions and ownership."
+
+[[solution]]
+name = "quotes and dot-slash"
+steps = [
+    "cd ~/uploads",
+    "ls",
+    "mv 'Quarterly Report (final).txt' quarterly-report.txt",
+    "rm ./-rf",
+    "rm '*'",
+    "mkdir photos",
+    "find . -maxdepth 1 -name '*.jpg' -exec mv {} photos/ \\;",
+    ":answer b",
+]
+
+[[solution]]
+name = "backslashes and double dashes"
+steps = [
+    "cd ~/uploads",
+    "mv Quarterly\\ Report\\ \\(final\\).txt quarterly-report.txt",
+    "rm -- -rf",
+    "rm \\*",
+    "mkdir ~/uploads/photos",
+    "find ~/uploads -maxdepth 1 -name '*.jpg' -print0 | xargs -0 mv -t ~/uploads/photos",
+    ":answer / and the NUL byte",
+]
+
+[[counterexample]]
+name = "rm star"
+steps = [
+    "cd ~/uploads",
+    "mv 'Quarterly Report (final).txt' quarterly-report.txt",
+    "rm -- -rf",
+    "rm *",
+    "mkdir photos",
+    ":answer b",
+]

@@ -1,0 +1,211 @@
+schema = 1
+
+[mission]
+id = "e00-skill-check"
+title = "Skill Check E: Shell Scripting"
+chapter = "E"
+placement = "E"
+kind = "assessment"
+order = 0
+difficulty = 4
+requires = []
+skills = ["e.script-structure", "e.positional-args", "e.test-conditionals", "e.error-handling", "e.quoting", "e.case", "e.input-validation", "e.arithmetic", "e.loops", "e.variables-expansion", "e.command-substitution", "e.read-input", "e.script-debugging"]
+xp = 90
+estimated_minutes = 20
+sequential = false
+
+[briefing]
+context = """
+This skill check covers chapter E: scripts with arguments, exit statuses and error
+handling, conditions, case, loops over awkward file names, quoting, command substitution and
+reading input. Tasks in any order; write scripts with any editor (nano, or printf/cat into a
+file). Solve them all (one slip allowed) to test out of chapter E. Anything you cannot do is
+simply not counted — :submit ends the check. The checks run your scripts with their own
+test inputs.
+"""
+concept = "No hints: show what you can do on your own."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "debian"
+
+[environment.vars]
+n = { choices = ["17", "23", "31"] }
+photo = { choices = ["IMG 0003", "beach day 2", "Holiday (1)"] }
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "mkdir -p ~/bin ~/photos ~/live && cd ~/photos && touch 'IMG 0001.JPG' 'IMG 0002.JPG' '{{photo}}.JPG' 'notes.txt' 'old.jpg'"
+
+[[environment.setup]]
+action = "file"
+path = "~/bin/deploy.sh"
+owner = "learner"
+group = "learner"
+mode = "0755"
+content = """#!/bin/bash
+# deploy.sh: install the new configuration and record the deployment
+cp ~/release/app.conf ~/live/app.conf
+echo "deployed $(date +%F)" >> ~/live/DEPLOYED
+"""
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /srv/conf && seq 1 {{n}} | sed 's/^/host-/' > /srv/conf/hosts.list && chmod -R a+rX /srv/conf"
+
+[[task]]
+id = "greet"
+title = "A script with an argument"
+kind = "assessment"
+instructions = """
+Write the executable script ~/bin/greet: `greet NAME` prints `Hello, NAME!` (NAME may contain
+spaces when quoted). Without an argument it prints a usage message on standard error and
+exits with status 2.
+"""
+skills = { "e.script-structure" = 1.0, "e.positional-args" = 1.0, "e.test-conditionals" = 1.0, "e.quoting" = 0.5 }
+checks = [
+    { type = "command_result", user = "learner", command = "~/bin/greet World; echo rc=$?", stdout_equals = "Hello, World!\nrc=0" },
+    { type = "command_result", user = "learner", command = "~/bin/greet 'Ada  Lovelace'", stdout_equals = "Hello, Ada  Lovelace!" },
+    { type = "command_result", user = "learner", command = "~/bin/greet 2>/dev/null; echo rc=$?", stdout_equals = "rc=2" },
+    { type = "command_result", user = "learner", command = "~/bin/greet 2>&1 >/dev/null | grep -ci usage", stdout_regex = "^[1-9]" },
+]
+explanation = """
+if [ $# -lt 1 ]; then echo "usage: greet NAME" >&2; exit 2; fi; echo "Hello, $1!" — the double
+quotes keep the two spaces in 'Ada  Lovelace'.
+"""
+
+[[task]]
+id = "classify"
+title = "Validate, then decide"
+kind = "assessment"
+instructions = """
+Write ~/bin/size-class: given a non-negative whole number N it prints `small` (N < 10),
+`medium` (10–99) or `large` (100 and more). Anything else (letters, a minus sign, nothing)
+prints `invalid` on standard error and exits with status 1.
+"""
+skills = { "e.case" = 1.0, "e.input-validation" = 1.0, "e.arithmetic" = 1.0, "e.test-conditionals" = 0.5 }
+checks = [
+    { type = "command_result", user = "learner", command = "for v in 0 9 10 99 100 4096; do ~/bin/size-class $v; done", stdout_equals = "small\nsmall\nmedium\nmedium\nlarge\nlarge" },
+    { type = "command_result", user = "learner", command = "for v in abc -5 12x ''; do ~/bin/size-class \"$v\" 2>/dev/null; echo rc=$?; done", stdout_equals = "rc=1\nrc=1\nrc=1\nrc=1" },
+    { type = "command_result", user = "learner", command = "~/bin/size-class 7up 2>&1 >/dev/null", stdout_equals = "invalid" },
+]
+explanation = """
+case $1 in ''|*[!0-9]*) echo invalid >&2; exit 1;; esac rejects anything that is not all
+digits; then [ "$1" -lt 10 ] … or (( … )) decides.
+"""
+
+[[task]]
+id = "rename"
+title = "Lower-case extensions"
+kind = "assessment"
+instructions = "Rename every file in ~/photos ending in .JPG so that it ends in .jpg instead. The names contain spaces; the rest of each name stays the same."
+skills = { "e.loops" = 1.0, "e.quoting" = 1.0, "e.variables-expansion" = 1.0 }
+checks = [
+    { type = "tree_count", path = "~/photos", glob = "*.JPG", count = 0 },
+    { type = "path_exists", path = "~/photos/{{photo}}.jpg" },
+    { type = "path_exists", path = "~/photos/IMG 0001.jpg" },
+    { type = "path_exists", path = "~/photos/IMG 0002.jpg" },
+    { type = "path_exists", path = "~/photos/old.jpg" },
+    { type = "path_exists", path = "~/photos/notes.txt" },
+]
+explanation = "for f in ~/photos/*.JPG; do mv \"$f\" \"${f%.JPG}.jpg\"; done — quote every expansion, and let ${f%.JPG} strip the suffix."
+
+[[task]]
+id = "strict"
+title = "Stop at the first failure"
+kind = "assessment"
+instructions = """
+~/bin/deploy.sh records a deployment even when copying the configuration failed. Fix it so it
+stops with a non-zero exit status at the first failing command — and still works when
+~/release/app.conf exists.
+"""
+skills = { "e.error-handling" = 1.0, "e.script-debugging" = 1.0 }
+checks = [
+    { type = "command_result", user = "learner", command = "rm -rf ~/release ~/live/DEPLOYED; ~/bin/deploy.sh 2>/dev/null; echo rc=$?; test -e ~/live/DEPLOYED && echo recorded || echo clean", stdout_regex = "^rc=[1-9][0-9]*\nclean$" },
+    { type = "command_result", user = "learner", command = "mkdir -p ~/release && echo v2 > ~/release/app.conf && rm -f ~/live/DEPLOYED; ~/bin/deploy.sh; echo rc=$?; cat ~/live/app.conf; grep -c deployed ~/live/DEPLOYED", stdout_equals = "rc=0\nv2\n1" },
+]
+explanation = "set -e (better: set -euo pipefail) at the top, or cp … || exit 1 — a script must not report success it did not have."
+
+[[task]]
+id = "count"
+title = "A number in a variable"
+kind = "assessment"
+instructions = "In your shell, set the variable COUNT to the number of lines in /srv/conf/hosts.list — computed by a command, not typed in."
+skills = { "e.command-substitution" = 1.0, "e.variables-expansion" = 0.5 }
+checks = [
+    { type = "shell_var", name = "COUNT", regex = "\\s*{{n}}" },
+    { type = "line_matches", regex = "\\bCOUNT=\\S*(\\$\\(|`)" },
+]
+explanation = "COUNT=$(wc -l < /srv/conf/hosts.list) — with < the file name is not printed after the number."
+
+[[task]]
+id = "ask"
+title = "Read a line"
+kind = "assessment"
+instructions = "Write ~/bin/shout: it reads one line from standard input and prints it in upper case."
+skills = { "e.read-input" = 1.0 }
+checks = [
+    { type = "command_result", user = "learner", command = "echo 'hello there' | ~/bin/shout", stdout_equals = "HELLO THERE" },
+    { type = "command_result", user = "learner", command = "printf 'a b\\nsecond\\n' | ~/bin/shout", stdout_equals = "A B" },
+]
+explanation = "read -r line; echo \"$line\" | tr '[:lower:]' '[:upper:]' (or ${line^^} in bash)."
+
+[[task]]
+id = "quote"
+title = "The right quotes"
+kind = "assessment"
+instructions = "FILE holds the name `annual report.pdf` (with a space)."
+skills = { "e.quoting" = 1.0 }
+question = { prompt = "Which command removes exactly that file?", type = "choice", choices = ["rm $FILE", "rm \"$FILE\"", "rm '$FILE'", "rm \\$FILE"], answer = 1 }
+explanation = "Unquoted $FILE is split into two words (annual, report.pdf); single quotes stop the expansion altogether."
+
+[debrief]
+summary = """
+The check covered chapter E's core. It does not test every chapter E skill (functions, traps,
+startup files are left to the missions); untested skills stay unseen in your skill profile.
+Solved tasks are evidence for their skills.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "editor and set -e"
+steps = [
+    { edit = "#!/bin/bash\n# greet NAME: say hello\nif [ $# -lt 1 ]; then\n    echo \"usage: greet NAME\" >&2\n    exit 2\nfi\necho \"Hello, $1!\"\n" },
+    "nano ~/bin/greet",
+    "chmod +x ~/bin/greet",
+    { edit = "#!/bin/bash\n# size-class N: small, medium or large\ncase $1 in\n    ''|*[!0-9]*) echo invalid >&2; exit 1 ;;\nesac\nif [ \"$1\" -lt 10 ]; then\n    echo small\nelif [ \"$1\" -lt 100 ]; then\n    echo medium\nelse\n    echo large\nfi\n" },
+    "nano ~/bin/size-class",
+    "chmod +x ~/bin/size-class",
+    "for f in ~/photos/*.JPG; do mv \"$f\" \"${f%.JPG}.jpg\"; done",
+    { edit = "#!/bin/bash\n# deploy.sh: install the new configuration and record the deployment\nset -euo pipefail\ncp ~/release/app.conf ~/live/app.conf\necho \"deployed $(date +%F)\" >> ~/live/DEPLOYED\n" },
+    "nano ~/bin/deploy.sh",
+    "COUNT=$(wc -l < /srv/conf/hosts.list)",
+    { edit = "#!/bin/bash\nread -r line\necho \"${line^^}\"\n" },
+    "nano ~/bin/shout",
+    "chmod +x ~/bin/shout",
+    ":answer 2",
+]
+
+[[solution]]
+name = "printf and arithmetic"
+steps = [
+    ":answer rm \"$FILE\"",
+    "printf '#!/bin/sh\\n[ -n \"$1\" ] || { echo \"usage: greet NAME\" 1>&2; exit 2; }\\nprintf \"Hello, %%s!\\\\n\" \"$1\"\\n' > ~/bin/greet && chmod 755 ~/bin/greet",
+    "printf '#!/bin/bash\\nif [[ ! $1 =~ ^[0-9]+$ ]]; then echo invalid >&2; exit 1; fi\\nn=$1\\nif (( n >= 100 )); then echo large; elif (( n >= 10 )); then echo medium; else echo small; fi\\n' > ~/bin/size-class && chmod 755 ~/bin/size-class",
+    "cd ~/photos && for f in *.JPG; do mv -- \"$f\" \"${f%.*}.jpg\"; done; cd",
+    "sed -i 's|^cp ~/release/app.conf ~/live/app.conf$|cp ~/release/app.conf ~/live/app.conf \\|\\| exit 1|' ~/bin/deploy.sh",
+    "export COUNT=$(cat /srv/conf/hosts.list | wc -l)",
+    "printf '#!/bin/sh\\nread line\\necho \"$line\" | tr a-z A-Z\\n' > ~/bin/shout && chmod +x ~/bin/shout",
+]
+
+[[counterexample]]
+name = "unquoted and unchecked"
+steps = [
+    "printf '#!/bin/sh\\necho Hello, $1!\\n' > ~/bin/greet && chmod +x ~/bin/greet",
+    "printf '#!/bin/bash\\nif [ $1 -lt 10 ]; then echo small; elif [ $1 -lt 100 ]; then echo medium; else echo large; fi\\n' > ~/bin/size-class && chmod +x ~/bin/size-class",
+    "for f in $(ls ~/photos/*.JPG); do mv $f ${f%.JPG}.jpg; done",
+    "COUNT={{n}}",
+    "printf '#!/bin/sh\\nread line\\necho \"$line\" | tr a-z A-Z\\n' > ~/bin/shout && chmod +x ~/bin/shout",
+    ":answer 2",
+]

@@ -1,0 +1,127 @@
+schema = 1
+
+[mission]
+id = "b03-making-things"
+title = "Making Things"
+chapter = "B"
+kind = "lesson"
+order = 3
+difficulty = 2
+requires = ["b01-where-am-i"]
+skills = ["b.create-files-dirs", "b.copy-move-rename", "b.remove-safely"]
+xp = 60
+estimated_minutes = 12
+
+[briefing]
+context = """
+You are setting up the skeleton for a new project called {{name}}. Create its directories
+and files, bring in a configuration file, rename things and clean up after a mistake.
+"""
+concept = """
+mkdir creates directories (-p creates missing parents too). touch creates an empty file (or
+updates its time). cp copies, mv moves or renames, rm removes files and rm -r removes whole
+directory trees. There is no recycle bin: rm is permanent.
+"""
+objectives = ["Create directory trees and files", "Copy, move and rename", "Remove safely"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+name = { choices = ["atlas", "beacon", "comet", "drift"] }
+
+[[environment.setup]]
+action = "file"
+path = "/etc/{{name}}.conf"
+content = "# {{name}} defaults\nport=8080\nlog_level=info\n"
+mode = "0644"
+
+[[guard]]
+type = "path_exists"
+path = "~"
+kind = "dir"
+message = "Your home directory was removed! On a real system that would destroy all your files. Use :reset to start over, and double-check rm -r targets."
+
+[[task]]
+id = "dirs"
+title = "Directory skeleton"
+kind = "guided"
+instructions = "Create ~/{{name}}/src and ~/{{name}}/docs. One command can create both, including the missing parent: `mkdir -p ~/{{name}}/src ~/{{name}}/docs`."
+skills = { "b.create-files-dirs" = 1.0 }
+checks = [
+    { type = "path_exists", path = "~/{{name}}/src", kind = "dir" },
+    { type = "path_exists", path = "~/{{name}}/docs", kind = "dir" },
+]
+hints = ["mkdir needs an option to create parent directories that do not exist yet.", "mkdir -p creates the whole path; you can list several paths.", "Type: mkdir -p ~/{{name}}/src ~/{{name}}/docs"]
+explanation = "Without -p, mkdir refuses when the parent ~/{{name}} does not exist yet."
+
+[[task]]
+id = "readme"
+title = "An empty README"
+kind = "guided"
+instructions = "Create an empty file README.md inside ~/{{name}}."
+skills = { "b.create-files-dirs" = 1.0 }
+checks = [{ type = "path_exists", path = "~/{{name}}/README.md", kind = "file" }]
+hints = ["There is a command that creates empty files.", "touch FILE creates FILE if it does not exist.", "Type: touch ~/{{name}}/README.md"]
+explanation = "touch creates empty files; redirecting nothing (> file) would also work."
+
+[[task]]
+id = "copy"
+title = "Bring in the configuration"
+kind = "independent"
+instructions = "Copy /etc/{{name}}.conf into ~/{{name}}/docs/ (keep its name)."
+skills = { "b.copy-move-rename" = 1.0 }
+checks = [
+    { type = "file_contains", path = "~/{{name}}/docs/{{name}}.conf", text = "port=8080" },
+    { type = "path_exists", path = "/etc/{{name}}.conf" },
+]
+hints = ["You want a copy, not a move: the original must stay in /etc.", "cp SOURCE DESTINATION-DIRECTORY keeps the file name.", "Type: cp /etc/{{name}}.conf ~/{{name}}/docs/"]
+explanation = "Copying into a directory keeps the original name. You can read /etc/{{name}}.conf but not write to /etc, so mv would have failed anyway."
+
+[[task]]
+id = "rename"
+title = "Rename"
+kind = "independent"
+instructions = "Rename README.md to README.txt (same directory)."
+skills = { "b.copy-move-rename" = 1.0 }
+checks = [
+    { type = "path_exists", path = "~/{{name}}/README.txt", kind = "file" },
+    { type = "path_absent", path = "~/{{name}}/README.md" },
+]
+hints = ["Linux has no separate rename command for single files.", "Moving a file to a new name in the same directory renames it.", "Type: mv ~/{{name}}/README.md ~/{{name}}/README.txt"]
+explanation = "mv renames when source and destination are in the same directory; it keeps the same inode."
+
+[[task]]
+id = "mistake"
+title = "Undo a mistake"
+kind = "independent"
+instructions = "Oops — the docs directory was a mistake. Remove ~/{{name}}/docs and everything in it, but nothing else."
+skills = { "b.remove-safely" = 1.0 }
+checks = [
+    { type = "path_absent", path = "~/{{name}}/docs" },
+    { type = "path_exists", path = "~/{{name}}/src", kind = "dir" },
+    { type = "path_exists", path = "~/{{name}}/README.txt" },
+]
+persistent = true
+hints = ["rmdir only removes empty directories, and docs is not empty.", "rm needs the recursive option to remove a directory tree.", "Type: rm -r ~/{{name}}/docs"]
+explanation = "rm -r removes a tree recursively. Be careful: rm -rf with a mistyped path is one of the classic ways to lose data."
+
+[debrief]
+summary = """
+You built a directory tree with mkdir -p, created a file with touch, copied with cp, renamed
+with mv and removed a tree with rm -r — the everyday file toolkit.
+"""
+alternatives = ["mkdir -p ~/{{name}}/{src,docs} uses brace expansion", "rm -ri asks before each removal", "cp -v and mv -v report what they did"]
+pitfalls = ["rm has no undo. Use ls on the same path first, or rm -i, when unsure.", "cp a b overwrites b silently unless you use -i or -n."]
+next = "Next: reading files with cat, head, tail and less."
+
+[[solution]]
+name = "full paths from home"
+steps = ["mkdir -p ~/{{name}}/src ~/{{name}}/docs", "touch ~/{{name}}/README.md", "cp /etc/{{name}}.conf ~/{{name}}/docs/", "mv ~/{{name}}/README.md ~/{{name}}/README.txt", "rm -r ~/{{name}}/docs"]
+
+[[solution]]
+name = "working inside the project"
+steps = ["mkdir -p {{name}}/{src,docs}", "cd {{name}}", "> README.md", "cp /etc/{{name}}.conf docs", "mv README.md README.txt", "rm -rf docs"]
+
+[[counterexample]]
+name = "moving instead of copying"
+steps = ["mkdir -p ~/{{name}}/src ~/{{name}}/docs", "touch ~/{{name}}/README.md", "mv /etc/{{name}}.conf ~/{{name}}/docs/"]

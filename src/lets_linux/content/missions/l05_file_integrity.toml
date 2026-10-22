@@ -1,0 +1,158 @@
+schema = 1
+
+[mission]
+id = "l05-file-integrity"
+title = "The Tools Are Lying"
+chapter = "L"
+kind = "troubleshooting"
+order = 7
+difficulty = 5
+requires = ["l03-permission-audit", "f02-cleaning-up", "l01b-audit-toolkit"]
+skills = ["l.file-integrity", "f.file-ownership"]
+review_for = ["g.ps-inspection", "g.proc-filesystem"]
+xp = 200
+estimated_minutes = 30
+
+[briefing]
+context = """
+The monitoring graph shows this Debian server at 100% CPU, but ps aux and top's process list
+look harmless. A colleague suspects the server's own tools have been tampered with. Find out
+which packaged files were changed, what the change hides, and repair it — then record a
+checksum baseline of the SSH configuration so the next change is easy to spot.
+(sudo password: letslinux)
+"""
+concept = """
+Packages record a checksum for every file they install. dpkg -V (Debian) and rpm -Va (Fedora)
+compare the files on disk with those records: '??5??????' means the content differs,
+'missing' that it is gone, and a 'c' marks configuration files — changed on purpose more
+often than not, unlike programs. A modified program can be inspected (file, cat for
+scripts) and restored by reinstalling its package (dpkg -S finds the package). For files no
+package owns, make your own baseline: sha256sum FILES > list, later sha256sum -c list. Keep
+the baseline somewhere an intruder cannot change it.
+"""
+objectives = ["Verify installed files against the package database", "Analyse a tampered program", "Restore it from its package", "Create and check a checksum baseline"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+miner = { choices = ["kdevtmpfsi", "kthreaddi", "xmrig-proxy"] }
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /usr/lib/x86_64-linux-gnu && mv /usr/bin/ps /usr/lib/x86_64-linux-gnu/.ps-orig && printf '#!/bin/sh\\n/usr/lib/x86_64-linux-gnu/.ps-orig \"$@\" | grep -v {{miner}}\\n' > /usr/bin/ps && chmod 755 /usr/bin/ps && touch -r /usr/bin/ls /usr/bin/ps"
+
+[[environment.setup]]
+action = "append"
+path = "/etc/ssh/sshd_config"
+content = "\n# 2026-02-11 admin: shorter grace time\nLoginGraceTime 30\n"
+
+[[environment.setup]]
+action = "process"
+comm = "{{miner}}"
+argv = ["/var/tmp/.cache/{{miner}}"]
+user = "www-data"
+cpu = 98.5
+cpu_time = 410000
+rss_kb = 812000
+age_minutes = 7000
+
+[[task]]
+id = "verify"
+title = "Which files changed?"
+kind = "troubleshooting"
+instructions = "Ask the package database which installed files differ from what the packages shipped."
+skills = { "l.file-integrity" = 1.0 }
+question = { prompt = "Which modified file is a program, not configuration?", type = "exact", accept = ["/usr/bin/ps"] }
+hints = ["dpkg has a verify mode.", "sudo dpkg -V — lines with 'c' are configuration files.", "/usr/bin/ps: '??5??????' without 'c'."]
+explanation = "The sshd_config change is a documented admin change (a 'c' file). A changed /usr/bin/ps is never legitimate."
+
+[[task]]
+id = "analyse"
+title = "What does it hide?"
+kind = "troubleshooting"
+instructions = "Examine the tampered program."
+skills = { "l.file-integrity" = 1.0, "g.ps-inspection" = 0.5 }
+question = { prompt = "Which process name does it filter out?", type = "exact", accept = ["{{miner}}"] }
+hints = ["file /usr/bin/ps — it is not a compiled program any more.", "It is a shell script: cat /usr/bin/ps", "grep -v {{miner}} removes every line mentioning {{miner}}."]
+explanation = "A wrapper around the real ps that removes the miner's lines. /proc is not fooled: ls /proc, pgrep, top's header and /proc/loadavg tell the truth."
+
+[[task]]
+id = "restore"
+title = "Honest tools again"
+kind = "independent"
+instructions = "Restore the original ps from its package so that ps aux shows every process again. (Do not stop the miner yet — the incident team wants to see it running.)"
+skills = { "l.file-integrity" = 1.0, "f.file-ownership" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "dpkg -V procps", stdout_equals = "" },
+    { type = "command_result", user = "root", command = "ps aux", stdout_contains = ["{{miner}}"] },
+    { type = "process_running", comm = "{{miner}}" },
+]
+hints = ["Which package owns /usr/bin/ps? dpkg -S /usr/bin/ps", "Reinstall it: apt-get install --reinstall PACKAGE", "sudo apt-get install --reinstall procps; then ps aux | grep {{miner}}"]
+explanation = "Reinstalling writes the packaged file again; dpkg -V procps is silent. Keep the wrapper and the hidden copy (/usr/lib/x86_64-linux-gnu/.ps-orig) as evidence."
+
+[[task]]
+id = "baseline"
+title = "A baseline for next time"
+kind = "independent"
+instructions = "Write SHA-256 checksums of the regular files directly in /etc/ssh (not the sshd_config.d directory) to /root/ssh.sha256, in sha256sum's format, so that sha256sum -c /root/ssh.sha256 verifies them."
+skills = { "l.file-integrity" = 1.0 }
+checks = [
+    { type = "file_contains", path = "/root/ssh.sha256", text = "sshd_config" },
+    { type = "any_of", checks = [
+        { type = "command_result", user = "root", command = "cd / && sha256sum -c --quiet /root/ssh.sha256", status = 0 },
+        { type = "command_result", user = "root", command = "cd /etc/ssh && sha256sum -c --quiet /root/ssh.sha256", status = 0 },
+    ] },
+    { type = "command_result", user = "root", command = "cd /etc/ssh && echo '# x' >> sshd_config; cd / && sha256sum -c --quiet /root/ssh.sha256 || (cd /etc/ssh && sha256sum -c --quiet /root/ssh.sha256)", status_not = 0 },
+]
+hints = ["sha256sum FILE… prints 'checksum  name' lines; redirect them into the file.", "Absolute names work from any directory: sudo sha256sum /etc/ssh/ssh_host_* /etc/ssh/sshd_config /etc/ssh/moduli", "sudo sh -c 'sha256sum /etc/ssh/*_config /etc/ssh/ssh_host_* > /root/ssh.sha256'; check with sudo sha256sum -c /root/ssh.sha256"]
+explanation = "The game changed sshd_config on a copy of the machine and your baseline caught it. Real setups copy the baseline off the machine (or use AIDE) — an intruder with root could rewrite a local list."
+
+[debrief]
+summary = """
+sudo dpkg -V / rpm -Va → inspect what changed (file, cat, strings) → reinstall the owning
+package → checksum baselines for what packages do not cover.
+"""
+alternatives = ["debsums -c (Debian) checks the same md5sums", "AIDE or Tripwire keep signed baselines of whole trees", "rpm -V PACKAGE for one package on Fedora"]
+pitfalls = ["Trusting ps/ls/netstat on a compromised machine: compare with /proc.", "Treating every 'c' line as an attack: administrators change configuration.", "Keeping the only baseline on the machine it protects."]
+next = "Next: where the miner came from."
+
+[[solution]]
+name = "dpkg -V and reinstall"
+steps = [
+    { input = ["letslinux"] },
+    "sudo dpkg -V",
+    ":answer /usr/bin/ps",
+    "file /usr/bin/ps",
+    "cat /usr/bin/ps",
+    ":answer {{miner}}",
+    "dpkg -S /usr/bin/ps",
+    "sudo apt-get install --reinstall -y procps",
+    "ps aux | grep {{miner}}",
+    "sudo sh -c 'sha256sum /etc/ssh/ssh_host_* /etc/ssh/sshd_config /etc/ssh/moduli > /root/ssh.sha256'",
+    "sudo sha256sum -c /root/ssh.sha256",
+]
+
+[[solution]]
+name = "relative names"
+steps = [
+    { input = ["letslinux"] },
+    "sudo dpkg -V | grep -v ' c '",
+    ":answer /usr/bin/ps",
+    "grep -v '^#' /usr/bin/ps",
+    ":answer {{miner}}",
+    "sudo apt install --reinstall -y procps",
+    "cd /etc/ssh",
+    "sudo find . -maxdepth 1 -type f -exec sha256sum {} + | sudo tee /root/ssh.sha256",
+    "sudo sha256sum -c /root/ssh.sha256",
+]
+
+[[counterexample]]
+name = "kill the evidence"
+steps = [
+    { input = ["letslinux"] },
+    ":answer /usr/bin/ps",
+    ":answer {{miner}}",
+    "sudo pkill {{miner}}",
+    "sudo rm /usr/bin/ps",
+    "sudo sh -c 'sha256sum /etc/ssh/sshd_config > /root/ssh.sha256'",
+]

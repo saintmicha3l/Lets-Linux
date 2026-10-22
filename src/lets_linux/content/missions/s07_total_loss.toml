@@ -1,0 +1,211 @@
+schema = 1
+
+[mission]
+id = "s07-total-loss"
+title = "Total Loss"
+chapter = "S"
+kind = "troubleshooting"
+order = 8
+difficulty = 5
+requires = ["s02-order-book", "i06-file-transfer", "n03-lost-network"]
+skills = ["s.disaster-recovery", "j.backup-restore", "i.file-transfer", "s.database-ops"]
+review_for = ["j.backup-restore", "i.file-transfer"]
+xp = 260
+estimated_minutes = 45
+
+[briefing]
+context = """
+Last night the shop server web1 died — its disks are gone. This machine is its replacement:
+a fresh Debian, nothing installed. The nightly backups of web1 are on the backup server
+vault (ssh ops@vault, password letslinux), in /srv/backups/web1/DATE/. A README there
+describes them. Bring the shop back: http://localhost/ serving the shop, its order database
+for the shop service user, its nightly job — on a machine called web1.
+(sudo password: letslinux)
+"""
+concept = """
+Disaster recovery is a rehearsed procedure, not an improvisation: which backup is complete
+and intact (checksums: sha256sum -c SHA256SUMS), what has to come back (packages,
+configuration, data, accounts, scheduled jobs, the host's identity) and in which order
+(software before configuration, accounts before files they own, data before the service
+starts). The time it takes is the recovery time (RTO); the data lost since the backup is the
+recovery point (RPO). Restore into place with tar -xzf FILE -C /, and check ownership: a
+restored file owned by the wrong user is a broken service.
+"""
+objectives = ["Choose a backup by verifying it", "Restore packages, configuration, data, accounts and jobs", "Give the new host the old identity", "Verify the service end to end", "Reason about RPO and RTO"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "peer"
+name = "vault"
+addresses = ["10.0.2.70"]
+mac = "52:54:00:0a:17:70"
+host = { profile = "debian", user = "ops", password = "letslinux", packages = ["sqlite3"] }
+services = { 22 = { kind = "ssh", banner = "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u3" } }
+
+[[environment.setup]]
+action = "dns"
+name = "vault.example.lan"
+value = "10.0.2.70"
+
+[[environment.setup]]
+action = "remote"
+host = "vault"
+steps = [
+    { action = "file", path = "/tmp/web1/etc/nginx/sites-available/shop", content = "server {\n    listen 80 default_server;\n    server_name shop.example.lan web1;\n    root /var/www/shop;\n    index index.html;\n    access_log /var/log/nginx/shop.access.log;\n}\n" },
+    { action = "symlink", path = "/tmp/web1/etc/nginx/sites-enabled/shop", target = "/etc/nginx/sites-available/shop" },
+    { action = "file", path = "/tmp/web1/var/www/shop/index.html", content = "<html><head><title>{{shop}}</title></head><body><h1>{{shop}}</h1><p>Open daily 8-18.</p></body></html>\n" },
+    { action = "file", path = "/tmp/web1/opt/shop/bin/nightly-report", mode = "0755", content = "#!/bin/sh\n# nightly-report: count yesterday's orders\nsqlite3 /var/lib/shop/orders.db \"SELECT count(*) FROM orders\" > /var/lib/shop/report.txt\n" },
+    { action = "file", path = "/tmp/seed.sql", content = "CREATE TABLE orders(id INTEGER PRIMARY KEY, customer TEXT, total REAL);\nWITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {{orders}})\nINSERT INTO orders(customer, total) SELECT 'customer ' || i, 10 + i % 50 FROM n;\n" },
+    { action = "file", path = "/srv/backups/web1/README", content = "Nightly backups of web1 (taken at 02:30 by /usr/local/sbin/backup-web1)\n\nEach DATE/ directory holds:\n  packages.txt   packages installed by hand (apt-mark showmanual)\n  accounts.txt   system accounts the shop needs (name uid gid home shell)\n  etc.tar.gz     /etc/nginx/sites-available and sites-enabled\n  www.tar.gz     /var/www/shop and /opt/shop (paths relative to /)\n  orders.db      the order database (sqlite3 .backup), belongs to shop:shop 0640 in /var/lib/shop\n  crontab.shop   crontab -l -u shop\n  SHA256SUMS     checksums of all of the above - check them before restoring!\n" },
+    { action = "file", path = "/tmp/accounts.txt", content = "shop 990 990 /var/lib/shop /usr/sbin/nologin\n" },
+    { action = "file", path = "/tmp/packages.txt", content = "curl\nnginx\nsqlite3\n" },
+    { action = "file", path = "/tmp/crontab.shop", content = "# m h dom mon dow command\n15 3 * * * /opt/shop/bin/nightly-report\n" },
+    { action = "run", command = "set -e; for d in 2026-02-28 2026-03-01; do mkdir -p /srv/backups/web1/$d; cd /srv/backups/web1/$d; tar -czf etc.tar.gz -C /tmp/web1 etc; tar -czf www.tar.gz -C /tmp/web1 var/www opt; cp /tmp/accounts.txt /tmp/packages.txt /tmp/crontab.shop .; done" },
+    { action = "run", command = "set -e; sqlite3 /tmp/old.db < /tmp/seed.sql; cp /tmp/old.db /srv/backups/web1/2026-02-28/orders.db; sqlite3 /tmp/old.db \"INSERT INTO orders(customer, total) VALUES ('late customer', 99)\"; cp /tmp/old.db /srv/backups/web1/2026-03-01/orders.db" },
+    { action = "run", command = "set -e; for d in 2026-02-28 2026-03-01; do cd /srv/backups/web1/$d; sha256sum packages.txt accounts.txt etc.tar.gz www.tar.gz orders.db crontab.shop > SHA256SUMS; done" },
+    { action = "run", command = "cd /srv/backups/web1/2026-03-01 && head -c 900 www.tar.gz > www.part && mv www.part www.tar.gz && echo 'backup-web1: write failed: No space left on device' > backup.log" },
+    { action = "run", command = "rm -rf /tmp/web1 /tmp/seed.sql /tmp/old.db /tmp/accounts.txt /tmp/packages.txt /tmp/crontab.shop && chown -R ops:ops /srv/backups" },
+]
+
+[environment.vars]
+shop = { choices = ["Corner Bakery", "Lantern Books", "Pine & Pot"] }
+orders = { choices = ["312", "347", "381"] }
+
+[[task]]
+id = "choose"
+title = "Which backup?"
+kind = "guided"
+instructions = """
+Log in to vault and look at /srv/backups/web1: read the README, then verify each night's
+backup in its directory with `sha256sum -c SHA256SUMS`.
+"""
+skills = { "s.disaster-recovery" = 1.0, "j.backup-restore" = 1.0 }
+question = { prompt = "Which date's backup can you trust? (YYYY-MM-DD)", type = "regex", accept = ["^2026-02-28$"] }
+hints = ["ssh ops@vault, then cd /srv/backups/web1 && ls", "In each date directory: sha256sum -c SHA256SUMS. One file of the newest backup fails — and there is a backup.log.", "2026-02-28 — the 03-01 run ran out of space."]
+explanation = "Restoring an unverified backup can cost more time than it saves. The newest backup is not always the best one."
+
+[[task]]
+id = "restore"
+title = "Bring the shop back"
+kind = "independent"
+instructions = """
+Restore web1 from that backup onto this machine: the packages, the shop's system account,
+the nginx site, the pages and /opt/shop, the order database (owner and mode as the README
+says), the shop user's crontab — and make sure nginx serves the shop now and after a
+reboot. Copy the files over with scp or rsync (e.g. scp -r ops@vault:/srv/backups/web1/DATE ~/restore).
+"""
+skills = { "s.disaster-recovery" = 1.0, "j.backup-restore" = 1.0, "i.file-transfer" = 1.0, "s.database-ops" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "curl -s http://127.0.0.1/ | grep -c '<h1>{{shop}}</h1>'", stdout_equals = "1" },
+    { type = "unit_enabled", unit = "nginx.service" },
+    { type = "command_result", user = "root", command = "id -u shop; stat -c '%U:%G %a' /var/lib/shop/orders.db", stdout_equals = "990\nshop:shop 640" },
+    { type = "command_result", user = "root", command = "sqlite3 /var/lib/shop/orders.db 'PRAGMA integrity_check; SELECT count(*) FROM orders'", stdout_equals = "ok\n{{orders}}" },
+    { type = "command_result", user = "root", command = "crontab -l -u shop | grep -v '^#'", stdout_equals = "15 3 * * * /opt/shop/bin/nightly-report" },
+    { type = "command_result", user = "root", command = "su -s /bin/sh shop -c /opt/shop/bin/nightly-report && cat /var/lib/shop/report.txt", stdout_equals = "{{orders}}" },
+    { type = "after_reboot", checks = [{ type = "command_result", user = "root", command = "curl -s http://127.0.0.1/ | grep -c '<h1>{{shop}}</h1>'", stdout_equals = "1" }] },
+]
+persistent = true
+hints = [
+    "Order: packages (sudo apt-get install -y $(cat packages.txt)), the account (sudo useradd --system -u 990 -d /var/lib/shop -s /usr/sbin/nologin shop — check accounts.txt), then files.",
+    "sudo tar -xzf etc.tar.gz -C / and sudo tar -xzf www.tar.gz -C /; the database: sudo install -D -o shop -g shop -m 640 orders.db /var/lib/shop/orders.db; the crontab: sudo crontab -u shop crontab.shop.",
+    "nginx's default site also listens on port 80 as default_server: remove /etc/nginx/sites-enabled/default, then sudo systemctl reload nginx (and enable it).",
+]
+explanation = """
+Packages first (they create /etc/nginx), then the account (so files can belong to it), then
+configuration and data, then the service. The report job ran as shop and could read the
+database — ownership was part of the restore.
+"""
+
+[[task]]
+id = "identity"
+title = "Its name"
+kind = "independent"
+instructions = "Clients, monitoring and the backups know the server as web1. Give this machine that host name permanently."
+skills = { "s.disaster-recovery" = 1.0 }
+checks = [
+    { type = "hostname_is", value = "web1" },
+    { type = "file_contains", path = "/etc/hostname", text = "web1" },
+]
+persistent = true
+hints = ["hostnamectl set-hostname NAME", "sudo hostnamectl set-hostname web1", "It also writes /etc/hostname, so it survives a reboot."]
+explanation = "A replacement takes over the old identity — name (and on real networks often the address and the SSH host keys, if they were backed up)."
+
+[[task]]
+id = "rpo"
+title = "What was lost?"
+kind = "explanation"
+instructions = "The manager asks what the outage cost in data."
+skills = { "s.disaster-recovery" = 1.0, "j.backup-restore" = 0.5 }
+question = { prompt = "Which orders are missing now?", type = "choice", choices = ["None — backups are complete", "Everything after the 2026-02-28 02:30 backup: the broken 03-01 backup and the hours until the crash. Shortening that gap (the RPO) needs more frequent backups or replication — and monitoring that notices a failed backup", "Only orders from today", "All orders: the database had to be recreated"], answer = 1 }
+hints = ["Which backup did you restore, and when was it taken?", "The 03-01 database had one more order — but that backup could not be trusted.", "Answer (b)."]
+explanation = "The failed backup went unnoticed for a day: its log said why. Alerting on backup failures is part of disaster recovery."
+
+[debrief]
+summary = """
+Verify before restoring (checksums, logs); restore in dependency order — packages,
+accounts, configuration, data, jobs, identity; check ownership and run the service's own
+jobs; confirm it survives a reboot. RPO is the age of the backup you could use, RTO how
+long all this took — rehearse it, so the next time is a checklist.
+"""
+alternatives = ["rsync -a ops@vault:/srv/backups/web1/2026-02-28/ ~/restore/", "Configuration management (the Ansible repository) to rebuild, backups only for data", "Restore the database with sqlite3 /var/lib/shop/orders.db '.restore orders.db'"]
+pitfalls = ["Restoring the newest backup without verifying it", "Files restored as root: the service user cannot read its data", "Forgetting scheduled jobs, accounts or the default nginx site"]
+next = "Next: the capstones."
+
+[[solution]]
+name = "scp and tar"
+steps = [
+    { input = ["yes", "letslinux", "letslinux", "letslinux"] },
+    "ssh ops@vault 'cat /srv/backups/web1/README; cd /srv/backups/web1/2026-03-01 && sha256sum -c SHA256SUMS; cd ../2026-02-28 && sha256sum -c SHA256SUMS'",
+    ":answer 2026-02-28",
+    "scp -r ops@vault:/srv/backups/web1/2026-02-28 ~/restore",
+    "cd ~/restore && sha256sum -c SHA256SUMS",
+    "sudo apt-get install -y $(cat packages.txt)",
+    "sudo useradd --system -u 990 -U -d /var/lib/shop -s /usr/sbin/nologin shop",
+    "sudo tar -xzf etc.tar.gz -C /",
+    "sudo tar -xzf www.tar.gz -C /",
+    "sudo install -d -o shop -g shop -m 750 /var/lib/shop",
+    "sudo install -o shop -g shop -m 640 orders.db /var/lib/shop/orders.db",
+    "sudo crontab -u shop crontab.shop",
+    "sudo rm /etc/nginx/sites-enabled/default",
+    "sudo systemctl enable nginx && sudo systemctl reload nginx",
+    "curl -s http://localhost/",
+    "sudo hostnamectl set-hostname web1",
+    ":answer 2",
+]
+
+[[solution]]
+name = "rsync and sqlite restore"
+steps = [
+    { input = ["yes", "letslinux", "letslinux"] },
+    ":answer 2026-02-28",
+    "rsync -a ops@vault:/srv/backups/web1/2026-02-28/ /home/learner/r/",
+    "cd /home/learner/r",
+    "sudo apt-get install -y nginx sqlite3 curl",
+    "sudo groupadd -r -g 990 shop && sudo useradd -r -u 990 -g 990 -d /var/lib/shop -s /usr/sbin/nologin shop",
+    "sudo tar -C / -xzf etc.tar.gz && sudo tar -C / -xzf www.tar.gz",
+    "sudo mkdir -p /var/lib/shop && sudo chown shop:shop /var/lib/shop",
+    "sudo sqlite3 /var/lib/shop/orders.db '.restore /home/learner/r/orders.db'",
+    "sudo chown shop:shop /var/lib/shop/orders.db && sudo chmod 640 /var/lib/shop/orders.db",
+    "sudo crontab -u shop /home/learner/r/crontab.shop",
+    "sudo unlink /etc/nginx/sites-enabled/default; sudo systemctl restart nginx; sudo systemctl enable nginx",
+    "sudo hostnamectl set-hostname web1",
+    ":answer b",
+]
+
+[[counterexample]]
+name = "newest backup, files as root"
+steps = [
+    { input = ["yes", "letslinux", "letslinux"] },
+    ":answer 2026-02-28",
+    "scp -r ops@vault:/srv/backups/web1/2026-02-28 ~/restore",
+    "cd ~/restore && sudo apt-get install -y $(cat packages.txt)",
+    "sudo useradd --system -u 990 -U -d /var/lib/shop -s /usr/sbin/nologin shop",
+    "sudo tar -xzf etc.tar.gz -C / && sudo tar -xzf www.tar.gz -C /",
+    "sudo mkdir -p /var/lib/shop && sudo cp orders.db /var/lib/shop/",
+    "sudo crontab -u shop crontab.shop",
+    "sudo rm /etc/nginx/sites-enabled/default && sudo systemctl reload nginx",
+    "sudo hostnamectl set-hostname web1",
+    ":answer 2",
+]

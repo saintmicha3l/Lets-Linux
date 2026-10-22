@@ -1,0 +1,445 @@
+# Achievements are declarative: each names a trigger counter and a threshold.
+# Counters are incremented by the game service on events (see progression/achievements.py).
+
+schema = 1
+
+[[achievement]]
+id = "first-steps"
+title = "First Steps"
+description = "Complete your first mission."
+counter = "missions_completed"
+threshold = 1
+
+[[achievement]]
+id = "no-training-wheels"
+title = "No Training Wheels"
+description = "Complete a mission without using any hints."
+counter = "missions_completed_without_hints"
+threshold = 1
+
+[[achievement]]
+id = "self-reliant"
+title = "Self-Reliant"
+description = "Complete ten missions without hints."
+counter = "missions_completed_without_hints"
+threshold = 10
+
+[[achievement]]
+id = "pipe-dream"
+title = "Pipe Dream"
+description = "Run a pipeline with three or more commands."
+counter = "long_pipelines"
+threshold = 1
+
+[[achievement]]
+id = "with-great-power"
+title = "With Great Power"
+description = "Use sudo for the first time."
+counter = "sudo_used"
+threshold = 1
+
+[[achievement]]
+id = "read-the-manual"
+title = "Read the Fine Manual"
+description = "Open five different manual pages."
+counter = "distinct_man_pages"
+threshold = 5
+
+[[achievement]]
+id = "persistent"
+title = "Persistent"
+description = "Recover from a mistake by resetting a mission and completing it."
+counter = "missions_completed_after_reset"
+threshold = 1
+
+[[achievement]]
+id = "orientation-complete"
+title = "Oriented"
+description = "Complete every mission in chapter A."
+counter = "chapter_A_completed"
+threshold = 1
+
+[[achievement]]
+id = "pathfinder"
+title = "Pathfinder"
+description = "Complete every mission in chapter B."
+counter = "chapter_B_completed"
+threshold = 1
+
+[[achievement]]
+id = "text-wrangler"
+title = "Text Wrangler"
+description = "Complete every mission in chapter C."
+counter = "chapter_C_completed"
+threshold = 1
+
+[[achievement]]
+id = "gatekeeper"
+title = "Gatekeeper"
+description = "Complete every mission in chapter D."
+counter = "chapter_D_completed"
+threshold = 1
+
+[[achievement]]
+id = "first-proficiency"
+title = "Getting the Hang of It"
+description = "Reach Proficient in any skill."
+counter = "skills_proficient"
+threshold = 1
+
+[[achievement]]
+id = "first-mastery"
+title = "Mastery"
+description = "Master a skill (proficient, retained over time, shown in more than one context)."
+counter = "skills_mastered"
+threshold = 1
+
+[[achievement]]
+id = "reviewer"
+title = "Spaced Out"
+description = "Complete five review sessions."
+counter = "reviews_completed"
+threshold = 5
+
+[[achievement]]
+id = "explorer"
+title = "Explorer"
+description = "Run 500 commands in the sandbox or missions."
+counter = "commands_run"
+threshold = 500
+
+[[achievement]]
+id = "script-writer"
+title = "Script Writer"
+description = "Complete every mission in chapter E (shell scripting)."
+counter = "chapter_E_completed"
+threshold = 1
+
+[[achievement]]
+id = "package-handler"
+title = "Package Handler"
+description = "Complete every mission in chapter F (packages)."
+counter = "chapter_F_completed"
+threshold = 1
+
+[[achievement]]
+id = "process-wrangler"
+title = "Process Wrangler"
+description = "Complete every mission in chapter G (processes)."
+counter = "chapter_G_completed"
+threshold = 1
+
+[[achievement]]
+id = "service-manager"
+title = "Service Manager"
+description = "Complete every mission in chapter H (systemd and logging)."
+counter = "chapter_H_completed"
+threshold = 1
+
+[[achievement]]
+id = "network-navigator"
+title = "Network Navigator"
+description = "Complete every mission in chapter I (networking)."
+counter = "chapter_I_completed"
+threshold = 1
+
+[[achievement]]
+id = "storage-keeper"
+title = "Storage Keeper"
+description = "Complete every mission in chapter J (storage)."
+counter = "chapter_J_completed"
+threshold = 1
+
+[[achievement]]
+id = "automator"
+title = "Automator"
+description = "Complete every mission in chapter K (automation)."
+counter = "chapter_K_completed"
+threshold = 1
+
+[[achievement]]
+id = "hardened"
+title = "Hardened"
+description = "Complete every mission in chapter L (security)."
+counter = "chapter_L_completed"
+threshold = 1
+
+[[achievement]]
+id = "root-cause"
+title = "Root Cause"
+description = "Complete every mission in chapter M (troubleshooting)."
+counter = "chapter_M_completed"
+threshold = 1
+
+[[achievement]]
+id = "kernel-whisperer"
+title = "Kernel Whisperer"
+description = "Complete every mission in chapter N (kernel and system calls)."
+counter = "chapter_N_completed"
+threshold = 1
+
+[[achievement]]
+id = "performance-tuner"
+title = "Performance Tuner"
+description = "Complete every mission in chapter O (performance)."
+counter = "chapter_O_completed"
+threshold = 1
+
+[[achievement]]
+id = "container-captain"
+title = "Container Captain"
+description = "Complete every mission in chapter P (containers)."
+counter = "chapter_P_completed"
+threshold = 1
+
+[[achievement]]
+id = "toolsmith"
+title = "Toolsmith"
+description = "Complete every mission in chapter Q (development tools)."
+counter = "chapter_Q_completed"
+threshold = 1
+
+[[achievement]]
+id = "distro-diplomat"
+title = "Distro Diplomat"
+description = "Complete every mission in chapter R (distribution differences)."
+counter = "chapter_R_completed"
+threshold = 1
+
+[[achievement]]
+id = "specialist"
+title = "Specialist"
+description = "Complete every mission in chapter S (specialist paths)."
+counter = "chapter_S_completed"
+threshold = 1
+
+[[achievement]]
+id = "ops-veteran"
+title = "Ops Veteran"
+description = "Complete every mission in chapter T (capstones)."
+counter = "chapter_T_completed"
+threshold = 1
+
+[[achievement]]
+id = "warming-up"
+title = "Warming Up"
+description = "Complete 10 missions."
+counter = "missions_completed"
+threshold = 10
+
+[[achievement]]
+id = "regular"
+title = "Regular"
+description = "Complete 25 missions."
+counter = "missions_completed"
+threshold = 25
+
+[[achievement]]
+id = "seasoned"
+title = "Seasoned"
+description = "Complete 50 missions."
+counter = "missions_completed"
+threshold = 50
+
+[[achievement]]
+id = "centurion"
+title = "Centurion"
+description = "Complete 100 missions."
+counter = "missions_completed"
+threshold = 100
+
+[[achievement]]
+id = "completionist"
+title = "Completionist"
+description = "Complete every mission in the game."
+counter = "all_missions_completed"
+threshold = 1
+
+[[achievement]]
+id = "unassisted"
+title = "Unassisted"
+description = "Complete 25 missions without hints."
+counter = "missions_completed_without_hints"
+threshold = 25
+
+[[achievement]]
+id = "lone-wolf"
+title = "Lone Wolf"
+description = "Complete 50 missions without hints."
+counter = "missions_completed_without_hints"
+threshold = 50
+
+[[achievement]]
+id = "first-fix"
+title = "First Fix"
+description = "Complete your first troubleshooting mission."
+counter = "troubleshooting_completed"
+threshold = 1
+
+[[achievement]]
+id = "detective"
+title = "Detective"
+description = "Complete 10 troubleshooting missions."
+counter = "troubleshooting_completed"
+threshold = 10
+
+[[achievement]]
+id = "firefighter"
+title = "Firefighter"
+description = "Complete 25 troubleshooting missions."
+counter = "troubleshooting_completed"
+threshold = 25
+
+[[achievement]]
+id = "under-pressure"
+title = "Under Pressure"
+description = "Complete a capstone scenario."
+counter = "capstones_completed"
+threshold = 1
+
+[[achievement]]
+id = "battle-tested"
+title = "Battle-Tested"
+description = "Complete all three capstone scenarios."
+counter = "capstones_completed"
+threshold = 3
+
+[[achievement]]
+id = "fast-track"
+title = "Fast Track"
+description = "Pass a skill check."
+counter = "skill_checks_passed"
+threshold = 1
+
+[[achievement]]
+id = "placement-pro"
+title = "Placement Pro"
+description = "Pass five skill checks."
+counter = "skill_checks_passed"
+threshold = 5
+
+[[achievement]]
+id = "tested-out"
+title = "Tested Out"
+description = "Pass every skill check."
+counter = "all_skill_checks_passed"
+threshold = 1
+
+[[achievement]]
+id = "competent"
+title = "Competent"
+description = "Reach Proficient in 10 skills."
+counter = "skills_proficient"
+threshold = 10
+
+[[achievement]]
+id = "capable"
+title = "Capable"
+description = "Reach Proficient in 50 skills."
+counter = "skills_proficient"
+threshold = 50
+
+[[achievement]]
+id = "expert"
+title = "Expert"
+description = "Reach Proficient in 100 skills."
+counter = "skills_proficient"
+threshold = 100
+
+[[achievement]]
+id = "polymath"
+title = "Polymath"
+description = "Reach Proficient in every skill."
+counter = "all_skills_proficient"
+threshold = 1
+
+[[achievement]]
+id = "deep-roots"
+title = "Deep Roots"
+description = "Master 10 skills."
+counter = "skills_mastered"
+threshold = 10
+
+[[achievement]]
+id = "grandmaster"
+title = "Grandmaster"
+description = "Master 50 skills."
+counter = "skills_mastered"
+threshold = 50
+
+[[achievement]]
+id = "never-forget"
+title = "Never Forget"
+description = "Complete 25 review sessions."
+counter = "reviews_completed"
+threshold = 25
+
+[[achievement]]
+id = "keyboard-warrior"
+title = "Keyboard Warrior"
+description = "Run 2,000 commands."
+counter = "commands_run"
+threshold = 2000
+
+[[achievement]]
+id = "terminal-native"
+title = "Terminal Native"
+description = "Run 10,000 commands."
+counter = "commands_run"
+threshold = 10000
+
+[[achievement]]
+id = "toolbox"
+title = "Toolbox"
+description = "Use 25 different commands."
+counter = "distinct_commands"
+threshold = 25
+
+[[achievement]]
+id = "swiss-army-knife"
+title = "Swiss Army Knife"
+description = "Use 75 different commands."
+counter = "distinct_commands"
+threshold = 75
+
+[[achievement]]
+id = "command-collector"
+title = "Command Collector"
+description = "Use 150 different commands."
+counter = "distinct_commands"
+threshold = 150
+
+[[achievement]]
+id = "plumber"
+title = "Plumber"
+description = "Run 25 pipelines of three or more commands."
+counter = "long_pipelines"
+threshold = 25
+
+[[achievement]]
+id = "bookworm"
+title = "Bookworm"
+description = "Open 25 different manual pages."
+counter = "distinct_man_pages"
+threshold = 25
+
+[[achievement]]
+id = "trusted-admin"
+title = "Trusted Admin"
+description = "Use sudo 50 times."
+counter = "sudo_used"
+threshold = 50
+
+[[achievement]]
+id = "distro-hopper"
+title = "Distro Hopper"
+description = "Complete missions on three different distributions."
+counter = "mission_distros"
+threshold = 3
+
+[[achievement]]
+id = "world-tour"
+title = "World Tour"
+description = "Complete missions on Debian, Ubuntu, Fedora and Arch."
+counter = "mission_distros"
+threshold = 4

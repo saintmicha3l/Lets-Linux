@@ -1,0 +1,141 @@
+schema = 1
+
+[mission]
+id = "k02-cron-environment"
+title = "Works by Hand, Not from Cron"
+chapter = "K"
+kind = "troubleshooting"
+order = 3
+difficulty = 4
+requires = ["k01-cron-jobs", "a05-environment", "k01b-crons-world", "c08-the-method"]
+skills = ["k.cron-environment", "m.hypothesis-method"]
+review_for = ["k.cron-basics", "c.std-streams"]
+xp = 140
+estimated_minutes = 20
+
+[briefing]
+context = """
+Your colleague set up a crontab entry to sync the photo archive every two minutes. "When I
+run the command myself it works perfectly — cron must be broken!" The archive has not been
+synced once. Find out what really happens.
+"""
+concept = """
+cron runs jobs non-interactively, with a minimal environment: PATH=/usr/bin:/bin,
+SHELL=/bin/sh, no .bashrc, no terminal. Output goes to mail — and without a mail system it
+is simply thrown away. To see what a job does, redirect its output to a file
+(>> ~/job.log 2>&1). Fix environment problems with absolute paths or a PATH= line in the
+crontab.
+"""
+objectives = ["Confirm that cron runs a job", "Capture a job's output", "Find environment differences", "Fix the job robustly"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "dir"
+path = "~/photos"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/photosync"
+mode = "0755"
+content = """#!/bin/sh
+# photosync: pretend to sync a photo directory to the archive server
+[ -d "$1" ] || { echo "photosync: $1: no such directory" >&2; exit 2; }
+echo "synced $(date '+%T')" >> "$1/.synced"
+"""
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "echo '*/2 * * * * photosync /home/learner/photos' | crontab -"
+
+[[task]]
+id = "running"
+title = "Does cron run it at all?"
+kind = "troubleshooting"
+instructions = "Wait a few minutes (sleep), then check the system log for cron's activity."
+skills = { "k.cron-environment" = 1.0 }
+question = { prompt = "Does cron start the job?", type = "choice", choices = ["No: there is no CMD line for it in the log", "Yes: the log shows it every two minutes, so the job itself fails"], answer = 1 }
+hints = ["cron logs a CMD line for every job it starts.", "sleep 300; grep CRON /var/log/syslog | tail", "The answer is (b)."]
+explanation = "cron works. The log also says '(No MTA installed, discarding output)': the job printed something — and it was lost."
+
+[[task]]
+id = "capture"
+title = "Capture the output"
+kind = "troubleshooting"
+instructions = "Change the crontab line so that everything the job prints (stdout and stderr) is appended to ~/photosync.log, and let it run again."
+skills = { "k.cron-environment" = 1.0, "c.std-streams" = 0.5 }
+checks = [{ type = "file_contains", path = "~/photosync.log", text = "not found" }]
+hints = ["Append >> /home/learner/photosync.log 2>&1 to the command in the crontab.", "crontab -e, or write the new line with echo ... | crontab -", "echo '*/2 * * * * photosync /home/learner/photos >> /home/learner/photosync.log 2>&1' | crontab -; sleep 120; cat ~/photosync.log"]
+explanation = "/bin/sh reports 'photosync: not found' — although typing photosync in your shell works."
+
+[[task]]
+id = "cause"
+title = "Why not found?"
+kind = "troubleshooting"
+instructions = "Compare where photosync lives with cron's PATH."
+skills = { "k.cron-environment" = 1.0 }
+question = { prompt = "Why can't cron find photosync?", type = "choice", choices = ["photosync is not executable", "cron's PATH is /usr/bin:/bin, and photosync is in /usr/local/bin", "cron runs as root", "The crontab has a syntax error"], answer = 1 }
+hints = ["type photosync (or which photosync) shows where it is.", "cron does not read your shell's PATH.", "The answer is (b)."]
+explanation = "Your interactive PATH includes /usr/local/bin; cron's does not."
+
+[[task]]
+id = "fix"
+title = "Fix it for good"
+kind = "troubleshooting"
+instructions = "Fix the crontab so the job works (keep the logging), and confirm that the archive is synced (~/photos/.synced)."
+skills = { "k.cron-environment" = 1.0, "m.verification" = 0.5 }
+checks = [
+    { type = "file_contains", path = "~/photos/.synced", text = "synced" },
+    { type = "file_contains", path = "/var/spool/cron/crontabs/learner", regex = "(/usr/local/bin/photosync|PATH=.*/usr/local/bin)" },
+]
+persistent = true
+hints = ["Either use the full path, or set PATH at the top of the crontab.", "*/2 * * * * /usr/local/bin/photosync /home/learner/photos >> /home/learner/photosync.log 2>&1", "echo '*/2 * * * * /usr/local/bin/photosync /home/learner/photos >> /home/learner/photosync.log 2>&1' | crontab -; sleep 120"]
+explanation = "Absolute paths make jobs independent of the environment; PATH= lines in the crontab work too. Keep the log — next time something breaks you will see why."
+
+[debrief]
+summary = """
+"Works by hand, fails in cron" is almost always the environment: PATH, HOME, working
+directory, shell or missing variables. Capture output, compare environments, use absolute
+paths.
+"""
+alternatives = ["PATH=/usr/local/bin:/usr/bin:/bin as the first crontab line", "* * * * * env > /tmp/cronenv.txt shows cron's environment", "A systemd timer with a service unit logs to the journal automatically"]
+pitfalls = ["Assuming cron is broken because a job has no visible effect.", "Relying on aliases or functions from .bashrc: cron never reads it."]
+next = "Next: systemd timers."
+
+[[solution]]
+name = "full path"
+steps = [
+    "sleep 300",
+    "grep CRON /var/log/syslog | tail -5",
+    ":answer b",
+    "echo '*/2 * * * * photosync /home/learner/photos >> /home/learner/photosync.log 2>&1' | crontab -",
+    "sleep 130",
+    "cat ~/photosync.log",
+    "type photosync",
+    ":answer b",
+    "echo '*/2 * * * * /usr/local/bin/photosync /home/learner/photos >> /home/learner/photosync.log 2>&1' | crontab -",
+    "sleep 130",
+    "cat ~/photos/.synced",
+]
+
+[[solution]]
+name = "PATH in the crontab"
+steps = [
+    "sleep 240",
+    "journalctl -t CRON -n 6 --no-pager",
+    ":answer Yes: the log shows it every two minutes, so the job itself fails",
+    { edit = "*/2 * * * * photosync /home/learner/photos >> $HOME/photosync.log 2>&1\n" },
+    "crontab -e",
+    "sleep 180",
+    "which photosync",
+    ":answer cron's PATH is /usr/bin:/bin, and photosync is in /usr/local/bin",
+    { edit = "PATH=/usr/local/bin:/usr/bin:/bin\n*/2 * * * * photosync /home/learner/photos >> $HOME/photosync.log 2>&1\n" },
+    "crontab -e",
+    "sleep 180",
+]
+
+[[counterexample]]
+name = "blaming cron"
+steps = ["sleep 300", ":answer a", "sudo systemctl restart cron"]

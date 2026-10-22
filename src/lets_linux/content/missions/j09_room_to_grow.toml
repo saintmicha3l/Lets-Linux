@@ -1,0 +1,209 @@
+schema = 1
+
+[mission]
+id = "j09-room-to-grow"
+title = "Room to Grow"
+chapter = "J"
+kind = "lesson"
+order = 11
+difficulty = 4
+requires = ["j01-new-disk", "j03-disk-full"]
+skills = ["j.lvm-concepts", "j.fstab-persistence", "j.capacity"]
+review_for = ["j.filesystems-mkfs", "j.fstab-persistence"]
+xp = 200
+estimated_minutes = 30
+
+[briefing]
+context = """
+The ordering application needs its own storage for /srv/app — and the last time somebody
+gave it a plain partition, it ran full and the whole disk had to be rebuilt. This time use
+LVM, so that the space can grow without downtime. A new 10 GB disk (/dev/sdb) is installed;
+another one is on order. (sudo password: letslinux)
+"""
+concept = """
+LVM adds a layer between disks and filesystems. Physical volumes (PVs: whole disks or
+partitions, pvcreate) are pooled into a volume group (VG, vgcreate); from the pool you cut
+logical volumes (LVs, lvcreate -L 4G -n NAME VG), which behave like partitions:
+/dev/VG/NAME (also /dev/mapper/VG-NAME) gets a filesystem and a mount point. An LV can grow
+while it is mounted (lvextend), and the VG can grow by adding disks (vgextend) — but the
+filesystem on the LV must be grown too (resize2fs for ext4, xfs_growfs for XFS, or
+lvextend -r to do both). pvs, vgs, lvs show the layers; lsblk shows how they stack.
+"""
+objectives = ["Name the three LVM layers", "Create a PV, a VG and an LV", "Mount an LV persistently", "Grow an LV and its filesystem online", "Add a disk to a volume group"]
+
+[environment]
+profile = "debian"
+packages = ["lvm2"]
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "10G"
+
+[[task]]
+id = "layers"
+title = "Three layers"
+kind = "guided"
+instructions = "Before you start: in which order are the LVM layers built?"
+skills = { "j.lvm-concepts" = 1.0 }
+question = { prompt = "Choose the right order, bottom to top.", type = "choice", choices = ["Volume group → physical volume → logical volume → filesystem", "Physical volume → volume group → logical volume → filesystem", "Logical volume → volume group → physical volume → filesystem", "Filesystem → logical volume → physical volume"], answer = 1 }
+hints = ["Disks become physical volumes first.", "PVs are pooled into a VG; LVs are cut from the VG."]
+explanation = "pvcreate marks disks as PVs, vgcreate pools them, lvcreate cuts volumes from the pool, mkfs puts a filesystem on a volume."
+
+[[task]]
+id = "create"
+title = "A volume for the application"
+kind = "independent"
+instructions = """
+Create a volume group named appvg on /dev/sdb and a 4 GiB logical volume named data in it,
+with an ext4 filesystem mounted at /srv/app — now and at every boot. Leave the rest of the
+volume group free for later.
+"""
+skills = { "j.lvm-concepts" = 1.0, "j.fstab-persistence" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "lvdisplay appvg/data | awk '/Current LE/ {exit !($3 >= 1024)}'", status = 0 },
+    { type = "command_result", user = "root", command = "findmnt -n -o SOURCE /srv/app", stdout_contains = "/dev/mapper/appvg-data" },
+    { type = "after_reboot", checks = [{ type = "command_result", user = "root", command = "findmnt -n -o SOURCE /srv/app", stdout_contains = "/dev/mapper/appvg-data" }] },
+]
+persistent = true
+hints = [
+    "pvcreate /dev/sdb; vgcreate appvg /dev/sdb; lvcreate -L 4G -n data appvg — then mkfs.ext4, mkdir, mount, and a line in /etc/fstab.",
+    "In fstab the device can be /dev/appvg/data (LV paths are stable) or UUID=… from blkid /dev/appvg/data.",
+    "sudo vgcreate appvg /dev/sdb && sudo lvcreate -L 4G -n data appvg && sudo mkfs.ext4 /dev/appvg/data && sudo mkdir -p /srv/app && echo '/dev/appvg/data /srv/app ext4 defaults 0 2' | sudo tee -a /etc/fstab && sudo mount /srv/app",
+]
+explanation = "lsblk now shows sdb → appvg-data → /srv/app. The VG keeps about 6 GiB free: space you can hand to any LV later, which is the point of LVM."
+
+[[task]]
+id = "grow"
+title = "It is filling up"
+kind = "troubleshooting"
+instructions = """
+Two weeks later /srv/app is nearly full. Give it 3 GiB more — without unmounting it, and so
+that df shows the new space.
+"""
+skills = { "j.lvm-concepts" = 1.0, "j.capacity" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "lvdisplay appvg/data | awk '/Current LE/ {exit !($3 >= 1792)}'", status = 0 },
+    { type = "command_result", user = "root", command = "df -B1 /srv/app | awk 'NR==2 {exit !($2 > 6800000000)}'", status = 0 },
+    { type = "command_result", user = "root", command = "findmnt -n -o SOURCE /srv/app", stdout_contains = "/dev/mapper/appvg-data" },
+]
+persistent = true
+hints = [
+    "lvextend makes the volume bigger; the filesystem on it does not notice by itself — compare lvs with df.",
+    "lvextend -L +3G appvg/data, then resize2fs /dev/appvg/data (ext4 grows while mounted) — or lvextend -r, which does both.",
+    "sudo lvextend -r -L +3G appvg/data",
+]
+explanation = "Growing is safe online: first the LV (more extents from the VG), then the filesystem (resize2fs uses the new space). Shrinking is the dangerous direction: the filesystem must shrink first, and ext4 only shrinks unmounted."
+
+[[task]]
+id = "disk"
+title = "The second disk"
+kind = "independent"
+instructions = """
+The second disk has arrived (/dev/sdc, 5 GB). Add it to appvg and give /srv/app all the free
+space of the volume group.
+"""
+skills = { "j.lvm-concepts" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "vgs appvg", stdout_regex = "appvg\\s+2\\s+1\\s" },
+    { type = "command_result", user = "root", command = "df -B1 /srv/app | awk 'NR==2 {exit !($2 > 14000000000)}'", status = 0 },
+    { type = "after_reboot", checks = [{ type = "command_result", user = "root", command = "df -B1 /srv/app | awk 'NR==2 {exit !($2 > 14000000000)}'", status = 0 }] },
+]
+setup = [{ action = "disk", name = "sdc", size = "5G" }]
+persistent = true
+hints = [
+    "vgextend adds a PV to a VG (it initialises the disk as a PV if necessary).",
+    "lvextend -l +100%FREE uses whatever the VG has left; -r grows the filesystem with it.",
+    "sudo vgextend appvg /dev/sdc && sudo lvextend -r -l +100%FREE appvg/data",
+]
+explanation = "The LV now spans two disks — which also means it depends on both: LVM is about flexibility, not redundancy. Losing either disk loses the volume (that is what RAID is for)."
+
+[[task]]
+id = "shrink"
+title = "The other direction"
+kind = "explanation"
+instructions = "A colleague wants to take 2 GiB back with lvreduce -L -2G appvg/data while it is mounted."
+skills = { "j.lvm-concepts" = 1.0 }
+question = { prompt = "What happens?", type = "choice", choices = ["The filesystem shrinks with it automatically", "LVM cuts the end off the volume while the ext4 filesystem still believes it is bigger: the filesystem is damaged (mount fails with 'bad geometry')", "Nothing: lvreduce refuses on mounted volumes", "The data is moved to the free space"], answer = 1 }
+hints = ["lvreduce only changes the volume.", "It warns 'THIS MAY DESTROY YOUR DATA' for a reason.", "Answer (b): shrink the filesystem first (unmounted ext4: e2fsck -f, resize2fs) or use lvreduce -r; XFS cannot shrink at all."]
+explanation = "Shrinking needs the opposite order: the filesystem first (ext4: unmounted, after e2fsck -f; XFS: impossible), then the LV — or lvreduce -r, which does it for you. Taking backups first is not optional."
+
+[debrief]
+summary = """
+pvcreate → vgcreate → lvcreate → mkfs → mount (+ fstab). Grow online with lvextend -r (or
+lvextend + resize2fs / xfs_growfs); add disks with vgextend. pvs/vgs/lvs and lsblk show the
+stack. Spanning disks adds capacity, not safety.
+"""
+alternatives = ["xfs_growfs /srv/app for XFS volumes", "lvcreate -l 100%FREE to use the whole VG", "UUID=… in fstab instead of /dev/appvg/data"]
+pitfalls = ["lvextend without resizing the filesystem: df shows no change", "lvreduce before shrinking the filesystem", "Forgetting that a VG spanning disks fails if one disk fails"]
+next = "Next: two disks that protect each other."
+
+[[solution]]
+name = "step by step"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    "sudo pvcreate /dev/sdb",
+    "sudo vgcreate appvg /dev/sdb",
+    "sudo lvcreate -L 4G -n data appvg",
+    "sudo mkfs.ext4 /dev/appvg/data",
+    "sudo mkdir -p /srv/app",
+    "echo '/dev/appvg/data /srv/app ext4 defaults 0 2' | sudo tee -a /etc/fstab",
+    "sudo mount /srv/app",
+    "sudo lvextend -L +3G appvg/data",
+    "sudo resize2fs /dev/appvg/data",
+    "sudo vgextend appvg /dev/sdc",
+    "sudo lvextend -l +100%FREE appvg/data",
+    "sudo resize2fs /dev/mapper/appvg-data",
+    ":answer 2",
+]
+
+[[solution]]
+name = "UUID in fstab, -r everywhere"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    "sudo vgcreate appvg /dev/sdb",
+    "sudo lvcreate -L 4G -n data appvg",
+    "sudo mkfs.ext4 -q /dev/mapper/appvg-data",
+    "sudo mkdir -p /srv/app",
+    "echo \"UUID=$(sudo blkid -s UUID -o value /dev/appvg/data) /srv/app ext4 defaults,noatime 0 2\" | sudo tee -a /etc/fstab",
+    "sudo mount -a",
+    "sudo lvextend -r -L +3G appvg/data",
+    "sudo vgextend appvg /dev/sdc",
+    "sudo lvextend -r -l +100%FREE /dev/appvg/data",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "forgot the filesystem"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    "sudo vgcreate appvg /dev/sdb",
+    "sudo lvcreate -L 4G -n data appvg",
+    "sudo mkfs.ext4 /dev/appvg/data",
+    "sudo mkdir -p /srv/app",
+    "echo '/dev/appvg/data /srv/app ext4 defaults 0 2' | sudo tee -a /etc/fstab",
+    "sudo mount /srv/app",
+    "sudo lvextend -L +3G appvg/data",
+    "sudo vgextend appvg /dev/sdc",
+    "sudo lvextend -l +100%FREE appvg/data",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "mounted by hand only"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    "sudo vgcreate appvg /dev/sdb",
+    "sudo lvcreate -L 4G -n data appvg",
+    "sudo mkfs.ext4 /dev/appvg/data",
+    "sudo mkdir -p /srv/app",
+    "sudo mount /dev/appvg/data /srv/app",
+    "sudo lvextend -r -L +3G appvg/data",
+    "sudo vgextend appvg /dev/sdc",
+    "sudo lvextend -r -l +100%FREE appvg/data",
+    ":answer 2",
+]

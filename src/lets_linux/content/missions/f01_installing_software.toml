@@ -1,0 +1,153 @@
+schema = 1
+
+[mission]
+id = "f01-installing-software"
+title = "Installing Software"
+chapter = "F"
+kind = "lesson"
+order = 1
+difficulty = 2
+requires = ["d04-sudo-and-accounts"]
+skills = ["f.package-concepts", "f.search-info", "f.apt-basics", "f.file-ownership", "f.upgrades-versions"]
+xp = 110
+estimated_minutes = 18
+
+[briefing]
+context = """
+Your team wants a program that draws directory trees for documentation, and the security
+team announced an important sudo update. On Debian, software comes as packages from the
+distribution's repositories, managed by apt. (sudo password: letslinux)
+"""
+concept = """
+A package bundles a program's files with metadata: version, description and the packages it
+depends on. Repositories publish packages; apt update downloads their latest lists, apt search
+and apt show find and describe packages, apt install installs them (with dependencies), apt
+list --upgradable shows available updates and apt upgrade installs them. dpkg is the
+lower-level tool that records which package owns which file.
+"""
+objectives = ["Refresh package lists and search repositories", "Install a package", "Find which package owns a file", "Review and apply updates selectively"]
+
+[environment]
+profile = "debian"
+
+[[task]]
+id = "update"
+title = "Fresh package lists"
+kind = "guided"
+instructions = "Refresh the list of available packages from the repositories."
+skills = { "f.package-concepts" = 1.0, "f.apt-basics" = 1.0 }
+checks = [{ type = "command_used", command = ["apt", "apt-get"], args_regex = "^update$", success = true }]
+hints = ["apt has a verb for downloading the latest package lists.", "Changing the package database needs root.", "Type: sudo apt update"]
+explanation = "apt update does not install anything: it refreshes what apt knows about the repositories, and tells you how many packages can be upgraded."
+
+[[task]]
+id = "search"
+title = "Find a package"
+kind = "independent"
+instructions = "Search the repositories for a program that displays a directory tree."
+skills = { "f.search-info" = 1.0 }
+question = { prompt = "What is the name of the package?", type = "exact", accept = ["tree"] }
+hints = ["apt can search package names and descriptions.", "apt search directory tree", "The package is called tree."]
+explanation = "apt search matches words in names and descriptions; apt show NAME gives details such as size and dependencies."
+
+[[task]]
+id = "install"
+title = "Install it"
+kind = "guided"
+instructions = "Install the package, then show the tree of /etc/systemd with it."
+skills = { "f.apt-basics" = 1.0 }
+checks = [
+    { type = "package_state", name = "tree", state = "installed" },
+    { type = "command_used", command = "tree", success = true },
+]
+hints = ["apt install NAME, with sudo.", "Then run the program it installed.", "Type: sudo apt install tree && tree /etc/systemd"]
+explanation = "apt downloaded the package, unpacked its files and ran its setup. Without root it would have refused: installing software changes the whole system."
+
+[[task]]
+id = "owner"
+title = "Who installed this file?"
+kind = "independent"
+instructions = "Find out which package installed the file /usr/bin/journalctl."
+skills = { "f.file-ownership" = 1.0, "f.package-concepts" = 0.5 }
+question = { prompt = "Which package owns /usr/bin/journalctl?", type = "exact", accept = ["systemd"] }
+hints = ["dpkg keeps a list of every package's files.", "dpkg -S FILE searches it.", "dpkg -S /usr/bin/journalctl → systemd."]
+explanation = "Knowing a file's package tells you where its documentation, configuration and updates come from (dpkg -L lists all files of a package)."
+
+[[task]]
+id = "updates"
+title = "What needs updating?"
+kind = "independent"
+instructions = "List the packages that have updates available."
+skills = { "f.upgrades-versions" = 1.0 }
+question = { prompt = "How many packages can be upgraded?", type = "state", state = { command = "apt list --upgradable 2>/dev/null | grep -c upgradable" } }
+hints = ["apt list has an option for that.", "apt list --upgradable", "Count the lines after 'Listing... Done'."]
+explanation = "The listing shows each package's new version and the version installed now."
+
+[[task]]
+id = "sudo"
+title = "Only the security fix"
+kind = "independent"
+instructions = "The change board approved only the sudo update for today. Upgrade sudo, and nothing else."
+skills = { "f.upgrades-versions" = 1.0, "f.apt-basics" = 1.0 }
+checks = [
+    { type = "package_state", name = "sudo", upgraded = true },
+    { type = "package_state", name = "tar", upgraded = false },
+]
+persistent = true
+hints = ["apt upgrade would upgrade everything.", "Installing an already installed package upgrades it to the newest version: apt install sudo (or apt install --only-upgrade sudo).", "Type: sudo apt install sudo"]
+explanation = "Targeted upgrades are common in change-controlled environments; apt-mark hold keeps a package from being upgraded at all."
+
+[debrief]
+summary = """
+apt update refreshes lists, apt search/show find packages, apt install installs (and upgrades
+a single package), apt list --upgradable shows pending updates and dpkg -S traces files to
+packages.
+"""
+alternatives = ["apt-cache search tree", "apt-get install --only-upgrade sudo", "apt-mark hold tar keeps tar at its version"]
+pitfalls = ["Forgetting apt update: you may install outdated versions.", "Running apt upgrade when only one package was approved."]
+next = "Next: removing software and its leftovers."
+
+[[solution]]
+name = "apt"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt update",
+    "apt search directory tree",
+    ":answer tree",
+    "sudo apt install tree",
+    "tree /etc/systemd",
+    "dpkg -S /usr/bin/journalctl",
+    ":answer systemd",
+    "apt list --upgradable",
+    { answer_with = "apt list --upgradable 2>/dev/null | grep -c upgradable" },
+    "sudo apt install sudo",
+]
+
+[[solution]]
+name = "apt-get and apt-cache"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt-get update",
+    "apt-cache search tree",
+    ":answer tree",
+    "sudo apt-get install -y tree",
+    "tree -L 1 /etc",
+    "dpkg-query -S /usr/bin/journalctl 2>/dev/null || dpkg -S journalctl",
+    ":answer systemd",
+    "apt list --upgradable",
+    ":answer 2",
+    "sudo apt-get install --only-upgrade -y sudo",
+]
+
+[[counterexample]]
+name = "upgrade everything"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt update",
+    ":answer tree",
+    "sudo apt install tree",
+    "tree /etc/systemd",
+    ":answer systemd",
+    ":answer 2",
+    "sudo apt upgrade -y",
+]

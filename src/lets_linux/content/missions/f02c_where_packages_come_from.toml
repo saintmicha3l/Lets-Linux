@@ -1,0 +1,144 @@
+schema = 1
+
+[mission]
+id = "f02c-where-packages-come-from"
+title = "Where Packages Come From"
+chapter = "F"
+kind = "lesson"
+order = 4
+difficulty = 3
+requires = ["f02-cleaning-up"]
+skills = ["f.repo-trust", "i.http-curl"]
+review_for = ["f.repo-trust"]
+xp = 90
+estimated_minutes = 20
+
+[briefing]
+context = """
+Every package you install runs code as root, so where it comes from matters. Before you add a
+vendor's repository in the next mission, learn how apt decides which sources to use and
+trust, and how to fetch and inspect files from the web on the command line.
+(sudo password: letslinux)
+"""
+concept = """
+Sources: /etc/apt/sources.list and /etc/apt/sources.list.d/*.list name the repositories:
+  deb [signed-by=/etc/apt/keyrings/vendor.gpg] https://URL SUITE COMPONENT...
+apt policy PKG shows which versions each repository offers and their priority.
+Trust: every repository's Release file is signed. apt accepts it only if a key it trusts made
+the signature; [signed-by=FILE] limits a repository to one keyring. NO_PUBKEY in apt update
+means: apt has no trusted key for that signature. gpg --show-keys FILE prints a keyring's
+fingerprints — compare them with the vendor's published fingerprint before trusting a key.
+The web: curl URL prints a page. -f fails (exit status 22) on HTTP errors instead of printing
+the error page, -s is silent, -S still shows errors, -L follows redirects, -o FILE saves.
+"""
+objectives = ["Read apt's sources and priorities", "Inspect a signing key's fingerprint", "Fetch pages and files with curl, and detect failures"]
+
+[environment]
+profile = "debian"
+packages = ["curl"]
+
+[[task]]
+id = "sources"
+title = "Which repositories?"
+kind = "guided"
+instructions = "Read apt's main sources file:  cat /etc/apt/sources.list"
+skills = { "f.repo-trust" = 1.0 }
+question = { prompt = "Which Debian release (the suite name in the first line) does this machine use?", type = "exact", accept = ["bookworm"] }
+hints = ["Each deb line is: deb URL SUITE COMPONENTS.", "The word after the URL is the suite.", "The answer is bookworm."]
+explanation = "The suite pins the distribution release: bookworm is Debian 12. Mixing suites (adding a testing or another distribution's repository) is a classic way to break a system."
+
+[[task]]
+id = "policy"
+title = "Which version from where?"
+kind = "guided"
+instructions = "Ask apt where curl comes from:  apt policy curl"
+skills = { "f.repo-trust" = 1.0, "f.upgrades-versions" = 0.5 }
+question = { prompt = "Which priority number does apt give the Debian repository?", type = "number", accept = ["500"] }
+hints = ["The Version table lists each version with the repositories that offer it.", "The number in front of each repository URL is its priority.", "The answer is 500 (the default for normal repositories)."]
+explanation = "apt picks the highest version among the sources with the highest priority. Pinning changes the priority, which is how you keep one package from a vendor without taking everything from it."
+
+[[task]]
+id = "fingerprint"
+title = "Read a key's fingerprint"
+kind = "guided"
+instructions = "Show the key that signs Debian's own repository:  gpg --show-keys /usr/share/keyrings/debian-archive-keyring.gpg"
+skills = { "f.repo-trust" = 1.0 }
+question = { prompt = "What are the LAST 16 hex digits of the key's fingerprint (its long key ID)?", type = "exact", accept = ["1D9A572B432FD9FD", "1d9a572b432fd9fd"] }
+hints = ["The fingerprint is the 40-digit hex line under pub.", "The long key ID is its last 16 digits — the same form apt prints after NO_PUBKEY.", "The answer is 1D9A572B432FD9FD."]
+explanation = "A fingerprint identifies a key exactly; names and e-mail addresses in the key can be faked. Comparing fingerprints with the vendor's published one is how you know you have the right key."
+
+[[task]]
+id = "curl"
+title = "Fetch a page"
+kind = "guided"
+instructions = "Fetch the intranet's status page:  curl -fsSL http://intranet/status"
+skills = { "i.http-curl" = 1.0 }
+checks = [{ type = "output_contains", text = "ok", command = ["curl"], success = true }]
+hints = ["curl prints the page body to standard output.", "-f: fail on HTTP errors, -s: silent, -S: but show errors, -L: follow redirects.", "Type: curl -fsSL http://intranet/status"]
+explanation = "curl -fsSL URL is the standard way to download something in scripts and instructions: quiet when it works, a clear error and non-zero status when it does not."
+
+[[task]]
+id = "fail"
+title = "Detect a failed download"
+kind = "guided"
+instructions = "Now a page that does not exist — compare the exit statuses:  curl -s http://intranet/missing; echo $?   and   curl -fsS http://intranet/missing; echo $?"
+skills = { "i.http-curl" = 1.0, "a.exit-status" = 0.5 }
+question = { prompt = "Which exit status does curl -f return for the missing page?", type = "number", accept = ["22"] }
+hints = ["Without -f, curl prints the server's 404 page and exits 0 — the transfer itself worked.", "With -f, curl treats HTTP errors (400 and above) as failures.", "The answer is 22."]
+explanation = "Without -f, a script would happily save a 404 page as if it were the key or package it wanted. Always use -f in scripts, and check the status."
+
+[[task]]
+id = "save"
+title = "Save a file"
+kind = "independent"
+instructions = "Download http://intranet/ into the file ~/intranet.html with curl."
+skills = { "i.http-curl" = 1.0 }
+checks = [
+    { type = "path_exists", path = "~/intranet.html", kind = "file" },
+    { type = "file_contains", path = "~/intranet.html", regex = "(?i)<html" },
+]
+persistent = true
+hints = ["curl writes to standard output unless told otherwise.", "-o FILE saves the body into FILE (or redirect with >).", "Run: curl -fsSL -o ~/intranet.html http://intranet/"]
+explanation = "-o names the output file; -O keeps the remote file name. Downloading into a file first lets you inspect it (fingerprint, checksum) before using it."
+
+[[task]]
+id = "nopubkey"
+title = "What NO_PUBKEY means"
+kind = "prediction"
+instructions = "Think about what apt checks during apt update."
+skills = { "f.repo-trust" = 1.0 }
+question = { prompt = "apt update prints 'NO_PUBKEY 9C1A4B2E7F3D5A61' for a new repository. What does it mean?", type = "choice", choices = ["The repository's server is down", "apt has no trusted key that matches the key that signed this repository", "The package is not in the repository", "The key has expired and must be renewed by Debian"], answer = 1 }
+hints = ["NO_PUBKEY names the key that made the signature.", "apt cannot check a signature without the matching public key.", "The answer is (b)."]
+explanation = "The fix is to install the vendor's key — after checking its fingerprint — not to switch verification off."
+
+[[task]]
+id = "signed-by"
+title = "Why signed-by?"
+kind = "prediction"
+instructions = "Think about how far trust in a key should reach."
+skills = { "f.repo-trust" = 1.0 }
+question = { prompt = "What does [signed-by=/etc/apt/keyrings/vendor.gpg] in a source line achieve?", type = "choice", choices = ["It encrypts the downloads", "Only keys in that keyring may sign this repository — and the vendor's key cannot sign other repositories", "It makes apt skip the signature check", "It installs the vendor's key automatically"], answer = 1 }
+hints = ["Keys trusted globally can sign any repository, including Debian's.", "signed-by ties one repository to one keyring.", "The answer is (b)."]
+explanation = "A vendor key trusted for everything could sign a fake 'libc6' update for your whole system. signed-by limits the damage a compromised or careless vendor can do."
+
+[debrief]
+summary = """
+apt's sources name the repositories; apt policy shows what each offers. Every repository is
+signed, and keys are identified by fingerprints, which you verify before trusting.
+curl -fsSL fetches files, and -f makes failures visible.
+"""
+alternatives = ["apt-cache policy without a package name lists all repositories and their priorities", "wget -qO- URL is an alternative to curl -fsSL URL", "gpg --show-keys --with-colons FILE prints machine-readable fingerprints"]
+pitfalls = ["curl without -f saves error pages as if they were the file you wanted.", "Trusting a key because its name looks right: only the fingerprint counts.", "Fixing NO_PUBKEY with [trusted=yes], which turns verification off."]
+next = "Next: a repository setup that went wrong — repair it properly."
+
+[[solution]]
+name = "as instructed"
+steps = ["cat /etc/apt/sources.list", ":answer bookworm", "apt policy curl", ":answer 500", "gpg --show-keys /usr/share/keyrings/debian-archive-keyring.gpg", ":answer 1D9A572B432FD9FD", "curl -fsSL http://intranet/status", "curl -s http://intranet/missing; echo $?", "curl -fsS http://intranet/missing; echo $?", ":answer 22", "curl -fsSL -o ~/intranet.html http://intranet/", ":answer b", ":answer b"]
+
+[[solution]]
+name = "other tools"
+steps = ["grep ^deb /etc/apt/sources.list", ":answer bookworm", "apt-cache policy curl", ":answer 500", "gpg --show-keys /usr/share/keyrings/debian-archive-keyring.gpg | head -3", ":answer 1d9a572b432fd9fd", "curl -fsS http://intranet/status", "curl -fs http://intranet/missing || echo failed: $?", ":answer 22", "curl -fs http://intranet/ > ~/intranet.html", ":answer 2", ":answer 2"]
+
+[[counterexample]]
+name = "never fetching anything"
+steps = ["cat /etc/apt/sources.list", ":answer bookworm", "apt policy curl", ":answer 500", ":answer 1D9A572B432FD9FD", ":answer 22", "echo '<html>' > ~/intranet.html", ":answer b", ":answer b"]

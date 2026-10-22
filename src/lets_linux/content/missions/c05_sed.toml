@@ -1,0 +1,141 @@
+schema = 1
+
+[mission]
+id = "c05-sed"
+title = "Editing Without an Editor"
+chapter = "C"
+kind = "lesson"
+order = 5
+difficulty = 3
+requires = ["c03-grep"]
+skills = ["c.sed-substitution"]
+xp = 90
+estimated_minutes = 15
+
+[briefing]
+context = """
+The application must move from port {{old}} to {{new}}, debug output must be switched off and
+a commented setting enabled. On real servers such edits are often scripted with sed so they
+can be repeated exactly on many machines.
+"""
+concept = """
+sed applies editing commands to each line. s/OLD/NEW/ substitutes (add g for every match on
+a line), /PATTERN/d deletes matching lines, and -i edits the file in place (-i.bak keeps a
+backup). Without -i, sed only prints the edited text, which is a safe way to preview.
+"""
+objectives = ["Preview substitutions", "Edit files in place with a backup", "Delete and uncomment lines"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+old = { range = [8000, 8099] }
+new = { range = [9100, 9199] }
+
+[[environment.setup]]
+action = "file"
+path = "~/app.conf"
+content = """# app configuration
+port={{old}}
+host=0.0.0.0
+
+debug=true
+#maxconn=100
+
+log=/var/log/app.log
+"""
+
+[[task]]
+id = "preview"
+title = "Preview the change"
+kind = "guided"
+instructions = "Print app.conf with port={{old}} replaced by port={{new}}, without changing the file."
+skills = { "c.sed-substitution" = 1.0 }
+checks = [
+    { type = "output_contains", text = "port={{new}}", command = "sed" },
+    { type = "file_contains", path = "~/app.conf", text = "port={{old}}" },
+]
+hints = ["sed without -i prints the result and leaves the file alone.", "The command is s/OLD/NEW/.", "Type: sed 's/port={{old}}/port={{new}}/' app.conf"]
+explanation = "Previewing is a good habit: you see exactly what would change."
+
+[[task]]
+id = "inplace"
+title = "Apply it, with a backup"
+kind = "independent"
+instructions = "Now change the port in app.conf itself, keeping the original as app.conf.bak."
+skills = { "c.sed-substitution" = 1.0 }
+checks = [
+    { type = "file_contains", path = "~/app.conf", text = "port={{new}}" },
+    { type = "file_not_contains", path = "~/app.conf", text = "port={{old}}" },
+    { type = "file_contains", path = "~/app.conf.bak", text = "port={{old}}" },
+]
+hints = ["-i edits in place; a suffix after -i keeps a backup.", "sed -i.bak 's/.../.../' app.conf", "Type: sed -i.bak 's/port={{old}}/port={{new}}/' app.conf"]
+explanation = "sed -i.bak wrote the new file and kept the original as app.conf.bak."
+
+[[task]]
+id = "debug"
+title = "Debug off"
+kind = "independent"
+instructions = "Set debug=false in app.conf."
+skills = { "c.sed-substitution" = 1.0 }
+checks = [
+    { type = "file_contains", path = "~/app.conf", text = "debug=false" },
+    { type = "file_not_contains", path = "~/app.conf", text = "debug=true" },
+]
+hints = ["Another substitution.", "s/debug=true/debug=false/ with -i.", "Type: sed -i 's/debug=true/debug=false/' app.conf"]
+explanation = "Each sed -i run rewrites the file; multiple -e expressions can be applied in one pass."
+
+[[task]]
+id = "maxconn"
+title = "Enable a commented setting"
+kind = "independent"
+instructions = "Uncomment the maxconn line and set its value to 500 (the line must read maxconn=500)."
+skills = { "c.sed-substitution" = 1.0, "c.regex-basics" = 0.5 }
+checks = [{ type = "file_contains", path = "~/app.conf", regex = "(?m)^maxconn=500$" }]
+hints = ["Match the whole commented line and replace it.", "s/^#maxconn=.*/maxconn=500/ — ^ anchors at the start, .* matches the rest.", "Type: sed -i 's/^#maxconn=.*/maxconn=500/' app.conf"]
+explanation = "Anchors and .* let one substitution rewrite an entire line regardless of its old value."
+
+[[task]]
+id = "blank"
+title = "Remove blank lines"
+kind = "independent"
+instructions = "Delete all empty lines from app.conf."
+skills = { "c.sed-substitution" = 1.0, "c.regex-basics" = 0.5 }
+checks = [
+    { type = "file_not_contains", path = "~/app.conf", regex = "(\\A|\\n)[ \\t]*\\n" },
+    { type = "file_contains", path = "~/app.conf", text = "log=/var/log/app.log" },
+]
+hints = ["sed can delete lines that match a pattern.", "An empty line matches ^$; the d command deletes.", "Type: sed -i '/^$/d' app.conf"]
+explanation = "/^$/d deletes lines with nothing between start and end. /^[[:space:]]*$/d also removes lines containing only spaces."
+
+[debrief]
+summary = """
+sed edits streams and files reproducibly: s/// substitutes, /re/d deletes, -i writes back
+and -i.bak keeps a backup. Preview first, then apply.
+"""
+alternatives = ["sed -i -e 's/a/b/' -e '/^$/d' app.conf applies several edits in one pass", "nano app.conf for one-off interactive edits"]
+pitfalls = ["sed -i on a symlink replaces the link with a regular file.", "Unescaped / inside a pattern ends the s command early: use another delimiter, e.g. s#/var#/srv#."]
+next = "Next: a real incident to investigate."
+
+[[solution]]
+name = "one edit at a time"
+steps = [
+    "sed 's/port={{old}}/port={{new}}/' app.conf",
+    "sed -i.bak 's/port={{old}}/port={{new}}/' app.conf",
+    "sed -i 's/debug=true/debug=false/' app.conf",
+    "sed -i 's/^#maxconn=.*/maxconn=500/' app.conf",
+    "sed -i '/^$/d' app.conf",
+]
+
+[[solution]]
+name = "regex classes and the editor"
+steps = [
+    "sed -n 's/^port=.*/port={{new}}/p' app.conf",
+    "cp app.conf app.conf.bak && sed -i -E 's/^port=[0-9]+/port={{new}}/' app.conf",
+    "sed -i -e 's/^debug=.*/debug=false/' app.conf",
+    { edit = "# app configuration\nport={{new}}\nhost=0.0.0.0\ndebug=false\nmaxconn=500\nlog=/var/log/app.log\n" },
+    "nano app.conf",
+]
+
+[[counterexample]]
+name = "no backup"
+steps = ["sed 's/port={{old}}/port={{new}}/' app.conf", "sed -i 's/port={{old}}/port={{new}}/' app.conf", "sed -i 's/debug=true/debug=false/' app.conf"]

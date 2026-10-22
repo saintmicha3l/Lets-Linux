@@ -1,0 +1,146 @@
+schema = 1
+
+[mission]
+id = "f02-cleaning-up"
+title = "Cleaning Up"
+chapter = "F"
+kind = "lesson"
+order = 2
+difficulty = 3
+requires = ["f01-installing-software"]
+skills = ["f.apt-basics", "f.dependencies", "f.upgrades-versions"]
+xp = 110
+estimated_minutes = 16
+
+[briefing]
+context = """
+A test web server was set up on this machine last month and is no longer needed. Remove it
+properly, find out what removing leaves behind, clear out unneeded dependencies, and make sure
+an important package is not upgraded by accident. (sudo password: letslinux)
+"""
+concept = """
+apt remove deletes a package's programs but keeps its configuration files, so a reinstall
+picks up where you left off; dpkg -l then shows the package as rc (removed, config remains).
+apt purge deletes the configuration too. Packages installed only as dependencies are marked
+automatic; apt autoremove removes those nothing needs any more. apt-mark hold freezes a
+package at its current version.
+"""
+objectives = ["Remove versus purge", "Read dpkg status letters", "Remove unneeded dependencies", "Hold a package"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "run"
+command = "apt-get install -y nginx tree && apt-mark auto tree"
+
+[[task]]
+id = "orphan"
+title = "Unneeded dependencies"
+kind = "independent"
+instructions = "Find out which package apt would remove as no longer needed — without removing anything yet."
+skills = { "f.dependencies" = 1.0 }
+question = { prompt = "Which package is installed automatically but no longer needed?", type = "exact", accept = ["tree"] }
+hints = ["apt autoremove asks before it removes anything; answer n. apt-mark showauto lists automatic packages.", "echo n | sudo apt autoremove   or   apt-mark showauto", "It is tree."]
+explanation = "Dependencies are marked 'automatic'. When nothing needs them any more they become candidates for autoremove."
+
+[[task]]
+id = "autoremove"
+title = "Autoremove"
+kind = "independent"
+instructions = "Remove the packages that are no longer needed."
+skills = { "f.dependencies" = 1.0, "f.apt-basics" = 0.5 }
+checks = [{ type = "package_state", name = "tree", state = "absent" }, { type = "package_state", name = "nginx", state = "installed" }]
+hints = ["One apt verb does exactly this.", "apt autoremove", "Type: sudo apt autoremove"]
+explanation = "Run autoremove after removing software, but read its list first: a package marked automatic by mistake would go too."
+
+[[task]]
+id = "remove"
+title = "Remove, keep the settings"
+kind = "independent"
+instructions = "Remove nginx, but keep its configuration in case the test server is needed again."
+skills = { "f.apt-basics" = 1.0 }
+checks = [
+    { type = "package_state", name = "nginx", state = "config-files" },
+    { type = "path_exists", path = "/etc/nginx/nginx.conf" },
+    { type = "path_absent", path = "/usr/sbin/nginx" },
+]
+hints = ["There is remove and there is purge.", "remove keeps configuration files.", "Type: sudo apt remove nginx"]
+explanation = "The program is gone (and the service stopped), but /etc/nginx is still there."
+
+[[task]]
+id = "rc"
+title = "Reading dpkg -l"
+kind = "independent"
+instructions = "Look at nginx in the package list with `dpkg -l nginx`."
+skills = { "f.apt-basics" = 1.0 }
+question = { prompt = "Which two letters does dpkg -l show in front of nginx now?", type = "exact", accept = ["rc"] }
+hints = ["The first column: desired action and current status.", "r = remove requested, c = only configuration files remain.", "rc"]
+explanation = "ii means installed; rc means removed with configuration remaining — a common sight after apt remove."
+
+[[task]]
+id = "purge"
+title = "Remove everything"
+kind = "independent"
+instructions = "The test server will not come back. Delete nginx's remaining configuration as well."
+skills = { "f.apt-basics" = 1.0 }
+checks = [{ type = "package_state", name = "nginx", state = "absent" }, { type = "path_absent", path = "/etc/nginx/nginx.conf" }]
+hints = ["The opposite of keeping the configuration.", "apt purge works on removed packages too.", "Type: sudo apt purge nginx"]
+explanation = "purge = remove + delete configuration files. dpkg -l no longer lists nginx at all."
+
+[[task]]
+id = "hold"
+title = "Freeze tar"
+kind = "independent"
+instructions = "A backup script depends on the current tar version. Make sure tar is not upgraded by future apt upgrade runs."
+skills = { "f.upgrades-versions" = 1.0 }
+checks = [{ type = "package_state", name = "tar", held = true }]
+hints = ["apt-mark can mark packages.", "apt-mark hold PACKAGE", "Type: sudo apt-mark hold tar"]
+explanation = "apt upgrade now reports tar as 'kept back'. Remember to unhold it once the script is fixed — held packages miss security updates."
+
+[debrief]
+summary = """
+remove keeps configuration (rc), purge deletes it, autoremove clears unneeded dependencies,
+and apt-mark hold freezes versions.
+"""
+alternatives = ["apt-get remove --purge nginx", "dpkg -P nginx", "apt-mark showhold lists held packages"]
+pitfalls = ["Holding packages and forgetting about them blocks security updates.", "Purging deletes configuration you may have spent hours on: back up /etc first."]
+next = "Next: a web server that will not start."
+
+[[solution]]
+name = "step by step"
+steps = [
+    "apt-mark showauto",
+    ":answer tree",
+    { input = ["letslinux"] },
+    "sudo apt autoremove -y",
+    "sudo apt remove -y nginx",
+    "dpkg -l nginx",
+    ":answer rc",
+    "sudo apt purge -y nginx",
+    "sudo apt-mark hold tar",
+]
+
+[[solution]]
+name = "dry runs and dpkg"
+steps = [
+    { input = ["letslinux"] },
+    "echo n | sudo apt autoremove",
+    ":answer tree",
+    "sudo apt-get autoremove -y",
+    "sudo apt-get remove -y nginx",
+    "dpkg -l | grep nginx",
+    ":answer rc",
+    "sudo dpkg -P nginx",
+    "sudo apt-mark hold tar",
+    "apt-mark showhold",
+]
+
+[[counterexample]]
+name = "purge first"
+steps = [
+    ":answer tree",
+    { input = ["letslinux"] },
+    "sudo apt autoremove -y",
+    "sudo apt purge -y nginx",
+]

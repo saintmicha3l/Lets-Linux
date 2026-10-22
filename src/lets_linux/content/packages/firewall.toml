@@ -1,0 +1,201 @@
+# Package catalogue: firewalls (nftables, ufw, firewalld).
+
+schema = 1
+
+[[package]]
+name = "nftables"
+summary = "Program to control packet filtering rules by Netfilter project"
+section = "net"
+versions = { debian = "1.0.6-2+deb12u2", ubuntu = "1.0.9-1build1", fedora = "1.0.9-6.fc41", arch = "1:1.1.1-1", generic = "1.1.1" }
+sbin = ["nft"]
+services = ["nftables.service"]
+# Debian ships the service disabled: the ruleset is empty until you enable it
+enable = false
+
+[[package.file]]
+path = "/etc/nftables.conf"
+conffile = true
+mode = "755"
+content = """#!/usr/sbin/nft -f
+
+flush ruleset
+
+table inet filter {
+	chain input {
+		type filter hook input priority filter;
+	}
+	chain forward {
+		type filter hook forward priority filter;
+	}
+	chain output {
+		type filter hook output priority filter;
+	}
+}
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/nftables.service"
+content = """[Unit]
+Description=nftables
+Documentation=man:nft(8) http://wiki.nftables.org
+Wants=network-pre.target
+Before=network-pre.target shutdown.target
+Conflicts=shutdown.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+StandardInput=null
+ProtectSystem=full
+ProtectHome=true
+ExecStart=/usr/sbin/nft -f /etc/nftables.conf
+ExecReload=/usr/sbin/nft -f /etc/nftables.conf
+ExecStop=/usr/sbin/nft flush ruleset
+
+[Install]
+WantedBy=sysinit.target
+"""
+
+[[package]]
+name = "ufw"
+summary = "program for managing a Netfilter firewall"
+section = "admin"
+families = ["debian", "arch", "generic"]
+versions = { debian = "0.36.2-1", ubuntu = "0.36.2-6", arch = "0.36.2-5", generic = "0.36.2" }
+sbin = ["ufw", "/usr/lib/ufw/ufw-init=ufw-init"]
+services = ["ufw.service"]
+
+[[package.file]]
+path = "/etc/ufw/ufw.conf"
+conffile = true
+content = """# /etc/ufw/ufw.conf
+#
+
+# Set to yes to start on boot. If setting this remotely, be sure to add a rule
+# to allow your remote connection before starting ufw. Eg: 'ufw allow 22/tcp'
+ENABLED=no
+
+# Please use the 'ufw' command to set the loglevel. Eg: 'ufw logging medium'.
+# See 'man ufw' for details.
+LOGLEVEL=low
+"""
+
+[[package.file]]
+path = "/etc/default/ufw"
+conffile = true
+content = """# /etc/default/ufw
+#
+
+# Set to yes to apply rules to support IPv6 (no means only IPv6 on loopback
+# accepted). You will need to 'disable' and then 'enable' the firewall for
+# the changes to take affect.
+IPV6=yes
+
+# Set the default input policy to ACCEPT, DROP, or REJECT. Please note that if
+# you change this you will most likely want to adjust your rules.
+DEFAULT_INPUT_POLICY="DROP"
+
+# Set the default output policy to ACCEPT, DROP, or REJECT. Please note that if
+# you change this you will most likely want to adjust your rules.
+DEFAULT_OUTPUT_POLICY="ACCEPT"
+
+# Set the default forward policy to ACCEPT, DROP or REJECT.  Please note that
+# if you change this you will most likely want to adjust your rules
+DEFAULT_FORWARD_POLICY="DROP"
+"""
+
+[[package.file]]
+path = "/etc/ufw/user.rules"
+content = """*filter
+:ufw-user-input - [0:0]
+:ufw-user-output - [0:0]
+
+### RULES ###
+
+### END RULES ###
+COMMIT
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/ufw.service"
+content = """[Unit]
+Description=Uncomplicated firewall
+Documentation=man:ufw(8)
+DefaultDependencies=no
+Before=network-pre.target
+Wants=network-pre.target local-fs.target
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/ufw/ufw-init start quiet
+ExecStop=/usr/lib/ufw/ufw-init stop
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[package]]
+name = "firewalld"
+summary = "A firewall daemon with D-Bus interface providing a dynamic firewall"
+section = "net"
+families = ["fedora", "debian", "arch", "generic"]
+versions = { debian = "1.3.3-1~deb12u1", ubuntu = "2.1.1-1", fedora = "2.2.3-1.fc41", arch = "2.2.3-1", generic = "2.2.3" }
+depends = ["nftables"]
+sbin = ["firewalld"]
+bin = ["firewall-cmd"]
+services = ["firewalld.service"]
+
+[[package.file]]
+path = "/etc/firewalld/firewalld.conf"
+conffile = true
+content = """# firewalld config file
+
+# default zone
+# The default zone used if an empty zone string is used.
+# Default: public
+DefaultZone=public
+"""
+
+[[package.file]]
+path = "/etc/firewalld/zones"
+kind = "dir"
+mode = "750"
+
+[[package.file]]
+path = "/usr/lib/firewalld/zones/public.xml"
+content = """<?xml version="1.0" encoding="utf-8"?>
+<zone>
+  <short>Public</short>
+  <description>For use in public areas. You do not trust the other computers on networks to not harm your computer. Only selected incoming connections are accepted.</description>
+  <service name="ssh"/>
+  <service name="dhcpv6-client"/>
+  <service name="cockpit"/>
+</zone>
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/firewalld.service"
+content = """[Unit]
+Description=firewalld - dynamic firewall daemon
+Before=network-pre.target
+Wants=network-pre.target
+After=dbus.service
+After=polkit.service
+Conflicts=iptables.service ip6tables.service ebtables.service ipset.service nftables.service
+Documentation=man:firewalld(1)
+
+[Service]
+ExecStart=/usr/sbin/firewalld --nofork --nopid
+ExecReload=/bin/kill -HUP $MAINPID
+StandardOutput=null
+StandardError=null
+Type=simple
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target
+Alias=dbus-org.fedoraproject.FirewallD1.service
+"""

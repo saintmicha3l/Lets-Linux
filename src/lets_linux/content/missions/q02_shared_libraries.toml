@@ -1,0 +1,165 @@
+schema = 1
+
+[mission]
+id = "q02-shared-libraries"
+title = "Cannot Open Shared Object File"
+chapter = "Q"
+kind = "troubleshooting"
+order = 6
+difficulty = 5
+requires = ["q01-toolchain", "q01b-libraries-and-loading", "c08-the-method"]
+skills = ["q.shared-libraries"]
+review_for = ["q.toolchain", "f.local-software"]
+xp = 210
+estimated_minutes = 30
+
+[briefing]
+context = """
+A vendor delivered its reporting tool as a tarball, unpacked to /opt/acme: the program in
+/opt/acme/bin, its library in /opt/acme/lib. It does not start for anyone. The vendor's
+README suggests "export LD_LIBRARY_PATH=/opt/acme/lib in everybody's .bashrc". Find out
+what the loader is missing and fix it properly — for every user, cron jobs and services
+included. (sudo password: letslinux)
+"""
+concept = """
+A dynamically linked program lists the libraries it needs (readelf -d: NEEDED, by soname
+such as libacme.so.2). Before main() runs, the dynamic loader (/lib64/ld-linux-x86-64.so.2)
+looks for each: in the program's RUNPATH, in LD_LIBRARY_PATH, in /etc/ld.so.cache — the
+index ldconfig builds from the directories in /etc/ld.so.conf and /etc/ld.so.conf.d/*.conf —
+and in the trusted system directories. A miss stops the program: "error while loading shared
+libraries: X: cannot open shared object file". ldd PROGRAM shows each library and where it
+was found ("not found"). A library file is usually libNAME.so.MAJOR.MINOR.PATCH with a
+symbolic link named after its soname; ldconfig creates those links. LD_LIBRARY_PATH works
+only where it is set (and never for setuid programs) — a configuration file in
+/etc/ld.so.conf.d plus ldconfig works for everyone.
+"""
+objectives = ["Read a program's library needs", "Find which library the loader misses", "Register a library directory system-wide", "Explain sonames and the loader cache"]
+
+[environment]
+profile = "debian"
+packages = ["gcc"]
+
+[[environment.setup]]
+action = "file"
+path = "/root/build/acme.c"
+content = """#include <stdio.h>
+void acme_report(const char *who) { printf("ACME quarterly report for %s: all systems nominal\\n", who); }
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/root/build/report.c"
+content = """#include <stdio.h>
+#include <stdlib.h>
+void acme_report(const char *who);
+int main(void) { const char *u = getenv("USER"); acme_report(u ? u : "unknown"); return 0; }
+"""
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /opt/acme/bin /opt/acme/lib && cd /root/build && gcc -shared -fPIC -Wl,-soname,libacme.so.2 -o /opt/acme/lib/libacme.so.2.4.1 acme.c && ln -s /opt/acme/lib/libacme.so.2.4.1 libacme.so && gcc -o /opt/acme/bin/report report.c -L. -lacme && cd / && rm -rf /root/build"
+
+[[environment.setup]]
+action = "file"
+path = "/opt/acme/README"
+content = """ACME Report 2.4.1
+==================
+Run /opt/acme/bin/report. If it complains about libraries:
+    export LD_LIBRARY_PATH=/opt/acme/lib
+in every user's .bashrc.
+"""
+
+[[task]]
+id = "which"
+title = "What is missing?"
+kind = "troubleshooting"
+instructions = "Run /opt/acme/bin/report and find out exactly which library the loader cannot find."
+skills = { "q.shared-libraries" = 1.0 }
+question = { prompt = "Which library (as the loader names it) is not found?", type = "exact", accept = ["libacme.so.2"] }
+hints = ["The error message names it; ldd /opt/acme/bin/report lists every library with where it was found.", "readelf -d /opt/acme/bin/report | grep NEEDED shows the names the program asks for.", "libacme.so.2"]
+explanation = "The program asks for libacme.so.2 — the library's soname — not for the file name libacme.so.2.4.1."
+
+[[task]]
+id = "there"
+title = "But it is right there"
+kind = "troubleshooting"
+instructions = "Look at /opt/acme/lib."
+skills = { "q.shared-libraries" = 1.0 }
+question = { prompt = "Why would the loader not find libacme.so.2 even if it searched /opt/acme/lib?", type = "choice", choices = ["The file is corrupt", "Only libacme.so.2.4.1 exists: nothing is named libacme.so.2 — the soname link is missing", "Libraries must be in /usr/lib"], answer = 1 }
+hints = ["ls -l /opt/acme/lib", "readelf -d /opt/acme/lib/libacme.so.2.4.1 | grep SONAME", "(b)"]
+explanation = "The tarball shipped only the real file. The soname link (libacme.so.2 -> libacme.so.2.4.1) is normally created by ldconfig when it scans a directory — which nobody has done for /opt/acme/lib."
+
+[[task]]
+id = "fix"
+title = "For everyone"
+kind = "independent"
+instructions = "Make /opt/acme/bin/report work for every user and every way of starting it (no LD_LIBRARY_PATH), also after reboots. Do not move or copy the vendor's files."
+skills = { "q.shared-libraries" = 1.0 }
+checks = [
+    { type = "command_result", user = "learner", login = true, command = "env -u LD_LIBRARY_PATH /opt/acme/bin/report", status = 0, stdout_contains = ["ACME quarterly report for learner"] },
+    { type = "command_result", user = "root", command = "env -i /opt/acme/bin/report", status = 0, stdout_contains = ["ACME quarterly report"] },
+    { type = "command_result", user = "learner", command = "grep -rs LD_LIBRARY_PATH /home/learner/.bashrc /home/learner/.profile /etc/profile /etc/environment /etc/profile.d", status = 1 },
+    { type = "after_reboot", checks = [{ type = "command_result", user = "root", command = "env -i /opt/acme/bin/report", status = 0 }] },
+]
+hints = ["The loader reads /etc/ld.so.cache; ldconfig builds it from the directories listed in /etc/ld.so.conf.d/*.conf.", "Add a file such as /etc/ld.so.conf.d/acme.conf containing /opt/acme/lib, then run ldconfig (it also creates the soname link).", "echo /opt/acme/lib | sudo tee /etc/ld.so.conf.d/acme.conf; sudo ldconfig; ldd /opt/acme/bin/report"]
+explanation = "ldconfig scanned /opt/acme/lib, created libacme.so.2 -> libacme.so.2.4.1 and put it in the cache that every program's loader consults — users, cron, services, with or without login."
+
+[[task]]
+id = "why"
+title = "Why not the README's way?"
+kind = "explanation"
+instructions = "One last look at the vendor's suggestion."
+skills = { "q.shared-libraries" = 1.0 }
+question = { prompt = "What is wrong with LD_LIBRARY_PATH in everybody's .bashrc?", type = "choice", choices = ["Nothing; it is the standard way", "It only works in shells that read .bashrc — not for cron, systemd services, sudo or setuid programs — and it changes library lookup for every program those shells start", "It needs root"], answer = 1 }
+hints = ["Which processes never read a .bashrc?", "Services and cron jobs start without a login shell; the loader ignores LD_LIBRARY_PATH for setuid programs.", "(b)"]
+explanation = "LD_LIBRARY_PATH is for experiments and for running a program from a build tree. Permanent library locations belong in /etc/ld.so.conf.d — or the program carries a RUNPATH ($ORIGIN/../lib) when it is built."
+
+[debrief]
+summary = """
+ldd PROGRAM / readelf -d → which sonames are needed and where they are found. The loader
+searches RUNPATH, LD_LIBRARY_PATH, /etc/ld.so.cache (ldconfig: /etc/ld.so.conf.d/*.conf),
+the system directories. Fix: echo DIR > /etc/ld.so.conf.d/NAME.conf; ldconfig — which also
+creates the soname links. ldconfig -p lists the cache.
+"""
+alternatives = ["Link with -Wl,-rpath,'$ORIGIN/../lib' when building, so the program finds its own libraries", "Install the library into /usr/local/lib and run ldconfig", "LD_LIBRARY_PATH=/opt/acme/lib /opt/acme/bin/report for a one-off test"]
+pitfalls = ["Forgetting ldconfig after adding a configuration file.", "Copying the library without its soname link.", "LD_LIBRARY_PATH in shell startup files."]
+next = "Next: when a library is there but too old — the ABI."
+
+[[solution]]
+name = "ld.so.conf.d"
+steps = [
+    "/opt/acme/bin/report",
+    "ldd /opt/acme/bin/report",
+    ":answer libacme.so.2",
+    "ls -l /opt/acme/lib",
+    ":answer b",
+    { input = ["letslinux"] },
+    "echo /opt/acme/lib | sudo tee /etc/ld.so.conf.d/acme.conf",
+    "sudo ldconfig",
+    "ldd /opt/acme/bin/report",
+    "/opt/acme/bin/report",
+    ":answer b",
+]
+
+[[solution]]
+name = "link into /usr/local/lib"
+steps = [
+    "readelf -d /opt/acme/bin/report",
+    ":answer libacme.so.2",
+    "readelf -d /opt/acme/lib/libacme.so.2.4.1",
+    ":answer Only libacme.so.2.4.1 exists: nothing is named libacme.so.2 — the soname link is missing",
+    { input = ["letslinux"] },
+    "sudo ln -s /opt/acme/lib/libacme.so.2.4.1 /usr/local/lib/libacme.so.2",
+    "sudo /sbin/ldconfig",
+    "/opt/acme/bin/report",
+    ":answer It only works in shells that read .bashrc — not for cron, systemd services, sudo or setuid programs — and it changes library lookup for every program those shells start",
+]
+
+[[counterexample]]
+name = "the README's advice"
+steps = [
+    ":answer libacme.so.2",
+    ":answer b",
+    "echo 'export LD_LIBRARY_PATH=/opt/acme/lib' >> ~/.bashrc",
+    ":answer b",
+]

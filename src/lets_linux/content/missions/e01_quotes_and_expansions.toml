@@ -1,0 +1,157 @@
+schema = 1
+
+[mission]
+id = "e01-quotes-and-expansions"
+title = "What the Shell Does to Your Words"
+chapter = "E"
+kind = "lesson"
+order = 1
+difficulty = 2
+requires = ["a05-environment", "b03-making-things"]
+skills = ["e.quoting", "e.variables-expansion", "e.brace-expansion", "e.command-substitution", "e.arithmetic"]
+review_for = ["a.echo-printf"]
+xp = 120
+estimated_minutes = 20
+
+[briefing]
+context = """
+Before you write scripts, you need to know exactly what the shell does with a command line
+before the command even starts: it expands variables, braces, command substitutions and
+arithmetic, splits the result into words and expands wildcards. Most script bugs are
+surprises in this step.
+"""
+concept = """
+$name and ${name} expand variables; inside double quotes the result stays one word, without
+quotes it is split at spaces (and globbed). Single quotes keep everything literal. {a,b} and
+{1..5} generate words (brace expansion); $(command) is replaced by the command's output;
+$(( expression )) by the result of integer arithmetic. ${var%pattern} and ${var#pattern}
+remove the shortest match from the end / start (%% and ## the longest). Rule of thumb: quote
+every expansion — "$var", "$(cmd)" — unless you want splitting.
+"""
+objectives = ["Predict word splitting", "Quote correctly", "Use brace expansion", "Use command substitution and arithmetic", "Trim values with parameter expansion"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "dir"
+path = "~/inbox"
+
+[[task]]
+id = "split"
+title = "One word or two?"
+kind = "prediction"
+instructions = "Think before you type: title=\"Q3 report\"; touch $title (try it in ~/inbox afterwards)."
+skills = { "e.quoting" = 1.0, "e.variables-expansion" = 1.0 }
+question = { prompt = "How many files does touch $title create?", type = "number", accept = ["2"] }
+hints = ["Without quotes, the expanded value is split at spaces.", "touch receives two arguments: Q3 and report.", "2"]
+explanation = "Unquoted $title became two words, Q3 and report — two files. ls ~/inbox shows them."
+
+[[task]]
+id = "quote"
+title = "Keep it together"
+kind = "independent"
+instructions = "Create an empty file named exactly 'Q3 report.txt' (with the space) in ~/inbox."
+skills = { "e.quoting" = 1.0 }
+checks = [{ type = "path_exists", path = "~/inbox/Q3 report.txt", kind = "file" }]
+hints = ["Quotes (or a backslash) keep the space inside one argument.", "touch ~/inbox/'Q3 report.txt' — or with double quotes, or Q3\\ report.txt", "touch ~/inbox/\"Q3 report.txt\""]
+explanation = "Any quoting works: 'Q3 report.txt', \"Q3 report.txt\" or Q3\\ report.txt. Note that ~ must stay outside the quotes to be expanded."
+
+[[task]]
+id = "singles"
+title = "Single or double?"
+kind = "prediction"
+instructions = "Compare echo '$HOME' and echo \"$HOME\"."
+skills = { "e.quoting" = 1.0 }
+question = { prompt = "Which one prints /home/learner?", type = "choice", choices = ["echo '$HOME'", "echo \"$HOME\"", "both", "neither"], answer = 1 }
+hints = ["One kind of quote switches off every special character.", "Double quotes still expand $, ` and \\.", "(b)"]
+explanation = "Single quotes are completely literal: '$HOME' prints $HOME. Double quotes expand variables but prevent splitting and globbing."
+
+[[task]]
+id = "braces"
+title = "Many directories at once"
+kind = "independent"
+instructions = "Create ~/project with the subdirectories src, docs and tests — ideally with one mkdir command."
+skills = { "e.brace-expansion" = 1.0 }
+checks = [
+    { type = "path_exists", path = "~/project/src", kind = "dir" },
+    { type = "path_exists", path = "~/project/docs", kind = "dir" },
+    { type = "path_exists", path = "~/project/tests", kind = "dir" },
+]
+hints = ["Brace expansion turns a{x,y} into ax ay.", "mkdir -p creates parent directories as needed.", "mkdir -p ~/project/{src,docs,tests}"]
+explanation = "echo ~/project/{src,docs,tests} shows what mkdir received: three separate paths."
+
+[[task]]
+id = "substitution"
+title = "Output as data"
+kind = "independent"
+instructions = "Write one line to ~/count.txt: the text 'accounts: ' followed by the number of lines in /etc/passwd (for example 'accounts: 31')."
+skills = { "e.command-substitution" = 1.0 }
+checks = [{ type = "file_equals_command", path = "~/count.txt", command = "echo \"accounts: $(wc -l < /etc/passwd)\"" }]
+hints = ["$(command) inserts the output of a command into a command line.", "wc -l < FILE prints only the number (wc -l FILE adds the name).", "echo \"accounts: $(wc -l < /etc/passwd)\" > ~/count.txt"]
+explanation = "The shell ran wc first and put its output into echo's argument."
+
+[[task]]
+id = "arithmetic"
+title = "Integer arithmetic"
+kind = "prediction"
+instructions = "The shell does integer arithmetic in $(( ... ))."
+skills = { "e.arithmetic" = 1.0 }
+question = { prompt = "What does echo $(( 17 / 5 )) $(( 17 % 5 )) print?", type = "exact", accept = ["3 2"] }
+hints = ["There are no fractions in shell arithmetic.", "/ divides and drops the remainder; % is the remainder.", "3 2"]
+explanation = "17 / 5 is 3 (integer division) and 17 % 5 is 2. For decimals use bc or awk."
+
+[[task]]
+id = "trim"
+title = "Cutting names apart"
+kind = "prediction"
+instructions = "f=backup.2026-03-01.tar.gz — try ${f%%.*} and ${f%.gz} with echo."
+skills = { "e.variables-expansion" = 1.0 }
+question = { prompt = "What does echo ${f%%.*} ${f%.gz} print?", type = "exact", accept = ["backup backup.2026-03-01.tar"] }
+hints = ["% removes from the end: % the shortest match, %% the longest.", "%%.* removes everything from the first dot on.", "backup backup.2026-03-01.tar"]
+explanation = "Parameter expansion edits values without starting a program: ${f%.gz} is a common way to change extensions."
+
+[debrief]
+summary = """
+Order of expansion: braces → ~ → $variables, $(commands), $((arithmetic)) → word splitting →
+wildcards → quote removal. Quote expansions ("$var") unless you want them split.
+"""
+alternatives = ["printf '%s\\n' $title shows each word separately: a quick way to see splitting", "set -x prints every command after expansion"]
+pitfalls = ["Unquoted variables with spaces or wildcards (rm $file).", "Putting ~ inside quotes: \"~/x\" is not expanded.", "Expecting $(( 7 / 2 )) to be 3.5."]
+next = "Next: your first script."
+
+[[solution]]
+name = "step by step"
+steps = [
+    ":answer 2",
+    "touch ~/inbox/'Q3 report.txt'",
+    ":answer b",
+    "mkdir -p ~/project/{src,docs,tests}",
+    "echo \"accounts: $(wc -l < /etc/passwd)\" > ~/count.txt",
+    "echo $(( 17 / 5 )) $(( 17 % 5 ))",
+    ":answer 3 2",
+    "f=backup.2026-03-01.tar.gz; echo ${f%%.*} ${f%.gz}",
+    ":answer backup backup.2026-03-01.tar",
+]
+
+[[solution]]
+name = "experiments first"
+steps = [
+    "cd ~/inbox; title=\"Q3 report\"; touch $title; ls",
+    ":answer 2",
+    "touch Q3\\ report.txt",
+    "echo '$HOME' \"$HOME\"",
+    ":answer echo \"$HOME\"",
+    "cd; mkdir project; cd project; mkdir src docs tests; cd",
+    "n=$(wc -l < /etc/passwd); printf 'accounts: %s\\n' \"$n\" > count.txt",
+    ":answer 3 2",
+    ":answer backup backup.2026-03-01.tar",
+]
+
+[[counterexample]]
+name = "unquoted file name"
+steps = [
+    ":answer 2",
+    "title='Q3 report.txt'; touch ~/inbox/$title",
+    ":answer a",
+]

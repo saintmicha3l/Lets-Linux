@@ -1,0 +1,151 @@
+schema = 1
+
+[mission]
+id = "b02-looking-around"
+title = "Looking Around"
+chapter = "B"
+kind = "lesson"
+order = 2
+difficulty = 1
+requires = ["b01-where-am-i", "a02-command-anatomy"]
+skills = ["b.ls-listing", "b.hidden-files", "b.file-types"]
+xp = 60
+estimated_minutes = 12
+
+[briefing]
+context = """
+Someone dumped a pile of files into your inbox directory. Before deciding what to keep, you
+need to read what ls -l tells you about each one: type, permissions, owner, size and age.
+"""
+concept = """
+In ls -l output each line reads: type+permissions, link count, owner, group, size in bytes,
+modification time, name. The first character is the type: - regular file, d directory,
+l symbolic link. Names starting with a dot are hidden unless you use -a (or -A).
+"""
+objectives = ["Read every column of ls -l", "Find hidden files", "Identify file types"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+owner = { choices = ["amara", "boris", "chen", "dana"] }
+big = { choices = ["budget.xlsx", "photos.zip", "backup.img", "dataset.csv"] }
+hidden = { choices = ["secrets", "token", "credentials", "keyfile"] }
+bigsize = { range = [2000000, 9000000] }
+
+[[environment.setup]]
+action = "user"
+name = "{{owner}}"
+
+[[environment.setup]]
+action = "file"
+path = "~/inbox/notes.txt"
+content = "remember to sort this inbox\n"
+
+[[environment.setup]]
+action = "file"
+path = "~/inbox/{{big}}"
+content = "x"
+size = "{{bigsize}}"
+
+[[environment.setup]]
+action = "file"
+path = "~/inbox/contract.pdf"
+content = "%PDF-1.7 (simulated)\n"
+repeat = 300
+owner = "{{owner}}"
+
+[[environment.setup]]
+action = "file"
+path = "~/inbox/.{{hidden}}"
+content = "do not share\n"
+mode = "0600"
+
+[[environment.setup]]
+action = "dir"
+path = "~/inbox/old"
+
+[[environment.setup]]
+action = "symlink"
+path = "~/inbox/latest"
+target = "notes.txt"
+
+[[task]]
+id = "long"
+title = "The long listing"
+kind = "guided"
+instructions = "Run `ls -l inbox` and look at each column."
+skills = { "b.ls-listing" = 1.0 }
+checks = [{ type = "output_contains", text = "contract.pdf", command = "ls" }, { type = "command_used", command = "ls", args_regex = "-[a-zA-Z]*l" }]
+hints = ["-l selects the long format.", "Give ls the option and the directory name.", "Type: ls -l inbox"]
+explanation = "Each line now shows permissions, links, owner, group, size, date and name."
+
+[[task]]
+id = "largest"
+title = "Biggest file"
+kind = "independent"
+instructions = "Find the largest file in inbox."
+skills = { "b.ls-listing" = 1.0 }
+question = { prompt = "Which file in inbox is the largest?", type = "exact", accept = ["{{big}}", "inbox/{{big}}", "~/inbox/{{big}}"] }
+hints = ["The size column is the fifth one in ls -l.", "ls -lS sorts by size; -h makes sizes readable.", "Run ls -lhS inbox: the first file, {{big}}, is the largest."]
+explanation = "ls -lS sorts largest first; -h shows sizes like 4.1M instead of raw bytes."
+
+[[task]]
+id = "owner"
+title = "Who owns it?"
+kind = "independent"
+instructions = "One file in inbox does not belong to you."
+skills = { "b.ls-listing" = 1.0, "d.permission-bits" = 0.3 }
+question = { prompt = "Which user owns contract.pdf?", type = "exact", accept = ["{{owner}}"] }
+hints = ["The owner is the third column of ls -l.", "Look at the contract.pdf line.", "The owner is {{owner}}."]
+explanation = "Owner and group are columns three and four. Ownership decides whose permissions apply."
+
+[[task]]
+id = "hidden"
+title = "Hidden files"
+kind = "guided"
+instructions = "There is a hidden file in inbox. List the directory so that it shows up."
+skills = { "b.hidden-files" = 1.0 }
+checks = [{ type = "output_contains", text = ".{{hidden}}", command = ["ls", "find"] }]
+hints = ["Names starting with . are hidden by default.", "Add -a (all) or -A (almost all) to ls.", "Type: ls -la inbox"]
+explanation = "-a shows hidden entries including . and ..; -A shows them without . and .."
+
+[[task]]
+id = "types"
+title = "File types"
+kind = "prediction"
+instructions = "Look at the first character of each ls -l line."
+skills = { "b.file-types" = 1.0 }
+question = { prompt = "What kind of entry is inbox/latest?", type = "choice", choices = ["A regular file", "A directory", "A symbolic link", "A device"], answer = 2 }
+hints = ["The first character of the mode is the type.", "l means link; ls also shows where it points with ->.", "The answer is (c): latest -> notes.txt is a symbolic link."]
+explanation = "- regular file, d directory, l symbolic link, c/b devices. file and stat also report the type."
+
+[[task]]
+id = "links"
+title = "The second column"
+kind = "explanation"
+instructions = "In ls -l output, a directory such as inbox/old shows 2 in the second column."
+skills = { "b.ls-listing" = 0.5, "b.links-hard-inodes" = 0.3 }
+question = { prompt = "What does the number in the second column of ls -l count?", type = "choice", choices = ["The size in kilobytes", "The number of hard links", "The number of lines", "The group ID"], answer = 1 }
+hints = ["It is not the size: that is the fifth column.", "It counts names that refer to the same inode.", "The answer is (b): the hard-link count. A directory has at least 2 (its name and its own . entry)."]
+explanation = "The link count is how many directory entries point at the same inode. You'll use it in the links mission."
+
+[debrief]
+summary = """
+ls -l is a compact report: type and permissions, link count, owner, group, size, time and
+name. -a reveals hidden files, -S sorts by size and -h makes sizes human-readable.
+"""
+alternatives = ["stat FILE shows the same metadata in detail", "file FILE identifies the content type", "ls -lt sorts by modification time"]
+pitfalls = ["ls -l on a symbolic link describes the link; add -L to describe what it points to."]
+next = "Next: creating, copying, moving and removing files."
+
+[[solution]]
+name = "with sorting"
+steps = ["ls -l inbox", "ls -lhS inbox", ":answer {{big}}", ":answer {{owner}}", "ls -la inbox", ":answer c", ":answer b"]
+
+[[solution]]
+name = "with stat and find"
+steps = ["cd inbox", "ls -lA", ":answer {{big}}", "stat contract.pdf", ":answer {{owner}}", "ls -A", ":answer A symbolic link", ":answer 2"]
+
+[[counterexample]]
+name = "guessing"
+steps = ["ls inbox", ":answer notes.txt", ":answer learner"]

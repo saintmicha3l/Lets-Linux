@@ -1,0 +1,234 @@
+schema = 1
+
+[mission]
+id = "q04-make"
+title = "Only What Changed"
+chapter = "Q"
+kind = "troubleshooting"
+order = 8
+difficulty = 5
+requires = ["q01-toolchain", "q01c-make-basics", "c08-the-method"]
+skills = ["q.build-systems"]
+review_for = ["q.toolchain", "e.script-structure"]
+xp = 210
+estimated_minutes = 35
+
+[briefing]
+context = """
+~/tool is the source of the team's small monitoring probe, with a Makefile someone wrote
+in a hurry. It does not build; once it does, changing the configuration header has no
+effect, "make clean" does nothing, and there is no way to install the probe. Fix the
+Makefile — not the C code — so that make does the right amount of work every time.
+"""
+concept = """
+make reads rules — "TARGET: PREREQUISITES" followed by recipe lines that start with a TAB
+character (spaces are an error: "missing separator") — and rebuilds a target when it does
+not exist or when any prerequisite is newer (modification time) than it. It works
+backwards from the goal (the first target, or the one named on the command line), so only
+what changed is rebuilt. Prerequisites must include everything the result depends on:
+an object file depends on its .c file and the headers it includes. Variables ($(CC),
+$(CFLAGS), PREFIX ?= /usr/local) can be overridden: make PREFIX=/opt. Automatic
+variables: $@ the target, $< the first prerequisite, $^ all of them; pattern rules
+(%.o: %.c) cover many files. Targets that are not files (clean, install) belong in
+.PHONY — otherwise a file of that name makes them "up to date". make -n shows what would
+run, -B rebuilds everything.
+"""
+objectives = ["Fix a Makefile syntax error", "Declare header dependencies", "Use .PHONY", "Add an install target with an overridable PREFIX", "Explain how make decides what to rebuild"]
+
+[environment]
+profile = "debian"
+packages = ["build-essential"]
+
+[[environment.setup]]
+action = "dir"
+path = "/home/learner/tool"
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/tool/config.h"
+owner = "learner"
+group = "learner"
+content = """#define PROBE_NAME "probe"
+#define INTERVAL 60
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/tool/probe.c"
+owner = "learner"
+group = "learner"
+content = """#include <stdio.h>
+#include "config.h"
+#include "report.h"
+
+int main(void)
+{
+    report(PROBE_NAME, INTERVAL);
+    return 0;
+}
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/tool/report.h"
+owner = "learner"
+group = "learner"
+content = """void report(const char *name, int interval);
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/tool/report.c"
+owner = "learner"
+group = "learner"
+content = """#include <stdio.h>
+#include "report.h"
+
+void report(const char *name, int interval)
+{
+    printf("%s: checking every %d seconds\\n", name, interval);
+}
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/tool/Makefile"
+owner = "learner"
+group = "learner"
+content = """CC = gcc
+CFLAGS = -Wall -O2
+OBJS = probe.o report.o
+
+probe: $(OBJS)
+        $(CC) $(CFLAGS) -o $@ $(OBJS)
+
+%.o: %.c
+\t$(CC) $(CFLAGS) -c $<
+
+clean:
+\trm -f probe $(OBJS)
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/tool/clean"
+owner = "learner"
+group = "learner"
+content = "notes: remember to clean up the test hosts\n"
+
+[[task]]
+id = "separator"
+title = "It does not even start"
+kind = "troubleshooting"
+instructions = "Run make in ~/tool and fix the Makefile so the probe builds."
+skills = { "q.build-systems" = 1.0 }
+checks = [
+    { type = "command_result", user = "learner", command = "cd ~/tool && make -B && ./probe", status = 0, stdout_contains = ["probe: checking every 60 seconds"] },
+]
+hints = ["Read the message: the file, the line and \"missing separator\".", "Recipe lines must start with a TAB, not with spaces. cat -A Makefile shows tabs as ^I.", "sed -i 's/^        /\\t/' Makefile — then make"]
+explanation = "make tells recipe lines from everything else by the leading tab — a famous design decision its author regretted almost at once, and that has stayed for fifty years."
+
+[[task]]
+id = "headers"
+title = "Changes that do nothing"
+kind = "troubleshooting"
+instructions = "Change INTERVAL in config.h to 30 and run make: nothing is rebuilt and the probe still says 60. Fix the Makefile so that changing any header rebuilds what includes it."
+skills = { "q.build-systems" = 1.0 }
+checks = [
+    { type = "command_result", user = "learner", setup = ["cd ~/tool && make"], command = "cd ~/tool && sleep 1 && touch config.h && make", status = 0, stdout_contains = ["-c probe.c"], stdout_not_contains = ["-c report.c"] },
+    { type = "command_result", user = "learner", setup = ["cd ~/tool && make"], command = "cd ~/tool && sleep 1 && touch report.h && make", status = 0, stdout_contains = ["-c probe.c", "-c report.c"] },
+]
+hints = ["make only knows the prerequisites the Makefile lists: probe.o depends on probe.c — and on config.h and report.h, which nobody told it.", "Add rules without recipes: probe.o: config.h report.h and report.o: report.h (the pattern rule still supplies the recipe).", "printf 'probe.o: config.h report.h\\nreport.o: report.h\\n' >> Makefile"]
+explanation = "A rule without a recipe adds prerequisites; the pattern rule still builds the object. Larger projects let the compiler write these lines (gcc -MMD) instead of maintaining them by hand."
+
+[[task]]
+id = "phony"
+title = "Up to date?"
+kind = "troubleshooting"
+instructions = "make clean says \"'clean' is up to date\" and removes nothing. Make it work — without deleting the notes file named clean."
+skills = { "q.build-systems" = 1.0 }
+checks = [
+    { type = "command_result", user = "learner", setup = ["cd ~/tool && make"], command = "cd ~/tool && make clean", status = 0, stdout_contains = ["rm -f probe"] },
+    { type = "command_result", user = "learner", setup = ["cd ~/tool && make", "cd ~/tool && make clean"], command = "ls ~/tool", status = 0, stdout_contains = ["clean"], stdout_not_contains = ["probe.o", "report.o"] },
+    { type = "path_exists", path = "/home/learner/tool/clean" },
+]
+hints = ["A file named clean exists and has no prerequisites: make considers the target done.", "Declare targets that are not files: .PHONY: clean", "echo '.PHONY: clean install' >> Makefile"]
+explanation = ".PHONY targets are always considered out of date; make never compares them with files."
+
+[[task]]
+id = "install"
+title = "Installable"
+kind = "independent"
+instructions = "Add an install target that copies the probe to $(PREFIX)/bin (creating the directory), with PREFIX defaulting to /usr/local but overridable on the command line."
+skills = { "q.build-systems" = 1.0 }
+checks = [
+    { type = "command_result", user = "learner", command = "cd ~/tool && make install PREFIX=/tmp/stage && /tmp/stage/bin/probe", status = 0, stdout_contains = ["checking every"] },
+    { type = "command_result", user = "learner", command = "cd ~/tool && make -n install", status = 0, stdout_contains = ["/usr/local/bin"] },
+]
+hints = ["PREFIX ?= /usr/local (or PREFIX = /usr/local: command-line assignments win anyway).", "install: probe — then recipe lines (with TABs) mkdir -p $(PREFIX)/bin and cp probe $(PREFIX)/bin/", "printf 'PREFIX ?= /usr/local\\ninstall: probe\\n\\tmkdir -p $(PREFIX)/bin\\n\\tcp probe $(PREFIX)/bin/\\n' >> Makefile"]
+explanation = "make install PREFIX=… (and DESTDIR for packaging) is the convention every build system follows; distributions package software by installing it into a staging directory exactly like this."
+
+[[task]]
+id = "rule"
+title = "How make decides"
+kind = "explanation"
+instructions = "Sum it up."
+skills = { "q.build-systems" = 1.0 }
+question = { prompt = "When does make run a target's recipe?", type = "choice", choices = ["Every time make runs", "When the target file is missing or older than one of its prerequisites (or the target is .PHONY)", "When the recipe has changed"], answer = 1 }
+hints = ["Think of what happened after touch config.h.", "It compares modification times.", "(b)"]
+explanation = "Timestamps and declared prerequisites are all make knows — which is why missing prerequisites cause stale builds and why make -B exists."
+
+[debrief]
+summary = """
+Rules: TARGET: PREREQS then TAB-indented recipes. make rebuilds what is missing or older
+than its prerequisites — so list headers as prerequisites. .PHONY for non-file targets;
+PREFIX ?= /usr/local for overridable install locations; make -n to preview, -B to force.
+"""
+alternatives = ["gcc -MMD -MP and -include $(OBJS:.o=.d) generate header dependencies automatically", "CMake, Meson and autotools generate Makefiles (or Ninja files) for larger projects", "install -D -m 755 probe $(DESTDIR)$(PREFIX)/bin/probe"]
+pitfalls = ["Spaces instead of a tab.", "Prerequisites that leave out headers.", "Phony targets that happen to share a file's name."]
+next = "Next: debugging a crashing program."
+
+[[solution]]
+name = "sed and printf"
+steps = [
+    "cd ~/tool",
+    "make",
+    "sed -i 's/^        /\\t/' Makefile",
+    "make",
+    "./probe",
+    "sed -i 's/INTERVAL 60/INTERVAL 30/' config.h",
+    "make",
+    "printf 'probe.o: config.h report.h\\nreport.o: report.h\\n' >> Makefile",
+    "make",
+    "./probe",
+    "make clean",
+    "echo '.PHONY: clean install' >> Makefile",
+    "make clean",
+    "printf 'PREFIX ?= /usr/local\\ninstall: probe\\n\\tmkdir -p $(PREFIX)/bin\\n\\tcp probe $(PREFIX)/bin/\\n' >> Makefile",
+    "make install PREFIX=/tmp/x",
+    ":answer b",
+]
+
+[[solution]]
+name = "rewrite the Makefile"
+steps = [
+    "cd ~/tool",
+    "printf 'CC = gcc\\nCFLAGS = -Wall -O2\\nPREFIX = /usr/local\\nOBJS = probe.o report.o\\n\\nprobe: $(OBJS)\\n\\t$(CC) $(CFLAGS) -o $@ $^\\n\\nprobe.o: probe.c config.h report.h\\n\\t$(CC) $(CFLAGS) -c probe.c\\n\\nreport.o: report.c report.h\\n\\t$(CC) $(CFLAGS) -c report.c\\n\\ninstall: probe\\n\\tmkdir -p $(PREFIX)/bin\\n\\tcp probe $(PREFIX)/bin/\\n\\nclean:\\n\\trm -f probe $(OBJS)\\n\\n.PHONY: clean install\\n' > Makefile",
+    "make",
+    "make clean",
+    ":answer When the target file is missing or older than one of its prerequisites (or the target is .PHONY)",
+]
+
+[[counterexample]]
+name = "delete the notes file"
+steps = [
+    "cd ~/tool",
+    "sed -i 's/^        /\\t/' Makefile",
+    "printf 'probe.o: config.h report.h\\nreport.o: report.h\\n' >> Makefile",
+    "rm clean",
+    "make clean",
+    "printf 'PREFIX ?= /usr/local\\ninstall: probe\\n\\tmkdir -p $(PREFIX)/bin\\n\\tcp probe $(PREFIX)/bin/\\n' >> Makefile",
+    ":answer b",
+]

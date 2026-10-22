@@ -1,0 +1,172 @@
+schema = 1
+
+[mission]
+id = "p00-skill-check"
+title = "Skill Check P: Containers"
+chapter = "P"
+placement = "P"
+kind = "assessment"
+order = 0
+difficulty = 4
+requires = []
+skills = ["p.namespaces", "p.cgroups", "p.container-usage", "p.container-concepts", "p.container-security", "p.virtualization"]
+xp = 90
+estimated_minutes = 20
+sequential = false
+
+[briefing]
+context = """
+This skill check covers chapter P: namespaces, control groups, running containers, what a
+container really is, container security and virtualization. Tasks in any order; you have sudo
+(password: letslinux). Solve them all (one slip allowed) to test out of chapter P. :submit ends
+the check.
+"""
+concept = "No hints: show what you can do on your own. Some checks reboot a copy of the machine."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "debian"
+packages = ["podman"]
+
+[environment.vars]
+uts = { choices = ["build-3", "ci-runner-7", "agent-12"] }
+svc = { choices = ["indexer", "thumbnailer", "transcoder"] }
+cname = { choices = ["reports", "importer", "metrics"] }
+dir = { choices = ["finance", "customers", "payroll"] }
+name = { choices = ["scratch", "playground", "sandbox1"] }
+
+[[environment.setup]]
+action = "process"
+comm = "build-agent"
+argv = ["/opt/ci/bin/build-agent", "--queue", "main"]
+user = "root"
+uts = "{{uts}}"
+
+[[environment.setup]]
+action = "service"
+name = "{{svc}}.service"
+enable = true
+start = true
+content = """[Unit]
+Description=Background {{svc}}
+
+[Service]
+ExecStart=/bin/sleep infinity
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /srv/{{dir}} && podman run -d --name {{cname}} -v /srv/{{dir}}:/data docker.io/library/alpine:3.20 sleep 3600"
+
+[[task]]
+id = "namespace"
+title = "A host name of its own"
+kind = "assessment"
+instructions = "build-agent runs in a UTS namespace of its own and reports builds under a different host name. Find out which — without stopping it."
+skills = { "p.namespaces" = 1.0 }
+question = { prompt = "Which host name does build-agent see?", type = "exact", accept = ["{{uts}}"] }
+explanation = "sudo nsenter -t $(pgrep build-agent) -u hostname runs hostname inside its UTS namespace (sudo lsns -t uts lists them)."
+
+[[task]]
+id = "cgroup"
+title = "Half a CPU"
+kind = "assessment"
+instructions = "Limit {{svc}}.service to at most half of one CPU, all its processes together, without stopping it — and so that the limit survives reboots."
+skills = { "p.cgroups" = 1.0 }
+checks = [
+    { type = "command_result", command = "cat /sys/fs/cgroup/system.slice/{{svc}}.service/cpu.max", stdout_contains = "50000 100000" },
+    { type = "after_reboot", checks = [{ type = "command_result", command = "cat /sys/fs/cgroup/system.slice/{{svc}}.service/cpu.max", stdout_contains = "50000 100000" }] },
+]
+explanation = "sudo systemctl set-property {{svc}}.service CPUQuota=50% (without --runtime it is kept)."
+
+[[task]]
+id = "run"
+title = "Run a container"
+kind = "assessment"
+instructions = "As yourself (rootless), start a detached container named {{name}} from docker.io/library/alpine:3.20 that runs sleep 600."
+skills = { "p.container-usage" = 1.0 }
+checks = [{ type = "command_result", user = "learner", command = "podman ps", stdout_contains = ["{{name}}", "Up "] }]
+explanation = "podman run -d --name {{name}} docker.io/library/alpine:3.20 sleep 600"
+
+[[task]]
+id = "mount"
+title = "What can it reach?"
+kind = "assessment"
+instructions = "root runs a container named {{cname}} (sudo podman ...). Find out which host directory is mounted into it."
+skills = { "p.container-security" = 1.0 }
+question = { prompt = "Which host directory? (full path)", type = "exact", accept = ["/srv/{{dir}}", "/srv/{{dir}}/"] }
+explanation = "sudo podman inspect {{cname}} — the Mounts section lists Source (host) and Destination (container)."
+
+[[task]]
+id = "rootless"
+title = "Root inside"
+kind = "assessment"
+instructions = "Think about who a rootless container's root is."
+skills = { "p.container-concepts" = 1.0, "p.container-security" = 0.5 }
+question = { prompt = "Your rootless container's process runs as root inside. Who is it on the host?", type = "choice", choices = ["root", "You — the account that started the container", "nobody", "A new user created by podman"], answer = 1 }
+explanation = "Rootless podman maps container root to your own account (podman top NAME user huser shows both); other container users map to subordinate IDs."
+
+[[task]]
+id = "virt"
+title = "Where does this run?"
+kind = "assessment"
+instructions = "Find out whether this server is a virtual machine."
+skills = { "p.virtualization" = 1.0 }
+question = { prompt = "Which hypervisor does systemd detect?", type = "state", state = { command = "systemd-detect-virt" } }
+explanation = "systemd-detect-virt names it (none on bare metal); dmesg and lscpu's Hypervisor vendor line agree."
+
+[debrief]
+summary = """
+The check covered chapter P: namespaces, cgroups, running containers, rootless mapping, mounts
+and virtualization. chroot is practised in the missions.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "nsenter and set-property"
+steps = [
+    { input = ["letslinux"] },
+    "sudo nsenter -t $(pgrep build-agent) -u hostname",
+    ":answer {{uts}}",
+    "sudo systemctl set-property {{svc}}.service CPUQuota=50%",
+    "podman run -d --name {{name}} docker.io/library/alpine:3.20 sleep 600",
+    "sudo podman inspect {{cname}} | grep -A6 Mounts",
+    ":answer /srv/{{dir}}",
+    ":answer b",
+    "systemd-detect-virt",
+    { answer_with = "systemd-detect-virt" },
+]
+
+[[solution]]
+name = "lsns and a drop-in"
+steps = [
+    { input = ["letslinux"] },
+    "sudo lsns -t uts",
+    "sudo nsenter --target=$(pgrep build-agent) --uts hostname",
+    ":answer {{uts}}",
+    "sudo mkdir -p /etc/systemd/system/{{svc}}.service.d",
+    "printf '[Service]\\nCPUQuota=50%%\\n' | sudo tee /etc/systemd/system/{{svc}}.service.d/cpu.conf",
+    "sudo systemctl daemon-reload",
+    "sudo systemctl set-property --runtime {{svc}}.service CPUQuota=50%",
+    "podman pull docker.io/library/alpine:3.20",
+    "podman run --detach --name={{name}} docker.io/library/alpine:3.20 sleep 600",
+    "sudo podman inspect -f '{{json .Mounts}}' {{cname}}",
+    ":answer /srv/{{dir}}/",
+    ":answer 2",
+    { answer_with = "systemd-detect-virt" },
+]
+
+[[counterexample]]
+name = "only until reboot, and as root"
+steps = [
+    { input = ["letslinux"] },
+    ":answer {{uts}}",
+    "sudo systemctl set-property --runtime {{svc}}.service CPUQuota=50%",
+    "sudo podman run -d --name {{name}} docker.io/library/alpine:3.20 sleep 600",
+    ":answer /srv/{{dir}}",
+    ":answer a",
+    { answer_with = "systemd-detect-virt" },
+]

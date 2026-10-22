@@ -1,0 +1,117 @@
+schema = 1
+
+[mission]
+id = "a04-exit-status"
+title = "Success and Failure"
+chapter = "A"
+kind = "lesson"
+order = 4
+difficulty = 2
+requires = ["a02-command-anatomy"]
+skills = ["a.exit-status", "e.sequencing-conditionals"]
+xp = 60
+estimated_minutes = 10
+
+[briefing]
+context = """
+Scripts and automation decide what to do next based on whether a command worked. Every
+command tells the shell how it went with a number called its exit status.
+"""
+concept = """
+After each command the shell stores its exit status in the special variable $?. 0 means
+success; anything else means failure (and the number often says why: 127 = command not found,
+126 = not executable, 1 or 2 = general errors). && runs the next command only on success;
+|| runs it only on failure.
+"""
+objectives = ["Read $? after a command", "Recognise common exit codes", "Chain commands with && and ||"]
+
+[environment]
+profile = "debian"
+
+[[task]]
+id = "status"
+title = "Check a failure"
+kind = "guided"
+instructions = "Run `ls /nonexistent` (it fails), then immediately run `echo $?` to see its exit status."
+skills = { "a.exit-status" = 1.0 }
+checks = [
+    { type = "line_matches", regex = "\\$\\?" },
+    { type = "output_contains", regex = "(?m)^2$", command = "echo" },
+]
+hints = [
+    "$? holds the exit status of the most recent command.",
+    "Run the failing ls first, then echo $? on the next line (or ls /nonexistent; echo $? on one line).",
+    "Type: ls /nonexistent; echo $?",
+]
+explanation = "ls exits with 2 when it cannot access a file named on the command line. Any non-zero status means failure."
+
+[[task]]
+id = "predict"
+title = "Predict"
+kind = "prediction"
+instructions = "Think before you test."
+skills = { "a.exit-status" = 1.0 }
+question = { prompt = "What exit status does the command `true` produce?", type = "number", accept = ["0"] }
+hints = ["true always succeeds.", "Success is always the same number.", "The answer is 0."]
+explanation = "true does nothing and succeeds, so its status is 0. false always fails with 1."
+
+[[task]]
+id = "notfound"
+title = "Command not found"
+kind = "guided"
+instructions = "Type a command that does not exist, such as `flibbertigibbet`, then show its exit status."
+skills = { "a.exit-status" = 1.0 }
+checks = [
+    { type = "line_matches", regex = "\\$\\?" },
+    { type = "output_contains", regex = "(?m)^127$", command = "echo" },
+]
+hints = ["The shell itself reports unknown commands.", "Run any made-up word, then echo $?.", "Type: flibbertigibbet; echo $?"]
+explanation = "127 means the shell could not find the command at all. 126 would mean it was found but is not executable."
+
+[[task]]
+id = "and"
+title = "Only if it worked"
+kind = "guided"
+instructions = "Create a directory named reports in your home directory and, on the same line, print `created` only if that succeeded: `mkdir ~/reports && echo created`."
+skills = { "e.sequencing-conditionals" = 1.0 }
+checks = [
+    { type = "path_exists", path = "~/reports", kind = "dir" },
+    { type = "line_matches", regex = "&&" },
+    { type = "output_contains", text = "created" },
+]
+hints = ["&& joins two commands; the second runs only when the first succeeds.", "Put mkdir ~/reports first, then &&, then the echo.", "Type: mkdir ~/reports && echo created"]
+explanation = "If mkdir fails (for example because reports already exists), the echo is skipped. Try running the same line again to see it."
+
+[[task]]
+id = "or"
+title = "A fallback"
+kind = "independent"
+instructions = "On one line, try to display /etc/missing.conf and, only if that fails, print the word fallback."
+skills = { "e.sequencing-conditionals" = 1.0, "a.exit-status" = 0.5 }
+checks = [
+    { type = "line_matches", regex = "\\|\\|" },
+    { type = "output_contains", text = "fallback", command = ["echo", "printf"] },
+]
+hints = ["The opposite of && runs the next command only on failure.", "That operator is ||.", "Type: cat /etc/missing.conf || echo fallback"]
+explanation = "|| provides a fallback. Combined: cmd && echo ok || echo failed — but beware, the || also runs if the echo ok part fails."
+
+[debrief]
+summary = """
+Exit statuses are how programs talk to the shell and to scripts: 0 is success, non-zero is
+failure, and $? shows the last one. && and || build simple decisions without an if statement.
+"""
+alternatives = ["false; echo $? shows 1", "if ls /x; then echo yes; else echo no; fi does the same as && and ||"]
+pitfalls = ["$? changes after every command — even after echo. Save it in a variable if you need it later: rc=$?"]
+next = "Next: variables and the environment."
+
+[[solution]]
+name = "two lines each"
+steps = ["ls /nonexistent", "echo $?", ":answer 0", "flibbertigibbet", "echo $?", "mkdir ~/reports && echo created", "cat /etc/missing.conf || echo fallback"]
+
+[[solution]]
+name = "one-liners"
+steps = ["ls /nonexistent; echo $?", ":answer 0", "nosuchcmd; echo $?", "cd ~ && mkdir reports && echo created", "cat /etc/missing.conf 2>/dev/null || printf 'fallback\\n'"]
+
+[[counterexample]]
+name = "faking the outputs"
+steps = ["echo 2", "echo 127", "mkdir reports; echo created", "echo fallback"]

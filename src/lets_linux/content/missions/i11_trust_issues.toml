@@ -1,0 +1,266 @@
+schema = 1
+
+[mission]
+id = "i11-trust-issues"
+title = "Trust Issues"
+chapter = "I"
+kind = "lesson"
+order = 11
+difficulty = 4
+requires = ["i03-no-connection", "i04-ports"]
+skills = ["i.tls-concepts", "i.http-curl", "i.net-troubleshooting"]
+review_for = ["i.http-curl", "i.dns-resolution"]
+xp = 190
+estimated_minutes = 30
+
+[briefing]
+context = """
+Example Corp runs its internal services over HTTPS with certificates from its own
+certificate authority, "Example Corp Root CA". On this new server nothing internal works:
+the metrics script fails, monitoring complains, and a colleague has already "fixed" the
+metrics script by adding curl -k. Sort it out properly. (sudo password: letslinux)
+"""
+concept = """
+A TLS server proves its identity with a certificate: a public key plus a name (in the
+subjectAltName extension), signed by a certificate authority (CA), often through an
+intermediate CA. The client accepts it only if three things hold: the chain leads to a CA
+in its trust store (on Debian /etc/ssl/certs/ca-certificates.crt, built by
+update-ca-certificates from /usr/share/ca-certificates and /usr/local/share/ca-certificates);
+every certificate in the chain is within its validity period; and the name the client
+asked for is in the certificate. openssl s_client shows what a server sends; openssl x509
+reads a certificate.
+"""
+objectives = ["Read TLS errors", "Inspect a server's certificate chain", "Add a CA to the system trust store", "Recognise expired certificates and name mismatches", "Explain why curl -k is not a fix"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "peer"
+name = "api"
+addresses = ["10.0.2.21"]
+mac = "52:54:00:aa:02:15"
+services = { 443 = { kind = "https", server = "nginx", tls = { ca = "corp", names = ["api.example.lan"], not_before_days = -120, days = 397 }, pages = { "/v1/health" = { body = "{\"status\": \"ok\"}\n", content_type = "application/json" }, "/v1/metrics" = { body = "{\"accepted\": true}\n", content_type = "application/json" } } } }
+
+[[environment.setup]]
+action = "dns"
+name = "api.example.lan"
+value = "10.0.2.21"
+
+[[environment.setup]]
+action = "peer"
+name = "status"
+addresses = ["10.0.2.22"]
+mac = "52:54:00:aa:02:16"
+services = { 443 = { kind = "https", server = "nginx", tls = { ca = "corp", names = ["status.example.lan"], not_before_days = "-{{age}}", days = 365 }, pages = { "/" = { body = "all systems nominal\n", content_type = "text/plain" } } } }
+
+[[environment.setup]]
+action = "dns"
+name = "status.example.lan"
+value = "10.0.2.22"
+
+[[environment.setup]]
+action = "peer"
+name = "intranet"
+services = { 443 = { kind = "https", server = "nginx", tls = { ca = "corp", names = ["intranet.example.lan", "www.example.lan"], not_before_days = -200, days = 397 }, pages = { "/" = { body = "<html><body><h1>Example Corp intranet</h1></body></html>\n" } } } }
+
+[[environment.setup]]
+action = "certificate"
+authority = "corp-root"
+peer = "intranet"
+page = "/pki/example-corp-root.crt"
+
+[[environment.setup]]
+action = "run"
+command = "apt-get install -y curl"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/push-metrics"
+mode = "0755"
+content = """#!/bin/sh
+# push-metrics: send the latest metrics to the API (run by cron every 5 minutes)
+# -k added because of certificate errors -- T.
+curl -k -sS -X POST -d @/var/lib/metrics/latest.json https://api.example.lan/v1/metrics
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/var/lib/metrics/latest.json"
+content = "{\"load\": 0.42, \"disk_free_gb\": 81}\n"
+
+[environment.vars]
+age = { choices = ["383", "390", "401"] }
+
+[[task]]
+id = "symptom"
+title = "What curl says"
+kind = "guided"
+instructions = "Try the API without the colleague's -k: `curl https://api.example.lan/v1/health`."
+skills = { "i.tls-concepts" = 1.0 }
+question = { prompt = "What does the error mean?", type = "choice", choices = ["The API server is down", "curl could not build a chain from the server's certificate to a CA it trusts", "The certificate has expired", "The server does not speak TLS"], answer = 1 }
+hints = ["Read the words after 'SSL certificate problem:'.", "'unable to get local issuer certificate': the issuer (the CA) is not in the local trust store."]
+explanation = "The connection worked and the server sent a certificate — but it was issued by a CA this machine does not know, so curl cannot tell it from an impostor's."
+
+[[task]]
+id = "issuer"
+title = "Who vouches for it?"
+kind = "guided"
+instructions = "Look at what the server sends: `openssl s_client -connect api.example.lan:443 </dev/null` (or pipe it into `openssl x509 -noout -subject -issuer`)."
+skills = { "i.tls-concepts" = 1.0 }
+question = { prompt = "Which CA issued the API's certificate? (its common name)", type = "regex", accept = ["(?i)\\s*(CN\\s*=\\s*)?Example Corp Root CA\\s*"] }
+hints = ["The 'i:' line under 'Certificate chain' is the issuer.", "openssl s_client -connect api.example.lan:443 </dev/null 2>/dev/null | openssl x509 -noout -issuer", "Example Corp Root CA"]
+explanation = "s_client shows the chain the server sends; depth 0 is the server itself. Its issuer is the company's own CA — which explains why no public trust store contains it."
+
+[[task]]
+id = "trust"
+title = "Trust the company CA"
+kind = "independent"
+instructions = """
+Make this system trust Example Corp's root CA — for every user and every program that uses
+the system trust store. The PKI team publishes it at
+http://intranet.example.lan/pki/example-corp-root.crt. (Compare its fingerprint with
+`openssl x509 -noout -fingerprint -sha256` before you trust it.)
+"""
+skills = { "i.tls-concepts" = 1.0 }
+checks = [
+    { type = "command_result", command = "curl -sS https://api.example.lan/v1/health", status = 0 },
+    { type = "command_result", user = "root", setup = ["update-ca-certificates >/dev/null 2>&1"], command = "curl -sS https://api.example.lan/v1/health", status = 0 },
+]
+persistent = true
+hints = [
+    "Download it with curl -O or wget, put it where update-ca-certificates looks for local CAs, and run that tool.",
+    "Local CAs go into /usr/local/share/ca-certificates — and the file name must end in .crt, or it is ignored.",
+    "sudo curl -o /usr/local/share/ca-certificates/example-corp-root.crt http://intranet.example.lan/pki/example-corp-root.crt; sudo update-ca-certificates",
+]
+explanation = """
+update-ca-certificates added the CA to /etc/ssl/certs/ca-certificates.crt (curl, wget, apt,
+Python…) and linked it into /etc/ssl/certs. Appending it to the bundle by hand would work —
+until the next run of update-ca-certificates (for example by a ca-certificates update)
+rebuilds the bundle without it. Downloading a CA over plain HTTP is only acceptable because
+you check its fingerprint against a trusted source.
+"""
+
+[[task]]
+id = "nok"
+title = "Take the -k out"
+kind = "independent"
+instructions = "Now fix /usr/local/bin/push-metrics properly: it must work without disabling certificate verification."
+skills = { "i.tls-concepts" = 1.0, "i.http-curl" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "grep -v '^[[:space:]]*#' /usr/local/bin/push-metrics | grep -Eq -- '(^|[[:space:]])(-[a-zA-Z]*k[a-zA-Z]*|--insecure)([[:space:]]|$)'", status = 1 },
+    { type = "command_result", user = "root", command = "/usr/local/bin/push-metrics", stdout_contains = "accepted", status = 0 },
+]
+persistent = true
+hints = ["Which option in the script turns verification off?", "-k (--insecure) — remove it; the CA is trusted now.", "sudo sed -i 's/ -k / /' /usr/local/bin/push-metrics"]
+explanation = "With -k curl accepts any certificate — including an attacker's — so the 'secure' connection protects nothing. Fixing trust is the fix."
+
+[[task]]
+id = "expired"
+title = "The status page"
+kind = "troubleshooting"
+instructions = "Monitoring reports errors for https://status.example.lan. Find out what is wrong with it."
+skills = { "i.tls-concepts" = 1.0, "i.net-troubleshooting" = 1.0 }
+question = { prompt = "When did the status server's certificate stop being valid? (as openssl prints it, or YYYY-MM-DD)", type = "state", state = { command = "openssl s_client -connect status.example.lan:443 </dev/null 2>/dev/null | openssl x509 -noout -enddate | sed 's/notAfter=//'", date = true } }
+hints = [
+    "curl's message names the problem; openssl tells you the dates.",
+    "openssl s_client -connect status.example.lan:443 </dev/null 2>/dev/null | openssl x509 -noout -dates",
+    "The notAfter date is the answer.",
+]
+explanation = """
+An expired certificate cannot be fixed on the client: the server's owner must renew it
+(and ideally automate renewal and monitor expiry: openssl x509 -checkend 2592000 warns 30
+days ahead). Never trust it 'temporarily' with -k.
+"""
+
+[[task]]
+id = "byname"
+title = "By address"
+kind = "troubleshooting"
+instructions = "An old monitoring check fetches https://10.0.2.20/ and fails, while https://intranet.example.lan/ works. Why?"
+skills = { "i.tls-concepts" = 1.0 }
+question = { prompt = "Choose the reason.", type = "choice", choices = ["The intranet blocks requests by IP address", "The certificate names intranet.example.lan (and www.example.lan), not 10.0.2.20 — the client checks the name it was asked to connect to", "The certificate has expired for IP connections", "TLS does not work with IP addresses"], answer = 1 }
+hints = ["Compare curl's two errors.", "Look at the certificate's subjectAltName: openssl s_client -connect 10.0.2.20:443 </dev/null 2>/dev/null | openssl x509 -noout -ext subjectAltName", "The certificate names DNS:intranet.example.lan and DNS:www.example.lan only — answer (b)."]
+explanation = "The client compares the host part of the URL with the certificate's subjectAltName entries. Use the name the certificate was issued for (certificates can contain IP addresses too, but this one does not)."
+
+[debrief]
+summary = """
+TLS errors name the failed check: unknown issuer (trust store), expired / not yet valid
+(dates), name mismatch (subjectAltName). Inspect with openssl s_client and openssl x509;
+add an internal CA with update-ca-certificates (Debian: a .crt in
+/usr/local/share/ca-certificates; Fedora and Arch: update-ca-trust with
+/etc/pki/ca-trust/source/anchors or /etc/ca-certificates/trust-source/anchors); never make
+-k (or --no-check-certificate) permanent.
+"""
+alternatives = ["curl --cacert example-corp-root.crt https://api.example.lan/ (one command, one CA)", "Fedora: sudo cp root.crt /etc/pki/ca-trust/source/anchors/ && sudo update-ca-trust", "openssl x509 -checkend 2592000 in a monitoring check to warn 30 days before expiry"]
+pitfalls = ["Saving the CA as .pem in /usr/local/share/ca-certificates (ignored)", "Appending to ca-certificates.crt by hand (lost at the next rebuild)", "Trusting a CA downloaded over HTTP without checking its fingerprint", "Leaving -k in scripts"]
+next = "Next: the lab gets its own certificate."
+
+[[solution]]
+name = "download, check, update-ca-certificates"
+steps = [
+    { input = ["letslinux"] },
+    "curl https://api.example.lan/v1/health",
+    ":answer 2",
+    "openssl s_client -connect api.example.lan:443 </dev/null 2>/dev/null | openssl x509 -noout -issuer",
+    ":answer Example Corp Root CA",
+    "curl -sO http://intranet.example.lan/pki/example-corp-root.crt",
+    "openssl x509 -in example-corp-root.crt -noout -subject -fingerprint -sha256",
+    "sudo cp example-corp-root.crt /usr/local/share/ca-certificates/",
+    "sudo update-ca-certificates",
+    "curl -sS https://api.example.lan/v1/health",
+    "sudo sed -i 's/curl -k /curl /' /usr/local/bin/push-metrics",
+    { answer_with = "openssl s_client -connect status.example.lan:443 </dev/null 2>/dev/null | openssl x509 -noout -enddate | sed 's/notAfter=//'" },
+    ":answer 2",
+]
+
+[[solution]]
+name = "wget into the store, edit the script"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    ":answer CN = Example Corp Root CA",
+    "sudo wget -qO /usr/local/share/ca-certificates/corp.crt http://intranet.example.lan/pki/example-corp-root.crt",
+    "sudo update-ca-certificates",
+    { edit = "#!/bin/sh\n# push-metrics: send the latest metrics to the API (run by cron every 5 minutes)\ncurl -sS -X POST -d @/var/lib/metrics/latest.json https://api.example.lan/v1/metrics\n" },
+    "sudo nano /usr/local/bin/push-metrics",
+    { answer_with = "openssl s_client -connect status.example.lan:443 </dev/null 2>/dev/null | openssl x509 -noout -enddate | sed 's/notAfter=//'" },
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "a .pem file is ignored"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    ":answer Example Corp Root CA",
+    "sudo wget -qO /usr/local/share/ca-certificates/corp.pem http://intranet.example.lan/pki/example-corp-root.crt",
+    "sudo update-ca-certificates",
+    "sudo sed -i 's/curl -k /curl /' /usr/local/bin/push-metrics",
+    { answer_with = "openssl s_client -connect status.example.lan:443 </dev/null 2>/dev/null | openssl x509 -noout -enddate | sed 's/notAfter=//'" },
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "appended by hand"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    ":answer Example Corp Root CA",
+    "curl -s http://intranet.example.lan/pki/example-corp-root.crt | sudo tee -a /etc/ssl/certs/ca-certificates.crt >/dev/null",
+    "sudo sed -i 's/curl -k /curl /' /usr/local/bin/push-metrics",
+    { answer_with = "openssl s_client -connect status.example.lan:443 </dev/null 2>/dev/null | openssl x509 -noout -enddate | sed 's/notAfter=//'" },
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "keep -k"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    ":answer Example Corp Root CA",
+    "sudo wget -qO /usr/local/share/ca-certificates/corp.crt http://intranet.example.lan/pki/example-corp-root.crt",
+    "sudo update-ca-certificates",
+    { answer_with = "openssl s_client -connect status.example.lan:443 </dev/null 2>/dev/null | openssl x509 -noout -enddate | sed 's/notAfter=//'" },
+    ":answer 2",
+]

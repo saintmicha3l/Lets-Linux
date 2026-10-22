@@ -1,0 +1,117 @@
+schema = 1
+
+[mission]
+id = "a05-environment"
+title = "Variables and Your Environment"
+chapter = "A"
+kind = "lesson"
+order = 5
+difficulty = 2
+requires = ["a04-exit-status"]
+skills = ["a.env-vars-intro", "e.env-inheritance"]
+xp = 60
+estimated_minutes = 10
+
+[briefing]
+context = """
+A deployment script keeps failing on this server with "command not found", yet the program is
+installed. Before you can debug that kind of problem you need to understand the environment
+every program inherits.
+"""
+concept = """
+The shell keeps variables: NAME=value sets one (no spaces around =), and $NAME expands it.
+Exported variables form the environment, which is copied into every program the shell
+starts. PATH is the most important: a colon-separated list of directories searched for
+commands.
+"""
+objectives = ["Print variables with echo", "List the environment", "Create and export a variable"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+project = { choices = ["apollo", "gemini", "mercury", "artemis"] }
+
+[[task]]
+id = "home"
+title = "Your home"
+kind = "guided"
+instructions = "Print the value of the HOME variable with `echo $HOME`."
+skills = { "a.env-vars-intro" = 1.0 }
+checks = [
+    { type = "line_matches", regex = "\\$\\{?HOME" },
+    { type = "output_contains", text = "/home/learner" },
+]
+hints = ["A $ in front of a name expands the variable.", "echo prints the expanded value.", "Type: echo $HOME"]
+explanation = "$HOME expands to your home directory before echo runs; echo just prints the result."
+
+[[task]]
+id = "env"
+title = "The whole environment"
+kind = "guided"
+instructions = "List every environment variable with `env` (or `printenv`)."
+skills = { "a.env-vars-intro" = 1.0 }
+checks = [{ type = "output_contains", text = "PATH=", command = ["env", "printenv", "export", "declare", "set"] }]
+hints = ["There is a command whose name is short for 'environment'.", "Try env or printenv with no arguments.", "Type: env"]
+explanation = "env prints NAME=value lines: these are inherited by every program you start."
+
+[[task]]
+id = "path"
+title = "Read PATH"
+kind = "independent"
+instructions = "Inspect your PATH."
+skills = { "a.env-vars-intro" = 1.0, "e.path-lookup" = 0.5 }
+question = { prompt = "Which directory is searched FIRST when you type a command name?", type = "exact", accept = ["/usr/local/bin", "/usr/local/bin/"] }
+hints = ["echo $PATH shows the search list.", "Directories are separated by colons and searched left to right.", "The first entry is /usr/local/bin."]
+explanation = "The shell tries each PATH directory in order and runs the first match. That is why a program in /usr/local/bin overrides one in /usr/bin."
+
+[[task]]
+id = "set"
+title = "Create a variable"
+kind = "guided"
+instructions = "Create a shell variable named PROJECT with the value {{project}}. Remember: no spaces around =."
+skills = { "a.env-vars-intro" = 1.0, "e.variables-expansion" = 0.5 }
+checks = [{ type = "shell_var", name = "PROJECT", value = "{{project}}" }]
+hints = ["The form is NAME=value.", "Spaces would make the shell treat PROJECT as a command name.", "Type: PROJECT={{project}}"]
+explanation = "PROJECT={{project}} creates a shell variable. echo $PROJECT now prints {{project}}."
+
+[[task]]
+id = "export"
+title = "Share it with child processes"
+kind = "guided"
+instructions = "Export PROJECT so programs started from this shell can see it, then verify with `bash -c 'echo $PROJECT'`."
+skills = { "e.env-inheritance" = 1.0 }
+checks = [{ type = "shell_var", name = "PROJECT", value = "{{project}}", exported = true }]
+hints = ["Variables are private to the shell until exported.", "The builtin is export NAME.", "Type: export PROJECT"]
+explanation = "export marks the variable for the environment; child processes receive a copy."
+
+[[task]]
+id = "inherit"
+title = "Copies, not shares"
+kind = "prediction"
+instructions = "Reason about inheritance."
+skills = { "e.env-inheritance" = 1.0 }
+question = { prompt = "A script you run does PROJECT=changed. After the script exits, what does echo $PROJECT print in your shell?", type = "choice", choices = ["changed", "{{project}}", "nothing (empty)", "an error"], answer = 1 }
+hints = ["The script runs as a separate child process.", "A child gets a copy of the environment; it cannot modify the parent's.", "The answer is (b): your shell still has {{project}}."]
+explanation = "Children receive copies. This is why a script cannot change your current directory or variables — unless you source it with . script."
+
+[debrief]
+summary = """
+Variables hold values; exported variables form the environment inherited by child processes.
+PATH decides which program runs when you type a name. Many 'command not found' and 'works for
+me but not in cron' problems are really environment problems.
+"""
+alternatives = ["export PROJECT={{project}} sets and exports in one step", "declare -x PROJECT also exports"]
+pitfalls = ["PROJECT = x (with spaces) runs a command named PROJECT.", "Single quotes stop expansion: echo '$HOME' prints $HOME literally."]
+next = "You are ready for the chapter A check-up."
+
+[[solution]]
+name = "step by step"
+steps = ["echo $HOME", "env", ":answer /usr/local/bin", "PROJECT={{project}}", "export PROJECT", "bash -c 'echo $PROJECT'", ":answer b"]
+
+[[solution]]
+name = "export in one step"
+steps = ["echo ${HOME}", "printenv | grep PATH", ":answer /usr/local/bin/", "export PROJECT={{project}}", ":answer {{project}}"]
+
+[[counterexample]]
+name = "spaces around the equals sign"
+steps = ["echo $HOME", "env", ":answer /usr/local/bin", "PROJECT = {{project}}", "export PROJECT"]

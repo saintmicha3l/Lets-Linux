@@ -1,0 +1,149 @@
+schema = 1
+
+[mission]
+id = "f07-local-software"
+title = "Not From the Package Manager"
+chapter = "F"
+kind = "lesson"
+order = 9
+difficulty = 4
+requires = ["f02-cleaning-up", "b08-archives"]
+skills = ["f.local-software", "b.fhs-layout", "e.path-lookup"]
+review_for = ["b.links-hard-inodes", "f.file-ownership"]
+xp = 160
+estimated_minutes = 25
+
+[briefing]
+context = """
+The support team uses logview, a small tool that no distribution packages. Version 2.3 has
+been downloaded to ~/downloads. Someone installed version 1.0 by hand years ago, and
+nobody remembers where. Install 2.3 the tidy way, so that every user gets 2.3 when typing
+logview — and so that the next admin can see what was installed by hand.
+(sudo password: letslinux)
+"""
+concept = """
+The Filesystem Hierarchy Standard gives every directory a purpose: /etc configuration,
+/var variable data (logs, spools, caches), /usr programs and libraries from packages,
+/home users' files, /tmp scratch space, /proc and /sys kernel interfaces. The package
+manager owns /usr (except /usr/local) — never put files there by hand. Software you
+install yourself goes to /usr/local (bin, lib, share: like /usr, but yours) or, as a
+self-contained directory, to /opt/NAME. PATH lists /usr/local/bin before /usr/bin, so local
+versions win. Find every copy of a command with type -a NAME (or which -a); ask the
+package manager whether it knows a file (dpkg -S). A symlink /usr/local/bin/NAME →
+/opt/NAME-VERSION/bin/NAME makes switching versions a one-line change.
+"""
+objectives = ["Know what belongs where in the FHS", "Find which copy of a command runs", "Install unpackaged software under /opt with a link in /usr/local/bin", "Weigh the costs of unpackaged software"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /tmp/build/logview-2.3/bin /tmp/build/logview-2.3/share && printf '#!/bin/sh\\n[ \"$1\" = --version ] && { echo \"logview 2.3\"; exit 0; }\\nexec tail -n \"${LINES:-20}\" \"${1:-/var/log/syslog}\"\\n' > /tmp/build/logview-2.3/bin/logview && chmod 755 /tmp/build/logview-2.3/bin/logview && printf 'logview 2.3\\n\\nInstall: copy this directory anywhere (e.g. /opt) and put bin/logview in PATH.\\n' > /tmp/build/logview-2.3/README && mkdir -p /home/learner/downloads && tar -C /tmp/build -czf /home/learner/downloads/logview-2.3.tar.gz logview-2.3 && chown -R learner:learner /home/learner/downloads && rm -r /tmp/build"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/logview"
+mode = "0755"
+content = """#!/bin/sh
+# logview 1.0 — installed by hand
+[ "$1" = --version ] && { echo "logview 1.0"; exit 0; }
+exec tail "${1:-/var/log/syslog}"
+"""
+
+[[task]]
+id = "fhs"
+title = "What goes where"
+kind = "explanation"
+instructions = "Before installing anything, decide where it belongs."
+skills = { "b.fhs-layout" = 1.0, "f.local-software" = 0.5 }
+question = { prompt = "Where does software you install yourself (not from packages) belong?", type = "choice", choices = ["/usr/bin — that is where programs live", "/usr/local or /opt — /usr outside /usr/local belongs to the package manager", "/var/lib"], answer = 1 }
+hints = ["Who manages /usr/bin?", "The package manager may overwrite or remove files in its directories at any upgrade.", "(b)"]
+explanation = "/usr/local mirrors /usr for local software; /opt holds self-contained add-on packages. /var is for data that changes, /etc for configuration."
+
+[[task]]
+id = "which"
+title = "Which logview?"
+kind = "troubleshooting"
+instructions = "Find out where the logview that runs today comes from."
+skills = { "e.path-lookup" = 1.0, "f.local-software" = 0.5 }
+question = { prompt = "Full path of the logview that runs?", type = "exact", accept = ["/usr/local/bin/logview"] }
+hints = ["type -a logview lists every logview in PATH order.", "Does a package own it? dpkg -S /usr/local/bin/logview", "/usr/local/bin/logview — version 1.0, unknown to dpkg."]
+explanation = "Nothing records that this file exists: no package, no version information beyond what the script itself says."
+
+[[task]]
+id = "install"
+title = "Install 2.3 tidily"
+kind = "independent"
+instructions = "Unpack logview 2.3 to /opt/logview-2.3 and make logview (for every user, without changing anyone's PATH) run version 2.3 from there. Nothing may be added to /usr/bin."
+skills = { "f.local-software" = 1.0, "b.fhs-layout" = 1.0 }
+checks = [
+    { type = "path_exists", path = "/opt/logview-2.3/bin/logview", kind = "file" },
+    { type = "command_result", user = "learner", login = true, command = "logview --version", stdout_equals = "logview 2.3\n" },
+    { type = "command_result", user = "www-data", command = "PATH=/usr/local/bin:/usr/bin:/bin logview --version", stdout_equals = "logview 2.3\n" },
+    { type = "symlink_to", path = "/usr/local/bin/logview", target = "/opt/logview-2.3/bin/logview" },
+    { type = "path_absent", path = "/usr/bin/logview" },
+]
+hints = [
+    "tar can extract into another directory: sudo tar -xzf ~/downloads/logview-2.3.tar.gz -C /opt",
+    "Replace the old file in /usr/local/bin with a symbolic link to the new program.",
+    "sudo ln -sf /opt/logview-2.3/bin/logview /usr/local/bin/logview && type -a logview && logview --version",
+]
+explanation = "One directory per version under /opt, one link in /usr/local/bin: upgrading later means unpacking 2.4 next to it and moving the link; ls -l /usr/local/bin shows what is installed by hand."
+
+[[task]]
+id = "cost"
+title = "The price"
+kind = "explanation"
+instructions = "Unpackaged software is sometimes necessary — but not free."
+skills = { "f.local-software" = 1.0 }
+question = { prompt = "What do you give up compared with a distribution package?", type = "choice", choices = ["Nothing", "Automatic security updates, dependency tracking and a record of installed files — you must watch for new versions and remove it by hand", "The program runs slower"], answer = 1 }
+hints = ["What does apt upgrade do for packaged software?", "Who will notice when logview 2.3 has a security hole?", "(b)"]
+explanation = "Document hand-installed software (a README in /opt, a ticket), or build a package for it."
+
+[debrief]
+summary = """
+FHS: /usr is the package manager's; /usr/local and /opt are yours. type -a NAME and dpkg -S
+PATH reveal hand-installed copies. /opt/NAME-VERSION + a symlink in /usr/local/bin.
+"""
+alternatives = ["stow or update-alternatives manage such links", "checkinstall or a small .deb package keeps dpkg informed", "Per-user software: ~/.local/bin"]
+pitfalls = ["Copying files into /usr/bin by hand.", "Leaving the old copy earlier in PATH and wondering why nothing changed.", "Forgetting hand-installed software when patching."]
+next = "Chapter F is complete."
+
+[[solution]]
+name = "extract and link"
+steps = [
+    ":answer b",
+    "type -a logview",
+    ":answer /usr/local/bin/logview",
+    { input = ["letslinux"] },
+    "sudo tar -xzf ~/downloads/logview-2.3.tar.gz -C /opt",
+    "sudo ln -sf /opt/logview-2.3/bin/logview /usr/local/bin/logview",
+    "logview --version",
+    ":answer b",
+]
+
+[[solution]]
+name = "rm and ln"
+steps = [
+    ":answer /usr/local or /opt — /usr outside /usr/local belongs to the package manager",
+    "which logview",
+    ":answer /usr/local/bin/logview",
+    "cd /tmp && tar xzf ~/downloads/logview-2.3.tar.gz",
+    { input = ["letslinux"] },
+    "sudo mv /tmp/logview-2.3 /opt/",
+    "sudo rm /usr/local/bin/logview",
+    "sudo ln -s /opt/logview-2.3/bin/logview /usr/local/bin/logview",
+    ":answer b",
+]
+
+[[counterexample]]
+name = "copy into /usr/bin"
+steps = [
+    ":answer b",
+    ":answer /usr/local/bin/logview",
+    { input = ["letslinux"] },
+    "sudo tar -xzf ~/downloads/logview-2.3.tar.gz -C /opt",
+    "sudo cp /opt/logview-2.3/bin/logview /usr/bin/logview",
+    ":answer b",
+]

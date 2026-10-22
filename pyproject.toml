@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lets-linux"
+description = "A mastery-based Linux education platform delivered through an interactive terminal game."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Let's Linux contributors" }]
+keywords = ["linux", "education", "terminal", "game", "shell", "sysadmin"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Education",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Education",
+    "Topic :: System :: Systems Administration",
+]
+dependencies = [
+    "textual>=8.2,<9",
+    "rich>=13.7",
+]
+dynamic = ["version"]
+
+[project.scripts]
+lets-linux = "lets_linux.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "lets_linux.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+lets_linux = ["content/**/*.toml", "terminal/styles/*.tcss", "py.typed"]

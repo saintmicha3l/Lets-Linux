@@ -1,0 +1,237 @@
+schema = 1
+
+[mission]
+id = "m01-what-changed"
+title = "It Worked Yesterday"
+chapter = "M"
+kind = "troubleshooting"
+order = 2
+difficulty = 5
+requires = ["h04-wont-start", "k01-cron-jobs", "m00b-building-a-timeline"]
+skills = ["m.evidence-correlation", "m.service-rca", "m.verification"]
+review_for = ["h.journalctl", "k.cron-basics", "c.diff-compare"]
+xp = 200
+estimated_minutes = 30
+
+[briefing]
+context = """
+The metrics agent on this Debian server stopped reporting a few hours ago. Nobody admits to
+having touched it. Find out exactly when it broke, what changed at that moment, and who or
+what changed it — then fix the cause so that it stays fixed. (sudo password: letslinux)
+"""
+concept = """
+"What changed?" is the most productive question in troubleshooting. Pin the time of the
+first failure (systemctl status, journalctl -u UNIT), then look for anything else that
+happened then: files modified around that time (stat, ls -l --time-style=full-iso,
+find /etc -newermt 'YYYY-MM-DD HH:MM'), scheduled jobs (journalctl -t CRON, /etc/cron.d),
+package changes (/var/log/dpkg.log), other messages (journalctl --since … --until …).
+Correlating timestamps across sources turns a guess into evidence. Then fix the *cause*: if
+an automated process changed a file, fixing only the file is undone the next time it runs —
+verify by letting that time pass.
+"""
+objectives = ["Find when a failure began", "Correlate it with file changes and scheduled jobs", "Identify the cause, not just the symptom", "Fix it where it originates and verify over time"]
+
+[environment]
+profile = "debian"
+packages = ["netcat"]
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/metrics-agent"
+mode = "0755"
+content = """#!/bin/sh
+# metrics-agent 1.4 — exports host metrics on port 9256
+conf=/etc/metrics-agent.conf
+if grep -q '^interval_sec' "$conf"; then
+  echo "metrics-agent: $conf: line $(grep -n '^interval_sec' "$conf" | cut -d: -f1): unknown key 'interval_sec' (known keys: interval, listen, labels)" >&2
+  exit 78
+fi
+exec /usr/bin/nc -lk 9256
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/etc/metrics-agent.conf"
+content = """# metrics-agent configuration (managed by config-sync)
+interval = 15
+listen = 0.0.0.0:9256
+labels = env=prod,role=web
+"""
+
+[[environment.setup]]
+action = "service"
+name = "metrics-agent.service"
+enable = true
+start = true
+content = """[Unit]
+Description=Host metrics agent
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+User=nobody
+ExecStart=/usr/local/bin/metrics-agent
+Restart=on-failure
+RestartSec=20
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/srv/config-repo/metrics-agent.conf"
+content = """# metrics-agent configuration (managed by config-sync)
+interval = 15
+listen = 0.0.0.0:9256
+labels = env=prod,role=web
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/sbin/config-sync"
+mode = "0755"
+content = """#!/bin/sh
+# Copy changed configuration from the platform team's repository and restart the service.
+for f in /srv/config-repo/*.conf; do
+  dest=/etc/$(basename "$f")
+  if ! cmp -s "$f" "$dest"; then
+    cp "$f" "$dest"
+    logger -t config-sync "updated $dest from the config repository"
+    systemctl restart "$(basename "$f" .conf)"
+  fi
+done
+"""
+
+[[environment.setup]]
+action = "file"
+path = "/etc/cron.d/config-sync"
+content = """# platform team: keep /etc in line with the config repository
+0 * * * * root /usr/local/sbin/config-sync
+"""
+
+[[environment.setup]]
+action = "run"
+command = "sleep 2400"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/config-repo/metrics-agent.conf"
+content = """# metrics-agent configuration (managed by config-sync)
+# 2.0 format: interval in seconds
+interval_sec = 15
+listen = 0.0.0.0:9256
+labels = env=prod,role=web
+"""
+
+[[environment.setup]]
+action = "run"
+command = "sleep 10800"
+
+[[task]]
+id = "when"
+title = "When did it break?"
+kind = "troubleshooting"
+instructions = "Find out when the agent first failed."
+skills = { "m.evidence-correlation" = 1.0 }
+question = { prompt = "Time of the first failure (HH:MM)?", type = "state", state = { command = "journalctl -u metrics-agent | grep -m1 'unknown key' | awk '{print substr($3, 1, 5)}'" } }
+hints = ["systemctl status metrics-agent shows the current state; the journal has the history.", "journalctl -u metrics-agent — look for the first error.", "The first 'unknown key' line; its timestamp is the moment of failure."]
+explanation = "The agent ran happily until then and has refused to start since: it rejects a key in its configuration."
+
+[[task]]
+id = "who"
+title = "What changed it?"
+kind = "troubleshooting"
+instructions = "The configuration file changed at the moment the agent broke. Find out what changed it."
+skills = { "m.evidence-correlation" = 1.0, "k.cron-basics" = 0.5 }
+question = { prompt = "Which program wrote the new configuration?", type = "exact", accept = ["config-sync", "/usr/local/sbin/config-sync"] }
+hints = [
+    "When was /etc/metrics-agent.conf last modified? stat /etc/metrics-agent.conf",
+    "What ran at exactly that minute? journalctl --since 'HH:MM' --until 'HH:MM+1' (fill in the times) — look for CRON and other programs.",
+    "A cron job ran /usr/local/sbin/config-sync, which logged 'updated /etc/metrics-agent.conf' (journalctl -t config-sync).",
+]
+explanation = "Timestamps line up: cron started config-sync, config-sync copied a new file from /srv/config-repo and restarted the agent, the agent rejected it."
+
+[[task]]
+id = "fix"
+title = "Fix it where it starts"
+kind = "independent"
+instructions = "Get the agent running again in a way that survives the next config-sync run. The sync job itself must keep running for the other services."
+skills = { "m.service-rca" = 1.0, "m.verification" = 1.0 }
+checks = [
+    { type = "unit_state", unit = "metrics-agent.service", active = "active" },
+    { type = "port_listening", port = 9256 },
+    { type = "path_exists", path = "/etc/cron.d/config-sync" },
+    { type = "file_contains", path = "/etc/cron.d/config-sync", regex = "(?m)^0 \\* \\* \\* \\* root /usr/local/sbin/config-sync" },
+    { type = "command_result", user = "root", setup = ["sleep 3700"], command = "systemctl is-active metrics-agent", stdout_equals = "active\n" },
+]
+hints = [
+    "Compare what the agent understands (its error message lists the known keys) with what the repository now contains: diff /srv/config-repo/metrics-agent.conf /etc/metrics-agent.conf",
+    "If you only edit /etc/metrics-agent.conf, config-sync copies the repository version over it again at the next full hour. The fix belongs in /srv/config-repo.",
+    "sudo sed -i 's/^interval_sec/interval/' /srv/config-repo/metrics-agent.conf && sudo /usr/local/sbin/config-sync (or copy and sudo systemctl restart metrics-agent)",
+]
+explanation = "The game let an hour pass on a copy of the machine: config-sync ran, found nothing new, and the agent kept running. (The real long-term fix: upgrade the agent to 2.0 before the repository switches formats.)"
+
+[[task]]
+id = "lesson"
+title = "Why not just fix /etc?"
+kind = "explanation"
+instructions = "Explain the trap."
+skills = { "m.verification" = 1.0 }
+question = { prompt = "Why would correcting only /etc/metrics-agent.conf not be a real fix?", type = "choice", choices = ["Editing /etc needs a reboot", "config-sync would overwrite it from the repository at the next full hour and restart the agent — the failure would return", "The agent does not read /etc"], answer = 1 }
+hints = ["What does config-sync do every hour?", "The repository is the source of truth for /etc/metrics-agent.conf.", "(b)"]
+explanation = "Whenever automation manages a file, fix the source the automation reads — and verify across one more run."
+
+[debrief]
+summary = """
+Time of failure (journalctl -u) → what else happened then (stat, find -newermt, journalctl
+--since/--until, CRON lines) → the chain of cause → fix at the source → verify after the
+automation ran again.
+"""
+alternatives = ["ls -l --time-style=full-iso /etc | sort -k6,7 lists the most recently changed files", "journalctl -o short-precise for sub-second ordering", "A change log or configuration management with reviews prevents surprises like this"]
+pitfalls = ["Restarting until it works: the cause stays.", "Fixing the copy instead of the source.", "Declaring success before the next scheduled run."]
+next = "Next: a full disk that is not what it seems."
+
+[[solution]]
+name = "status, stat, journal"
+steps = [
+    "systemctl status metrics-agent",
+    "journalctl -u metrics-agent | grep 'unknown key' | head -1",
+    { answer_with = "journalctl -u metrics-agent | grep 'unknown key' | head -1 | cut -c8-12" },
+    "stat /etc/metrics-agent.conf",
+    "journalctl -t config-sync",
+    "cat /etc/cron.d/config-sync",
+    ":answer config-sync",
+    "diff /srv/config-repo/metrics-agent.conf /etc/metrics-agent.conf",
+    { input = ["letslinux"] },
+    "sudo sed -i 's/^interval_sec/interval/' /srv/config-repo/metrics-agent.conf",
+    "sudo /usr/local/sbin/config-sync",
+    "systemctl is-active metrics-agent",
+    ":answer b",
+]
+
+[[solution]]
+name = "fix the repo, copy, restart"
+steps = [
+    { answer_with = "journalctl -u metrics-agent -o short-iso | grep -m1 'unknown key' | cut -c12-16" },
+    "ls -l --time-style=full-iso /etc | sort -k6,7 | tail -3",
+    ":answer /usr/local/sbin/config-sync",
+    { input = ["letslinux"] },
+    "sudo sh -c 'grep -v ^interval_sec /srv/config-repo/metrics-agent.conf > /tmp/m.conf; echo interval = 15 >> /tmp/m.conf; cat /tmp/m.conf > /srv/config-repo/metrics-agent.conf'",
+    "sudo cp /srv/config-repo/metrics-agent.conf /etc/metrics-agent.conf",
+    "sudo systemctl reset-failed metrics-agent",
+    "sudo systemctl restart metrics-agent",
+    ":answer config-sync would overwrite it from the repository at the next full hour and restart the agent — the failure would return",
+]
+
+[[counterexample]]
+name = "fix /etc only"
+steps = [
+    { answer_with = "journalctl -u metrics-agent | grep 'unknown key' | head -1 | cut -c8-12" },
+    ":answer config-sync",
+    { input = ["letslinux"] },
+    "sudo sed -i 's/^interval_sec/interval/' /etc/metrics-agent.conf",
+    "sudo systemctl restart metrics-agent",
+    ":answer b",
+]

@@ -1,0 +1,200 @@
+schema = 1
+
+[mission]
+id = "s06-error-budget"
+title = "The Error Budget"
+chapter = "S"
+kind = "lesson"
+order = 7
+difficulty = 4
+requires = ["o02-memory", "s01-front-door", "k03-timers"]
+skills = ["s.reliability", "o.observability", "c.awk-fields"]
+review_for = ["c.awk-fields", "k.systemd-timers"]
+xp = 230
+estimated_minutes = 35
+
+[briefing]
+context = """
+The shop's service level objective (SLO): 99.5 % of the requests in any 7 days are answered
+without a server error (status 500-599). Last week there was an outage — the manager wants
+numbers, and an alarm that rings before the next one eats the budget. nginx's access log
+for the past 7 days is /var/log/nginx/access.log. (sudo password: letslinux)
+"""
+concept = """
+An SLI (service level indicator) measures what users experience — here: the share of
+requests without a server error. The SLO is the target for it (99.5 % over 7 days). The
+error budget is what the target allows to go wrong: 0.5 % of all requests. While budget is
+left, the team can ship changes; when it is spent, reliability work comes first. Alerts
+should fire on a high burn rate — many errors in a recent window — not on every single
+error. The data is already there: each access log line holds the status code (field 9 of
+nginx's combined format), so awk can count requests and errors.
+"""
+objectives = ["Compute an SLI from logs", "Relate an SLO to an error budget", "Write an alert on the recent error rate", "Schedule the check", "Explain blameless incident review"]
+
+[environment]
+profile = "debian"
+packages = ["nginx"]
+
+[[environment.setup]]
+action = "weblog"
+hours = 168
+per_hour = 120
+error_every = 1000
+incidents = [{ start = "{{start}}", hours = "{{length}}", share = 0.6, status = 502 }]
+owner = "www-data"
+group = "adm"
+mode = "0640"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/sbin/lab-weblog"
+mode = "0755"
+content = """#!/bin/sh
+# lab-weblog TOTAL ERRORS recent|old - write a test access log (used by the lab's checks):
+# TOTAL requests, ERRORS of them 503s at the end (recent) or at the start (old), every
+# tenth other request a 404.
+awk -v n="$1" -v e="$2" -v w="$3" 'BEGIN {
+    for (i = 0; i < n; i++) {
+        bad = (w == "recent") ? (i >= n - e) : (i < e)
+        status = bad ? 503 : (i % 10 == 0 ? 404 : 200)
+        printf "10.0.2.31 - - [02/Mar/2026:%02d:%02d:%02d +0000] \\"GET /api/orders HTTP/1.1\\" %d %d \\"-\\" \\"curl/7.88.1\\"\\n", int(i / 3600) % 24, int(i / 60) % 60, i % 60, status, bad ? 157 : 512
+    }
+}' > /var/log/nginx/access.log
+"""
+
+[environment.vars]
+start = { choices = ["58", "97", "131"] }
+length = { choices = ["1.5", "2.5", "3.5"] }
+
+[[task]]
+id = "sli"
+title = "How available were we?"
+kind = "guided"
+instructions = """
+Compute the share of requests in the log that were answered without a server error, in
+percent (two decimals). awk sees the status code as $9:
+`sudo awk '{n++} $9 >= 500 {e++} END {printf "%d requests, %d errors, %.2f %%\\n", n, e, 100 * (1 - e / n)}' /var/log/nginx/access.log`
+"""
+skills = { "s.reliability" = 1.0, "c.awk-fields" = 1.0 }
+question = { prompt = "Availability over the 7 days, in % (e.g. 99.12)", type = "state", state = { command = "awk '{n++} $9 >= 500 {e++} END {printf \"%.2f\", 100 * (1 - e / n)}' /var/log/nginx/access.log", tolerance = 0.02 } }
+hints = ["Count all lines, and the lines whose 9th field is 500 or more.", "availability = 1 - errors / requests", "Use the awk command from the instructions with sudo (the log belongs to www-data:adm)."]
+explanation = "The SLO says 99.5 %. Anything below means the week missed its objective."
+
+[[task]]
+id = "budget"
+title = "How much budget is left?"
+kind = "guided"
+instructions = """
+The error budget for these 7 days is 0.5 % of the requests. How much of it did the week
+consume? (errors ÷ (0.005 × requests) × 100 — over 100 % means the budget is overspent)
+"""
+skills = { "s.reliability" = 1.0 }
+question = { prompt = "Budget consumed, in % (whole number)", type = "state", state = { command = "awk '{n++} $9 >= 500 {e++} END {printf \"%.0f\", e / (0.005 * n) * 100}' /var/log/nginx/access.log", tolerance = 1.5 } }
+hints = ["Allowed errors = 0.005 × requests.", "consumed = errors / allowed × 100", "sudo awk '{n++} $9 >= 500 {e++} END {print e / (0.005 * n) * 100}' /var/log/nginx/access.log"]
+explanation = "With the budget overspent, the team's usual rule is: freeze risky changes and spend the time on what caused the outage."
+
+[[task]]
+id = "when"
+title = "When did it happen?"
+kind = "guided"
+instructions = "Find the hour in which the 502 errors started (the outage). `awk '$9 == 502 {print $4}'` prints their timestamps; the first one is enough."
+skills = { "s.reliability" = 0.5, "o.observability" = 1.0, "c.awk-fields" = 0.5 }
+question = { prompt = "Date and hour the outage began (as in the log, e.g. 25/Feb/2026:14)", type = "state", state = { command = "awk '$9 == 502 {print substr($4, 2, 14); exit}' /var/log/nginx/access.log" } }
+hints = ["sudo awk '$9 == 502' /var/log/nginx/access.log | head -1", "The timestamp is the 4th field: [DD/Mon/YYYY:HH:MM:SS", "sudo awk '$9 == 502 {print $4; exit}' /var/log/nginx/access.log | cut -c2-15"]
+explanation = "Correlating the start time with deployments, the journal and changes is the first step of the incident review."
+
+[[task]]
+id = "alert"
+title = "An alarm on the burn rate"
+kind = "independent"
+instructions = """
+Write /usr/local/bin/slo-check (executable): it looks at the last 1000 lines of
+/var/log/nginx/access.log and, if more than 0.5 % of them (more than 5) are server errors
+(500-599 — 404s do not count), logs a warning with `logger -t slo-check …` and exits with
+status 1; otherwise it exits 0 silently. Run it every 5 minutes (cron or a systemd timer).
+"""
+skills = { "s.reliability" = 1.0, "o.observability" = 0.5, "c.awk-fields" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", setup = ["lab-weblog 3000 4 recent"], command = "/usr/local/bin/slo-check; echo rc=$?", stdout_equals = "rc=0" },
+    { type = "command_result", user = "root", setup = ["lab-weblog 3000 30 recent"], command = "before=$(journalctl -t slo-check -o cat | grep -vc '^-- '); /usr/local/bin/slo-check >/dev/null; rc=$?; after=$(journalctl -t slo-check -o cat | grep -vc '^-- '); echo rc=$rc new=$((after - before))", stdout_regex = "^rc=1 new=[1-9]" },
+    { type = "command_result", user = "root", setup = ["lab-weblog 3000 200 old"], command = "/usr/local/bin/slo-check; echo rc=$?", stdout_equals = "rc=0" },
+    { type = "command_result", user = "root", command = "grep -rls slo-check /etc/cron.d /etc/crontab /var/spool/cron /etc/systemd/system | head -1", stdout_regex = "\\S" },
+]
+persistent = true
+hints = [
+    "tail -n 1000 FILE | awk '$9 >= 500 && $9 < 600 {e++} END {print e + 0}' counts the recent server errors.",
+    "Script: errors=$(tail -n 1000 /var/log/nginx/access.log | awk '$9 >= 500 && $9 < 600 {e++} END {print e + 0}'); if [ \"$errors\" -gt 5 ]; then logger -t slo-check \"SLO burn: $errors of the last 1000 requests failed\"; exit 1; fi",
+    "Schedule: echo '*/5 * * * * root /usr/local/bin/slo-check' | sudo tee /etc/cron.d/slo-check",
+]
+explanation = """
+The checks replaced the log with test data: a few errors (no alarm), a burst of recent
+errors (alarm and journal entry), many old errors outside the window (no alarm), and 404s
+everywhere (client errors do not spend the budget). In real setups Prometheus or similar
+compute burn rates over several windows; the principle is the same.
+"""
+
+[[task]]
+id = "review"
+title = "After the outage"
+kind = "explanation"
+instructions = "The incident review is scheduled. A manager suggests starting by finding out who caused the outage."
+skills = { "s.reliability" = 1.0 }
+question = { prompt = "What should the review focus on instead?", type = "choice", choices = ["Nothing — a review is only needed if the SLO is met", "A blameless timeline: what happened, how it was detected and fixed, why the system allowed it, and action items that make it less likely or less harmful (with owners)", "Rolling back every change of the week", "Raising the SLO to 99.9 % so the team tries harder"], answer = 1 }
+hints = ["People report honestly when they are not punished for it.", "The goal is to change the system, not to find a culprit.", "Answer (b)."]
+explanation = "Blameless postmortems produce better information and better fixes: detection time, missing safeguards, runbooks, alerts like the one you just wrote."
+
+[debrief]
+summary = """
+SLI = good requests / all requests (from the access log with awk); SLO = the target; error
+budget = what the target allows to fail. Alert on the recent error rate (burn rate), not on
+single errors, and log alerts where people look. Review incidents blamelessly, with action
+items.
+"""
+alternatives = ["A systemd timer (OnCalendar=*:0/5) running a oneshot service instead of cron", "goaccess or a metrics stack (Prometheus with nginx exporter) for continuous SLIs", "Several windows: fast burn (1 h) pages someone, slow burn (6 h) opens a ticket"]
+pitfalls = ["Counting 404s as failures", "Alerting on every single 500", "Averaging over a week, so a fresh outage barely moves the number"]
+next = "Next: losing a whole server."
+
+[[solution]]
+name = "awk, script, cron"
+steps = [
+    { input = ["letslinux"] },
+    "sudo awk '{n++} $9 >= 500 {e++} END {printf \"%d requests, %d errors, %.2f %%\\n\", n, e, 100 * (1 - e / n)}' /var/log/nginx/access.log",
+    { answer_with = "awk '{n++} $9 >= 500 {e++} END {printf \"%.2f\", 100 * (1 - e / n)}' /var/log/nginx/access.log" },
+    { answer_with = "awk '{n++} $9 >= 500 {e++} END {printf \"%.0f\", e / (0.005 * n) * 100}' /var/log/nginx/access.log" },
+    "sudo awk '$9 == 502 {print $4; exit}' /var/log/nginx/access.log",
+    { answer_with = "awk '$9 == 502 {print substr($4, 2, 14); exit}' /var/log/nginx/access.log" },
+    { edit = "#!/bin/bash\n# slo-check: alarm when the recent error rate burns the error budget too fast\nlog=/var/log/nginx/access.log\nerrors=$(tail -n 1000 \"$log\" | awk '$9 >= 500 && $9 < 600 {e++} END {print e + 0}')\nif [ \"$errors\" -gt 5 ]; then\n    logger -t slo-check -p user.warning \"SLO burn: $errors of the last 1000 requests failed\"\n    exit 1\nfi\nexit 0\n" },
+    "sudo nano /usr/local/bin/slo-check",
+    "sudo chmod 755 /usr/local/bin/slo-check",
+    "echo '*/5 * * * * root /usr/local/bin/slo-check' | sudo tee /etc/cron.d/slo-check",
+    "sudo /usr/local/bin/slo-check; echo $?",
+    ":answer 2",
+]
+
+[[solution]]
+name = "rounded answers, timer"
+steps = [
+    { input = ["letslinux"] },
+    { answer_with = "awk '{n++} $9 >= 500 {e++} END {printf \"%.2f\", 100 * (1 - e / n) + 0.01}' /var/log/nginx/access.log" },
+    { answer_with = "awk '{n++} $9 >= 500 {e++} END {printf \"%d%%\", e / (0.005 * n) * 100 + 0.5}' /var/log/nginx/access.log" },
+    { answer_with = "awk '$9 == 502 {print substr($4, 2, 14); exit}' /var/log/nginx/access.log" },
+    "printf '#!/bin/sh\\nn=$(tail -n 1000 /var/log/nginx/access.log | awk \"\\\\$9 ~ /^5/\" | wc -l)\\n[ \"$n\" -le 5 ] && exit 0\\nlogger -t slo-check \"error budget burning: $n/1000\"\\nexit 1\\n' | sudo tee /usr/local/bin/slo-check",
+    "sudo chmod +x /usr/local/bin/slo-check",
+    "printf '[Unit]\\nDescription=SLO burn check\\n\\n[Service]\\nType=oneshot\\nExecStart=/usr/local/bin/slo-check\\n' | sudo tee /etc/systemd/system/slo-check.service",
+    "printf '[Unit]\\nDescription=SLO burn check every 5 minutes\\n\\n[Timer]\\nOnCalendar=*:0/5\\n\\n[Install]\\nWantedBy=timers.target\\n' | sudo tee /etc/systemd/system/slo-check.timer",
+    "sudo systemctl daemon-reload && sudo systemctl enable --now slo-check.timer",
+    ":answer b",
+]
+
+[[counterexample]]
+name = "every non-200 is an error"
+steps = [
+    { input = ["letslinux"] },
+    { answer_with = "awk '{n++} $9 >= 500 {e++} END {printf \"%.2f\", 100 * (1 - e / n)}' /var/log/nginx/access.log" },
+    { answer_with = "awk '{n++} $9 >= 500 {e++} END {printf \"%.0f\", e / (0.005 * n) * 100}' /var/log/nginx/access.log" },
+    { answer_with = "awk '$9 == 502 {print substr($4, 2, 14); exit}' /var/log/nginx/access.log" },
+    "printf '#!/bin/sh\\nn=$(tail -n 1000 /var/log/nginx/access.log | grep -vc \\\" 200 \\\")\\n[ \"$n\" -le 5 ] && exit 0\\nlogger -t slo-check \"errors: $n\"\\nexit 1\\n' | sudo tee /usr/local/bin/slo-check",
+    "sudo chmod +x /usr/local/bin/slo-check",
+    "echo '*/5 * * * * root /usr/local/bin/slo-check' | sudo tee /etc/cron.d/slo-check",
+    ":answer 2",
+]

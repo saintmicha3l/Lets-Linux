@@ -1,0 +1,155 @@
+schema = 1
+
+[mission]
+id = "n02-kernel-cmdline"
+title = "Before the Kernel Starts"
+chapter = "N"
+kind = "lesson"
+order = 2
+difficulty = 5
+requires = ["n01-modules", "j07-fstab-rescue"]
+skills = ["n.initramfs-cmdline", "n.kernel-userspace"]
+review_for = ["n.kernel-modules", "h.failed-services"]
+xp = 200
+estimated_minutes = 30
+
+[briefing]
+context = """
+Policy for this Debian web server: IPv6 is switched off in the kernel itself (a boot
+parameter), and the storage team will migrate data to XFS next month, so XFS support must be
+in the initramfs. The website must survive all of it. (sudo password: letslinux)
+"""
+concept = """
+The boot loader (GRUB) loads the kernel and an initramfs — a small root filesystem in memory
+with the drivers and tools needed to find and mount the real root filesystem — and passes
+the kernel command line (cat /proc/cmdline). Kernel parameters such as ipv6.disable=1,
+module_blacklist=… or systemd.unit=… go there. On Debian and Ubuntu you edit
+GRUB_CMDLINE_LINUX(_DEFAULT) in /etc/default/grub and run sudo update-grub, which
+regenerates /boot/grub/grub.cfg — GRUB only reads the generated file. (Fedora: grubby
+--update-kernel=ALL --args=…; Arch: grub-mkconfig -o /boot/grub/grub.cfg.) The initramfs
+is rebuilt with update-initramfs -u (Debian; modules listed in
+/etc/initramfs-tools/modules), dracut -f (Fedora) or mkinitcpio -P (Arch); lsinitramfs
+shows what is inside. Kernel/userspace: the kernel is the one program that runs with full
+hardware access; everything else — including systemd, PID 1 — is a userspace process
+that asks the kernel for services through system calls.
+"""
+objectives = ["Read the current kernel command line", "Add a kernel parameter persistently", "Adapt services to a changed kernel", "Add a module to the initramfs and verify it"]
+
+[environment]
+profile = "debian"
+packages = ["nginx"]
+
+[[task]]
+id = "cmdline"
+title = "What did this boot get?"
+kind = "guided"
+instructions = "Show the kernel command line of the current boot."
+skills = { "n.initramfs-cmdline" = 1.0 }
+question = { prompt = "Which kernel image did GRUB load (the BOOT_IMAGE value)?", type = "state", state = { command = "sed -n 's/^BOOT_IMAGE=\\([^ ]*\\).*/\\1/p' /proc/cmdline" } }
+hints = ["The kernel publishes its command line in /proc.", "cat /proc/cmdline", "The first word: BOOT_IMAGE=/vmlinuz-…"]
+explanation = "root=UUID=… tells the initramfs which filesystem to mount as /; ro mounts it read-only first (fsck), quiet keeps the console calm."
+
+[[task]]
+id = "ipv6"
+title = "IPv6 off — and the website on"
+kind = "independent"
+instructions = "Make the kernel boot with ipv6.disable=1 from now on. The website (nginx, port 80) must still start after the reboot."
+skills = { "n.initramfs-cmdline" = 1.0, "h.failed-services" = 0.5 }
+checks = [
+    { type = "file_contains", path = "/boot/grub/grub.cfg", text = "ipv6.disable=1" },
+    { type = "after_reboot", checks = [
+        { type = "command_result", user = "root", command = "cat /proc/cmdline", stdout_contains = ["ipv6.disable=1"] },
+        { type = "command_result", user = "root", command = "ip -6 addr", stdout_equals = "" },
+        { type = "unit_state", unit = "nginx.service", active = "active" },
+        { type = "port_listening", port = 80 },
+    ] },
+]
+hints = [
+    "Edit GRUB_CMDLINE_LINUX_DEFAULT in /etc/default/grub, then sudo update-grub. Without update-grub nothing changes.",
+    "Without IPv6, nginx fails on 'listen [::]:80' — remove that line from /etc/nginx/sites-available/default (test with sudo nginx -t).",
+    "sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=\"quiet\"/GRUB_CMDLINE_LINUX_DEFAULT=\"quiet ipv6.disable=1\"/' /etc/default/grub && sudo update-grub; sudo sed -i '/listen \\[::\\]:80/d' /etc/nginx/sites-available/default",
+]
+explanation = "The game rebooted a copy: the kernel got the parameter, no interface has an IPv6 address, and nginx — without its [::]:80 listener — started."
+
+[[task]]
+id = "regenerate"
+title = "Why regenerate?"
+kind = "explanation"
+instructions = "A colleague edited /etc/default/grub last week, rebooted, and nothing changed."
+skills = { "n.initramfs-cmdline" = 1.0 }
+question = { prompt = "What did they forget?", type = "choice", choices = ["Nothing — GRUB needs two reboots", "To run update-grub: GRUB reads /boot/grub/grub.cfg, generated from /etc/default/grub", "To reinstall the kernel"], answer = 1 }
+hints = ["Which file does GRUB read at boot?", "/etc/default/grub is the input of a generator.", "(b)"]
+explanation = "Same pattern as initramfs configuration: edit the source, regenerate the artefact the boot uses."
+
+[[task]]
+id = "initramfs"
+title = "XFS in the initramfs"
+kind = "independent"
+instructions = "Make the initramfs of the installed kernel contain the xfs module."
+skills = { "n.initramfs-cmdline" = 1.0, "n.kernel-modules" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "lsinitramfs /boot/initrd.img-$(uname -r)", stdout_contains = ["kernel/fs/xfs/xfs.ko", "lib/libcrc32c.ko"] },
+    { type = "file_contains", path = "/etc/initramfs-tools/modules", regex = "(?m)^xfs" },
+]
+hints = ["/etc/initramfs-tools/modules lists extra modules, one per line.", "Then rebuild: sudo update-initramfs -u", "echo xfs | sudo tee -a /etc/initramfs-tools/modules && sudo update-initramfs -u && lsinitramfs /boot/initrd.img-$(uname -r) | grep xfs"]
+explanation = "update-initramfs also took xfs's dependency, libcrc32c. The configuration keeps it there for future kernels."
+
+[[task]]
+id = "userspace"
+title = "Kernel and userspace"
+kind = "explanation"
+instructions = "One more concept question."
+skills = { "n.kernel-userspace" = 1.0 }
+question = { prompt = "Which statement is right?", type = "choice", choices = ["systemd is part of the kernel", "The kernel runs in privileged mode and manages hardware, memory and processes; programs — even root's and PID 1 — run in userspace and request services with system calls", "Kernel modules run in userspace"], answer = 1 }
+hints = ["What is PID 1?", "Modules extend the kernel itself.", "(b)"]
+explanation = "That boundary is why a bad module can crash the whole system, while a crashing program cannot."
+
+[debrief]
+summary = """
+/proc/cmdline · /etc/default/grub → update-grub (grubby on Fedora, grub-mkconfig on Arch) ·
+/etc/initramfs-tools/modules → update-initramfs -u · lsinitramfs · reboot-test.
+"""
+alternatives = ["At the GRUB menu, 'e' edits the command line for one boot only — the classic way into a rescue shell", "net.ipv6.conf.all.disable_ipv6=1 via sysctl disables IPv6 without a reboot (addresses can still be configured later)"]
+pitfalls = ["Editing /etc/default/grub without update-grub.", "Services that insist on IPv6 sockets after disabling IPv6.", "Forgetting to rebuild the initramfs after changing its configuration."]
+next = "Next: a server that lost its network at boot."
+
+[[solution]]
+name = "sed and update-grub"
+steps = [
+    "cat /proc/cmdline",
+    { answer_with = "cut -d' ' -f1 /proc/cmdline | cut -d= -f2" },
+    { input = ["letslinux"] },
+    "sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=\"quiet\"/GRUB_CMDLINE_LINUX_DEFAULT=\"quiet ipv6.disable=1\"/' /etc/default/grub",
+    "sudo update-grub",
+    "sudo sed -i '/listen \\[::\\]:80/d' /etc/nginx/sites-available/default",
+    "sudo nginx -t",
+    ":answer b",
+    "echo xfs | sudo tee -a /etc/initramfs-tools/modules",
+    "sudo update-initramfs -u",
+    ":answer b",
+]
+
+[[solution]]
+name = "GRUB_CMDLINE_LINUX and grub-mkconfig"
+steps = [
+    { answer_with = "awk '{print $1}' /proc/cmdline | sed 's/BOOT_IMAGE=//'" },
+    { input = ["letslinux"] },
+    "sudo sed -i 's/^GRUB_CMDLINE_LINUX=\"\"/GRUB_CMDLINE_LINUX=\"ipv6.disable=1\"/' /etc/default/grub",
+    "sudo grub-mkconfig -o /boot/grub/grub.cfg",
+    "sudo sed -i 's/^\\s*listen \\[::\\]:80 default_server;//' /etc/nginx/sites-available/default",
+    ":answer To run update-grub: GRUB reads /boot/grub/grub.cfg, generated from /etc/default/grub",
+    "sudo sh -c 'echo xfs >> /etc/initramfs-tools/modules'",
+    "sudo update-initramfs -u -k all",
+    ":answer b",
+]
+
+[[counterexample]]
+name = "forgot update-grub and nginx"
+steps = [
+    { answer_with = "cut -d' ' -f1 /proc/cmdline | cut -d= -f2" },
+    { input = ["letslinux"] },
+    "sudo sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=\"quiet\"/GRUB_CMDLINE_LINUX_DEFAULT=\"quiet ipv6.disable=1\"/' /etc/default/grub",
+    ":answer b",
+    "echo xfs | sudo tee -a /etc/initramfs-tools/modules",
+    ":answer b",
+]

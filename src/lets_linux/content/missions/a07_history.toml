@@ -1,0 +1,193 @@
+schema = 1
+
+[mission]
+id = "a07-history"
+title = "Again, Please"
+chapter = "A"
+kind = "lesson"
+order = 7
+difficulty = 1
+requires = ["a06-orientation-check"]
+skills = ["a.history"]
+review_for = ["a.command-anatomy"]
+xp = 90
+estimated_minutes = 15
+
+[briefing]
+context = """
+Last week you set up a backup on this machine — and now you cannot remember how. Luckily
+the shell remembers for you. Learn to search your history and to re-run and reuse earlier
+commands instead of typing them again. (sudo password: letslinux)
+"""
+concept = """
+bash keeps every command you type in a history list (history shows it, numbered) and saves
+it to ~/.bash_history when the shell exits. Search it with history | grep WORD, or press
+Ctrl-R and type part of a command. Re-run with history expansion: !! is the previous
+command (sudo !! repeats it with sudo), !N command number N, !-2 the one before last,
+!tar the latest command starting with "tar"; !$ is the previous command's last argument,
+!* all its arguments; ^old^new repeats the previous command with old replaced by new. bash
+prints the expanded command before running it. A command typed with a leading space is not
+recorded (HISTCONTROL=ignorespace) — useful when a password must appear on the line.
+"""
+objectives = ["Search the command history", "Re-run commands with !! and !N", "Reuse arguments with !$", "Correct a command with ^old^new", "Keep a command out of the history"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/.bash_history"
+owner = "learner"
+group = "learner"
+mode = "0600"
+content = """ls
+cd /srv
+ls -la
+df -h
+sudo apt update
+free -m
+mkdir -p ~/backups
+tar -czf ~/backups/www-2026-02.tar.gz -C /srv www
+ls -lh ~/backups
+uptime
+systemctl status cron
+cat /etc/hostname
+"""
+
+[[environment.setup]]
+action = "dir"
+path = "/srv/www"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/www/index.html"
+content = "<h1>It works</h1>\n"
+
+[[environment.setup]]
+action = "dir"
+path = "/home/learner/backups"
+owner = "learner"
+group = "learner"
+
+[[task]]
+id = "search"
+title = "What did I do?"
+kind = "guided"
+instructions = "Find last week's backup command in your history."
+skills = { "a.history" = 1.0 }
+question = { prompt = "Which directory did that tar command back up (the full path)?", type = "exact", accept = ["/srv/www", "/srv/www/"] }
+hints = ["history lists your earlier commands, with numbers.", "history | grep tar", "-C /srv www means: change to /srv, then archive www — so /srv/www."]
+explanation = "The history kept the command exactly as you typed it — including the option -C you had forgotten."
+
+[[task]]
+id = "rerun"
+title = "Do it again"
+kind = "guided"
+instructions = "Re-run that backup command from your history without typing it again (it writes the same archive name — that is fine)."
+skills = { "a.history" = 1.0 }
+checks = [
+    { type = "command_used", command = ["tar"], args_contain = ["-czf"], scope = "history" },
+    { type = "path_exists", path = "/home/learner/backups/www-2026-02.tar.gz" },
+]
+hints = ["!tar runs the latest command that starts with tar; !N runs number N from the history list.", "history | grep tar shows its number.", "!tar"]
+explanation = "bash printed the expanded command, then ran it. Use !-1 / !! for the previous command, !N for any numbered one."
+
+[[task]]
+id = "sudo"
+title = "Forgot sudo"
+kind = "guided"
+instructions = "Run cat /var/log/auth.log — it is denied. Repeat it with sudo without retyping it."
+skills = { "a.history" = 1.0 }
+checks = [
+    { type = "command_used", command = ["cat"], args_contain = ["/var/log/auth.log"], as_root = true, scope = "history" },
+]
+hints = ["!! stands for the previous command.", "sudo !!", "cat /var/log/auth.log, then sudo !!"]
+explanation = "sudo !! is probably the most used history expansion of all."
+
+[[task]]
+id = "reuse"
+title = "The last argument"
+kind = "independent"
+instructions = "Create the directory ~/backups/2026/march (with its parents), then change into it — using !$ for the second command."
+skills = { "a.history" = 1.0 }
+checks = [
+    { type = "cwd_is", path = "/home/learner/backups/2026/march" },
+]
+hints = ["mkdir -p creates the parents.", "!$ is replaced by the previous command's last argument.", "mkdir -p ~/backups/2026/march, then cd !$"]
+explanation = "!$ (also Alt-. in an interactive terminal) saves retyping long paths."
+
+[[task]]
+id = "fix"
+title = "Typo"
+kind = "independent"
+instructions = "Run ls -l ~/backup — note the typo — then correct it with a quick substitution (^old^new) so that the backups directory is listed."
+skills = { "a.history" = 1.0 }
+checks = [
+    { type = "command_used", command = ["ls"], args_regex = "/home/learner/backups$", scope = "history" },
+]
+hints = ["^old^new repeats the previous command with old replaced by new.", "Replace backup with backups.", "^backup^backups"]
+explanation = "Quick substitution replaces the first occurrence only; for anything more complex, recall the command (Up arrow) and edit it."
+
+[[task]]
+id = "secret"
+title = "Not for the record"
+kind = "explanation"
+instructions = "Sometimes a command line contains a password."
+skills = { "a.history" = 1.0 }
+question = { prompt = "How do you keep a command out of the history in Debian's default bash setup?", type = "choice", choices = ["Type it in capital letters", "Start the line with a space (HISTCONTROL includes ignorespace)", "It is impossible: every command is recorded", "Add # at the end"], answer = 1 }
+hints = ["Look at the HISTCONTROL variable: echo $HISTCONTROL", "ignorespace / ignoreboth", "(b)"]
+explanation = "Debian's ~/.bashrc sets HISTCONTROL=ignoreboth: lines starting with a space and immediate duplicates are not recorded. Better still: let programs ask for passwords instead of putting them on the command line."
+
+[debrief]
+summary = """
+history (| grep), Ctrl-R; !! (sudo !!), !N, !-N, !STRING; !$ and !* for arguments;
+^old^new for quick fixes; ~/.bash_history is written when the shell exits; a leading space
+keeps a line out (HISTCONTROL=ignorespace).
+"""
+alternatives = ["Ctrl-R, then type part of the command, Enter to run it", "fc -l lists, fc N opens command N in an editor", "Alt-. inserts the previous command's last argument"]
+pitfalls = ["Running !rm or !! blindly — look at what it expands to first (or add :p: !rm:p).", "Passwords on command lines end up in ~/.bash_history.", "Expecting history from another terminal before it was closed."]
+next = "Chapter A is complete — on to files and paths."
+
+[[solution]]
+name = "by name and number"
+steps = [
+    "history | grep tar",
+    ":answer /srv/www",
+    "!tar",
+    "cat /var/log/auth.log",
+    { input = ["letslinux"] },
+    "sudo !!",
+    "mkdir -p ~/backups/2026/march",
+    "cd !$",
+    "ls -l ~/backup",
+    "^backup^backups",
+    ":answer b",
+]
+
+[[solution]]
+name = "numbers and arguments"
+steps = [
+    "history",
+    ":answer /srv/www/",
+    "!8",
+    "cat /var/log/auth.log",
+    { input = ["letslinux"] },
+    "sudo !-1",
+    "mkdir -p /home/learner/backups/2026/march",
+    "cd !$",
+    "ls -l /home/learner/backup",
+    "^backup^backups",
+    ":answer Start the line with a space (HISTCONTROL includes ignorespace)",
+]
+
+[[counterexample]]
+name = "stays home"
+steps = [
+    ":answer /srv/www",
+    "tar -czf ~/backups/www-2026-02.tar.gz -C /srv www",
+    { input = ["letslinux"] },
+    "sudo cat /var/log/auth.log",
+    "mkdir -p ~/backups/2026/march",
+    "ls -l ~/backups",
+    ":answer b",
+]

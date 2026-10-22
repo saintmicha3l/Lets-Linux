@@ -1,0 +1,216 @@
+schema = 1
+
+[mission]
+id = "j00-skill-check"
+title = "Skill Check J: Storage"
+chapter = "J"
+placement = "J"
+kind = "assessment"
+order = 0
+difficulty = 4
+requires = []
+skills = ["j.block-devices", "j.filesystems-mkfs", "j.mount-umount", "j.fstab-persistence", "j.capacity", "j.disk-full-incident", "j.inodes", "j.swap", "j.backup-restore", "j.fs-integrity"]
+xp = 90
+estimated_minutes = 20
+sequential = false
+
+[briefing]
+context = """
+This skill check covers chapter J: block devices, filesystems, mounting, fstab, a full
+filesystem, inodes, swap, restoring from a backup and filesystem checks. Tasks in any order;
+you have sudo (password: letslinux). Solve them all (one slip allowed) to test out of chapter
+J. Anything you cannot do is simply not counted — :submit ends the check.
+"""
+concept = "No hints: show what you can do on your own. Some checks reboot a copy of the machine."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "debian"
+packages = ["parted"]
+
+[environment.vars]
+label = { choices = ["media", "archive", "scratch"] }
+mnt = { choices = ["media", "vault", "bulk"] }
+conf = { choices = ["chrony.conf", "rsyncd.conf", "app.ini"] }
+token = { choices = ["k7f2", "q9z4", "m3x8"] }
+
+[[environment.setup]]
+action = "disk"
+name = "sdc"
+size = "1G"
+partitions = [{ size = "rest", fs = "ext4", label = "reports", mount = "/var/lib/reports", fstab = true }]
+
+[[environment.setup]]
+action = "file"
+path = "/var/lib/reports/current.csv"
+content = "date,total\n2026-03-01,4711\n"
+
+[[environment.setup]]
+action = "fill"
+dir = "/var/lib/reports/archive"
+count = 24
+prefix = "sales-"
+suffix = ".csv.gz"
+age_from = 40
+age_to = 400
+leave = "0"
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "4G"
+
+[[environment.setup]]
+action = "file"
+path = "/root/stage/etc/{{conf}}"
+content = "# restored configuration\nmode = production\nkey = {{token}}\n"
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /var/backups && tar -czf /var/backups/etc-2026-03-01.tar.gz -C /root/stage etc && rm -rf /root/stage && printf 'mode = broken\\n' > /etc/{{conf}}"
+
+[[task]]
+id = "disk"
+title = "The new disk"
+kind = "assessment"
+instructions = "A new, empty disk was attached to this server."
+skills = { "j.block-devices" = 1.0 }
+question = { prompt = "Its device file?", type = "regex", accept = ["^(/dev/)?sdb$"] }
+explanation = "lsblk: the disk with no partitions and no mount point."
+
+[[task]]
+id = "filesystem"
+title = "Put it to use"
+kind = "assessment"
+instructions = """
+Give the new disk an ext4 filesystem labelled {{label}} (on a partition or on the whole disk)
+and mount it at /srv/{{mnt}} — so that it is mounted again after every reboot.
+"""
+skills = { "j.filesystems-mkfs" = 1.0, "j.mount-umount" = 1.0, "j.fstab-persistence" = 1.0 }
+checks = [
+    { type = "mounted", target = "/srv/{{mnt}}", disk = "sdb", fstype = "ext4" },
+    { type = "any_of", checks = [{ type = "filesystem_on", device = "/dev/sdb1", fstype = "ext4", label = "{{label}}" }, { type = "filesystem_on", device = "/dev/sdb", fstype = "ext4", label = "{{label}}" }] },
+    { type = "fstab_entry", target = "/srv/{{mnt}}" },
+    { type = "fstab_valid" },
+    { type = "after_reboot", checks = [{ type = "mounted", target = "/srv/{{mnt}}", disk = "sdb", fstype = "ext4" }] },
+]
+explanation = "parted -s /dev/sdb mklabel gpt mkpart data ext4 1MiB 100%; mkfs.ext4 -L {{label}} /dev/sdb1; an fstab line by UUID or LABEL; mount -a; findmnt --verify."
+
+[[task]]
+id = "full"
+title = "No space left"
+kind = "assessment"
+instructions = """
+Writes to /var/lib/reports fail: its filesystem is full. Free at least 30 % of it by
+removing old archived data — current.csv and the directory layout must stay.
+"""
+skills = { "j.disk-full-incident" = 1.0, "j.capacity" = 1.0 }
+checks = [
+    { type = "filesystem_free", mount = "/var/lib/reports", min_percent = 30 },
+    { type = "file_contains", path = "/var/lib/reports/current.csv", text = "4711" },
+    { type = "path_exists", path = "/var/lib/reports/archive", kind = "dir" },
+]
+explanation = "df -h finds the full filesystem, du -sh /var/lib/reports/* the culprit; delete the oldest archives (find … -mtime +180 -delete) — and plan a retention job."
+
+[[task]]
+id = "inodes"
+title = "Free space, yet full"
+kind = "assessment"
+instructions = "Another server reports \"No space left on device\" when creating small files, although df -h shows 40 % free on that filesystem."
+skills = { "j.inodes" = 1.0, "j.capacity" = 0.5 }
+question = { prompt = "What has run out?", type = "choice", choices = ["Blocks reserved for root", "Inodes — every file needs one; df -i shows them", "Directory size limit", "RAM"], answer = 1 }
+explanation = "Millions of tiny files exhaust the inode table while bytes remain: df -i, then find the directory with the most files."
+
+[[task]]
+id = "swap"
+title = "More swap"
+kind = "assessment"
+instructions = "Add a swap file /swapfile of at least 512 MiB: active now and after reboots."
+skills = { "j.swap" = 1.0, "j.fstab-persistence" = 0.5 }
+checks = [
+    { type = "swap_active", device = "/swapfile", min_mb = 500 },
+    { type = "file_mode", path = "/swapfile", mode = "0600" },
+    { type = "fstab_entry", target = "swap", device = "/swapfile", fstype = "swap" },
+]
+explanation = "fallocate -l 512M /swapfile (or dd), chmod 600, mkswap, swapon, and '/swapfile none swap sw 0 0' in /etc/fstab."
+
+[[task]]
+id = "restore"
+title = "Undo a bad edit"
+kind = "assessment"
+instructions = "Someone broke /etc/{{conf}}. Restore it from last night's backup in /var/backups — that file only."
+skills = { "j.backup-restore" = 1.0 }
+checks = [
+    { type = "file_equals", path = "/etc/{{conf}}", content = "# restored configuration\nmode = production\nkey = {{token}}\n" },
+    { type = "path_absent", path = "/etc/etc" },
+]
+explanation = "tar -tzf lists the members; tar -xzf /var/backups/etc-2026-03-01.tar.gz -C / etc/{{conf}} extracts just that one into place."
+
+[[task]]
+id = "fsck"
+title = "Before a check"
+kind = "assessment"
+instructions = "The filesystem on /var/lib/reports reported errors and should be checked with fsck."
+skills = { "j.fs-integrity" = 1.0 }
+question = { prompt = "What must you do first?", type = "choice", choices = ["Nothing — fsck works on mounted filesystems", "Unmount it (stop what uses it); checking a mounted, changing filesystem can damage it", "Delete lost+found", "Run sync three times"], answer = 1 }
+explanation = "umount (fuser -m / lsof show who blocks it), fsck -f /dev/sdc1, mount again — or check the root filesystem from rescue mode."
+
+[debrief]
+summary = """
+The check covered chapter J's core. It does not test every chapter J skill (mount options,
+deleted-but-open files, LVM, RAID, encryption are left to the missions); untested skills stay
+unseen. Solved tasks are evidence for their skills.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "partition, UUID, find"
+steps = [
+    { input = ["letslinux"] },
+    "lsblk",
+    ":answer /dev/sdb",
+    "sudo parted -s /dev/sdb mklabel gpt mkpart data ext4 1MiB 100%",
+    "sudo mkfs.ext4 -q -L {{label}} /dev/sdb1",
+    "sudo mkdir -p /srv/{{mnt}}",
+    "echo \"UUID=$(sudo blkid -s UUID -o value /dev/sdb1) /srv/{{mnt}} ext4 defaults 0 2\" | sudo tee -a /etc/fstab",
+    "sudo mount -a && findmnt --verify",
+    "df -h /var/lib/reports && sudo du -sh /var/lib/reports/*",
+    "sudo find /var/lib/reports/archive -name 'sales-*' -mtime +180 -delete",
+    "df -h /var/lib/reports",
+    ":answer 2",
+    "sudo fallocate -l 512M /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile",
+    "echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab",
+    "tar -tzf /var/backups/etc-2026-03-01.tar.gz",
+    "sudo tar -xzf /var/backups/etc-2026-03-01.tar.gz -C / etc/{{conf}}",
+    ":answer b",
+]
+
+[[solution]]
+name = "whole disk, label, dd"
+steps = [
+    { input = ["letslinux"] },
+    ":answer sdb",
+    "sudo mkfs.ext4 -q -L {{label}} /dev/sdb",
+    "sudo mkdir -p /srv/{{mnt}} && echo 'LABEL={{label}} /srv/{{mnt}} ext4 defaults 0 2' | sudo tee -a /etc/fstab && sudo mount /srv/{{mnt}}",
+    "sudo dd if=/dev/zero of=/swapfile bs=1M count=600 status=none && sudo chmod 0600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile",
+    "printf '/swapfile swap swap defaults 0 0\\n' | sudo tee -a /etc/fstab",
+    "cd /tmp && tar -xzf /var/backups/etc-2026-03-01.tar.gz etc/{{conf}} && sudo cp etc/{{conf}} /etc/{{conf}} && cd",
+    "ls -lt /var/lib/reports/archive | tail -14",
+    "sudo sh -c 'ls -1tr /var/lib/reports/archive/* | head -14 | xargs rm -f'",
+    ":answer Unmount it (stop what uses it); checking a mounted, changing filesystem can damage it",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "mounted by hand, archive emptied"
+steps = [
+    { input = ["letslinux"] },
+    ":answer /dev/sdb",
+    "sudo mkfs.ext4 -q -L {{label}} /dev/sdb",
+    "sudo mkdir -p /srv/{{mnt}} && sudo mount /dev/sdb /srv/{{mnt}}",
+    "sudo rm -rf /var/lib/reports/*",
+    ":answer 2",
+    "sudo fallocate -l 512M /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile",
+    "sudo tar -xzf /var/backups/etc-2026-03-01.tar.gz -C /etc",
+    ":answer 2",
+]

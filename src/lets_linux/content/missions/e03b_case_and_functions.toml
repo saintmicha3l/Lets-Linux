@@ -1,0 +1,184 @@
+schema = 1
+
+[mission]
+id = "e03b-case-and-functions"
+title = "Case and Functions"
+chapter = "E"
+kind = "lesson"
+order = 4
+difficulty = 3
+requires = ["e03-loops"]
+skills = ["e.case", "e.functions", "e.input-validation"]
+review_for = ["e.case", "e.functions"]
+xp = 90
+estimated_minutes = 20
+
+[briefing]
+context = """
+Real scripts take commands ("start", "stop", "list"), check their input before trusting it,
+and reuse pieces of code. This lesson gives you the three tools for that: case, functions
+and allow-list validation. The challenge that follows asks you to combine them without help.
+"""
+concept = """
+case compares one value with patterns, top to bottom; the first match wins:
+    case "$1" in
+        start|run) echo starting ;;      # | separates alternatives
+        *.txt)     echo "a text file" ;; # glob patterns work
+        *)         echo "Usage: ..." >&2; exit 2 ;;   # everything else
+    esac
+A function is a named block of commands:  name() { commands; }  Call it like a command;
+inside, $1, $2 are the function's own arguments. return N sets its exit status; local VAR
+keeps a variable inside the function.
+Validate input with an allow-list: describe what IS allowed and reject everything else.
+The pattern *[!0-9]* matches any string containing a character that is not a digit.
+"""
+objectives = ["Dispatch on arguments with case", "Write and call functions with arguments and return values", "Validate input with an allow-list"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+fruit = { choices = ["apple", "mango", "cherry"] }
+
+[[environment.setup]]
+action = "dir"
+path = "~/bin"
+owner = "learner"
+group = "learner"
+
+[[task]]
+id = "dayscript"
+title = "Dispatch with case"
+kind = "guided"
+instructions = """
+Create the executable ~/bin/daytype.sh (nano ~/bin/daytype.sh, then chmod +x):
+    #!/bin/bash
+    case "$1" in
+        mon|tue|wed|thu|fri) echo weekday ;;
+        sat|sun)             echo weekend ;;
+        *) echo "Usage: daytype.sh mon|tue|...|sun" >&2; exit 2 ;;
+    esac
+Try it with sat, with wed and with nothing.
+"""
+skills = { "e.case" = 1.0 }
+checks = [
+    { type = "command_result", command = "~/bin/daytype.sh sat", status = 0, stdout_equals = "weekend" },
+    { type = "command_result", command = "~/bin/daytype.sh wed", status = 0, stdout_equals = "weekday" },
+    { type = "command_result", command = "~/bin/daytype.sh", status = 2, stderr_contains = "Usage", stdout_equals = "" },
+]
+hints = ["Write the script exactly as shown, save it, and make it executable.", "Each branch ends with ;; and the whole block with esac. Quote \"$1\".", "Type it in nano ~/bin/daytype.sh, then chmod +x ~/bin/daytype.sh and run ~/bin/daytype.sh sat"]
+explanation = "One case replaces a chain of if/elif tests. The *) branch catches everything else — including no argument at all — and reports usage on stderr with a non-zero status."
+
+[[task]]
+id = "first-match"
+title = "The first match wins"
+kind = "prediction"
+instructions = "Read this carefully:  f=report.txt; case $f in report*) echo report ;; *.txt) echo text ;; esac"
+skills = { "e.case" = 1.0 }
+question = { prompt = "What does it print?", type = "choice", choices = ["report", "text", "report and text", "nothing"], answer = 0 }
+hints = ["Both patterns match report.txt.", "case stops at the first matching pattern.", "The answer is (a): report."]
+explanation = "Unlike some languages' switch, a bash case never falls through to the next branch (with ;;). Order the patterns from most specific to most general."
+
+[[task]]
+id = "function"
+title = "Your first function"
+kind = "guided"
+instructions = "Define a function in your shell and call it:  shout() { echo \"$1!\" | tr a-z A-Z; }   then   shout {{fruit}}"
+skills = { "e.functions" = 1.0 }
+checks = [
+    { type = "function_defined", name = "shout" },
+    { type = "output_contains", text = "{{fruit}}!", ignore_case = true },
+]
+hints = ["The function body goes between { and }; the last command needs a ; before the }.", "Inside the function, $1 is the function's first argument.", "Type: shout() { echo \"$1!\" | tr a-z A-Z; }   then   shout {{fruit}}"]
+explanation = "A function behaves like a small command: it takes arguments ($1, $2, $#, \"$@\") and its exit status is that of its last command, or the value given to return."
+
+[[task]]
+id = "local"
+title = "Keep it local"
+kind = "prediction"
+instructions = "Think about where variables live:  x=outer; f() { local x=inner; }; f; echo $x"
+skills = { "e.functions" = 1.0 }
+question = { prompt = "What does echo $x print?", type = "exact", accept = ["outer"] }
+hints = ["local creates a variable that exists only while the function runs.", "Without local, the function would overwrite the global x.", "The answer is outer."]
+explanation = "Use local for every variable a function needs for itself; otherwise functions silently overwrite each other's variables."
+
+[[task]]
+id = "validate"
+title = "Allow-list validation"
+kind = "independent"
+instructions = "Write the executable ~/bin/isnum.sh. Define a function is_number that returns 0 if its argument consists only of digits (at least one) and 1 otherwise. The script uses it: for a number it prints 'ok' and exits 0; for anything else (including nothing) it prints 'not a number' to stderr and exits 1."
+skills = { "e.input-validation" = 1.0, "e.functions" = 1.0, "e.case" = 0.5 }
+checks = [
+    { type = "command_result", command = "~/bin/isnum.sh 2026", status = 0, stdout_equals = "ok" },
+    { type = "command_result", command = "~/bin/isnum.sh 12a", status = 1, stderr_contains = "not a number", stdout_equals = "" },
+    { type = "command_result", command = "~/bin/isnum.sh ''", status = 1, stdout_equals = "" },
+    { type = "command_result", command = "~/bin/isnum.sh", status = 1, stdout_equals = "" },
+    { type = "command_result", command = "~/bin/isnum.sh '-5'", status = 1 },
+    { type = "command_result", command = "~/bin/isnum.sh '1 2'", status = 1 },
+]
+hints = ["Describe what is allowed: one or more digits. Reject the empty string and anything containing a non-digit.", "case $1 in ''|*[!0-9]*) return 1 ;; esac; return 0 — then: if is_number \"$1\"; then echo ok; else echo 'not a number' >&2; exit 1; fi", "#!/bin/bash\nis_number() { case $1 in ''|*[!0-9]*) return 1 ;; esac; return 0; }\nif is_number \"$1\"; then echo ok; else echo 'not a number' >&2; exit 1; fi"]
+explanation = "The allow-list says what a number IS (only digits, at least one) instead of guessing every bad input (letters, spaces, minus signs, ../). Anything unexpected is rejected automatically."
+
+[[task]]
+id = "allow-or-deny"
+title = "Allow-list or deny-list?"
+kind = "prediction"
+instructions = "A script builds a file name from user input: ~/backups/$name.tar.gz"
+skills = { "e.input-validation" = 1.0 }
+question = { prompt = "Which check is safest?", type = "choice", choices = ["Reject names that contain ../", "Reject names that contain / or ..", "Accept only names made of letters, digits, - and _", "Put the name in quotes"], answer = 2 }
+hints = ["Which of these would still let through something you did not think of?", "Deny-lists miss cases; quoting prevents word splitting but not path tricks.", "The answer is (c): allow only known-good characters."]
+explanation = "An allow-list fails safe: a character you never thought about is rejected. Deny-lists fail open — the classic source of path-traversal and injection bugs."
+
+[debrief]
+summary = """
+case dispatches on patterns (first match wins, *) catches the rest). Functions package
+commands with their own arguments, return status and local variables. Validate input by
+allowing only what is known to be good.
+"""
+alternatives = ["[[ $1 =~ ^[0-9]+$ ]] tests a regular expression in bash", "A usage() function that prints to stderr and exits keeps every error path consistent", "return without a value returns the status of the last command"]
+pitfalls = ["Forgetting ;; at the end of a case branch is a syntax error.", "Unquoted \"$1\" in tests breaks on empty or spaced input.", "Variables set in a function without local leak into the rest of the script."]
+next = "Next: the backupctl challenge — subcommands and validation, no commands given."
+
+[[solution]]
+name = "as instructed"
+steps = [
+    { edit = "#!/bin/bash\ncase \"$1\" in\n    mon|tue|wed|thu|fri) echo weekday ;;\n    sat|sun)             echo weekend ;;\n    *) echo \"Usage: daytype.sh mon|tue|...|sun\" >&2; exit 2 ;;\nesac\n" },
+    "nano ~/bin/daytype.sh",
+    "chmod +x ~/bin/daytype.sh",
+    "~/bin/daytype.sh sat; ~/bin/daytype.sh wed; ~/bin/daytype.sh",
+    ":answer a",
+    "shout() { echo \"$1!\" | tr a-z A-Z; }",
+    "shout {{fruit}}",
+    ":answer outer",
+    { edit = "#!/bin/bash\nis_number() {\n    case $1 in\n        ''|*[!0-9]*) return 1 ;;\n    esac\n    return 0\n}\nif is_number \"$1\"; then\n    echo ok\nelse\n    echo 'not a number' >&2\n    exit 1\nfi\n" },
+    "nano ~/bin/isnum.sh",
+    "chmod +x ~/bin/isnum.sh",
+    ":answer c",
+]
+
+[[solution]]
+name = "printf and a regular expression"
+steps = [
+    "printf '#!/bin/bash\\ncase \"$1\" in\\n  sat|sun) echo weekend;;\\n  mon|tue|wed|thu|fri) echo weekday;;\\n  *) echo \"Usage: daytype.sh DAY\" >&2; exit 2;;\\nesac\\n' > ~/bin/daytype.sh",
+    "chmod 755 ~/bin/daytype.sh",
+    ":answer report",
+    "function shout { echo \"$1!\" | tr '[:lower:]' '[:upper:]'; }",
+    "shout {{fruit}}",
+    ":answer outer",
+    "printf '#!/bin/bash\\nis_number() { [[ $1 =~ ^[0-9]+$ ]]; }\\nis_number \"$1\" || { echo \"not a number\" >&2; exit 1; }\\necho ok\\n' > ~/bin/isnum.sh",
+    "chmod 755 ~/bin/isnum.sh",
+    ":answer 3",
+]
+
+[[counterexample]]
+name = "a deny-list that misses cases"
+steps = [
+    "printf '#!/bin/bash\\ncase \"$1\" in sat|sun) echo weekend;; *) echo weekday;; esac\\n' > ~/bin/daytype.sh",
+    "chmod +x ~/bin/daytype.sh",
+    ":answer a",
+    "shout() { echo \"$1!\" | tr a-z A-Z; }",
+    "shout {{fruit}}",
+    ":answer outer",
+    "printf '#!/bin/bash\\ncase \"$1\" in *[a-z]*) echo \"not a number\" >&2; exit 1;; esac\\necho ok\\n' > ~/bin/isnum.sh",
+    "chmod +x ~/bin/isnum.sh",
+    ":answer c",
+]

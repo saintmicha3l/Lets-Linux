@@ -1,0 +1,137 @@
+schema = 1
+
+[mission]
+id = "n03b-watching-syscalls"
+title = "Watching System Calls"
+chapter = "N"
+kind = "lesson"
+order = 4
+difficulty = 4
+requires = ["n02-kernel-cmdline", "e04b-scripts-that-fail-safely"]
+skills = ["n.syscalls", "n.kernel-userspace"]
+review_for = ["n.syscalls"]
+xp = 100
+estimated_minutes = 20
+
+[briefing]
+context = """
+When a program fails with a vague message — or none at all — you can still watch what it asks
+the kernel to do. Every file it opens, every byte it reads and every error the kernel returns
+passes through a system call, and strace shows them all.
+"""
+concept = """
+Programs run in user space and cannot touch files, the network or other processes directly:
+they ask the kernel through system calls (openat, read, write, execve, connect...).
+strace COMMAND runs COMMAND and prints every call with its arguments and result, on standard
+error. A failing call returns -1 and an errno name:
+  ENOENT (No such file or directory), EACCES (Permission denied), EPERM (Operation not
+  permitted), ECONNREFUSED (Connection refused).
+Useful options: -e trace=openat (only these calls), -f (follow child processes — needed for
+scripts, which run other programs), -c (a summary table), -o FILE (write the trace to FILE),
+-p PID (attach to a running process). Search a long trace with 2>&1 | grep.
+"""
+objectives = ["Explain what a system call is", "Read strace output and errno names", "Find the file a failing program could not open"]
+
+[environment]
+profile = "debian"
+packages = ["strace"]
+[environment.vars]
+app = { choices = ["invoicer", "shipcalc", "labelgen"] }
+conf = { choices = ["rates.ini", "carriers.conf", "templates.yml"] }
+
+[[environment.setup]]
+action = "dir"
+path = "/etc/{{app}}"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/{{app}}"
+mode = "0755"
+content = """#!/bin/sh
+# {{app}}: needs its configuration to start
+cat /etc/{{app}}/{{conf}} > /dev/null 2>&1 || { echo "{{app}}: startup failed" >&2; exit 1; }
+echo "{{app}}: ready"
+"""
+
+[[task]]
+id = "read"
+title = "Ask the kernel"
+kind = "guided"
+instructions = "Watch cat at work:  strace cat /etc/hostname   (the trace goes to standard error, cat's output in between)"
+skills = { "n.syscalls" = 1.0, "n.kernel-userspace" = 0.5 }
+question = { prompt = "Which system call fetches the file's contents?", type = "exact", accept = ["read", "read()"] }
+hints = ["Look for the call with the text of the file inside quotes.", "After openat returns a descriptor (3), cat calls the same function on it until it returns 0.", "The answer is read."]
+explanation = "openat gets a file descriptor, read fetches bytes, write puts them on standard output (fd 1), close releases it. Every program — whatever its language — boils down to calls like these."
+
+[[task]]
+id = "errno"
+title = "The kernel says no"
+kind = "guided"
+instructions = "Trace only the openat calls of a command that fails:  strace -e trace=openat cat /etc/shadow"
+skills = { "n.syscalls" = 1.0 }
+question = { prompt = "Which errno name does the kernel return for /etc/shadow?", type = "exact", accept = ["EACCES"], case_sensitive = true }
+hints = ["A failing call ends with = -1 ERRNAME (description).", "The description is Permission denied.", "The answer is EACCES."]
+explanation = "The error message a program prints is usually its own translation of this errno. strace shows the original, plus exactly which path the kernel refused."
+
+[[task]]
+id = "silent"
+title = "A vague failure"
+kind = "guided"
+instructions = "Run {{app}}: it only says 'startup failed'. It is a script that runs other programs, so follow them with -f and look at the files they open:  strace -f -e trace=openat {{app}}"
+skills = { "n.syscalls" = 1.0 }
+question = { prompt = "Which file does it fail to open? (full path)", type = "exact", accept = ["/etc/{{app}}/{{conf}}"] }
+hints = ["Without -f you only see the shell itself, not the cat it starts.", "Look for an openat that returns -1 ENOENT.", "The answer is /etc/{{app}}/{{conf}}."]
+explanation = "The script threw cat's message away (2>/dev/null), but the kernel's answer — ENOENT for that path — cannot be hidden from strace."
+
+[[task]]
+id = "fix"
+title = "Give it what it needs"
+kind = "independent"
+instructions = "Create the missing file (an empty one is enough) so that {{app}} reports it is ready."
+skills = { "n.syscalls" = 0.5, "m.verification" = 0.5 }
+checks = [{ type = "command_result", command = "/usr/local/bin/{{app}}", status = 0, stdout_contains = "ready" }]
+persistent = true
+hints = ["The directory exists; root owns it.", "sudo touch the path you found (password: letslinux).", "Run: sudo touch /etc/{{app}}/{{conf}} && {{app}}"]
+explanation = "Trace, find the failing call, fix exactly that, run again. The same loop works for programs whose source you have never seen."
+
+[[task]]
+id = "boundary"
+title = "User space and kernel"
+kind = "prediction"
+instructions = "Think about what a system call is."
+skills = { "n.kernel-userspace" = 1.0 }
+question = { prompt = "Why can't a normal program simply read the disk directly, without system calls?", type = "choice", choices = ["It can; system calls are only faster", "The CPU runs programs in an unprivileged mode: only the kernel may touch hardware, so it can enforce permissions for everyone", "Disks are read-only", "Because of SELinux"], answer = 1 }
+hints = ["Who checks file permissions?", "If programs could touch the hardware, permissions would mean nothing.", "The answer is (b)."]
+explanation = "The user/kernel boundary is what makes permissions, isolation and containers possible: every request crosses it through a system call, where the kernel checks it."
+
+[[task]]
+id = "summary"
+title = "The big picture"
+kind = "guided"
+instructions = "Count calls instead of listing them:  strace -c ls /etc > /dev/null"
+skills = { "n.syscalls" = 0.5 }
+checks = [{ type = "command_used", command = ["strace"], args_contain = ["-c"] }]
+hints = ["-c prints a table when the command ends.", "Redirect ls's own output away so the table is easy to read.", "Type: strace -c ls /etc > /dev/null"]
+explanation = "The summary shows which calls dominate and how many fail — handy for 'why is this slow?' (thousands of failing openat calls are a classic)."
+
+[debrief]
+summary = """
+Programs ask the kernel for everything through system calls. strace shows each call, its
+arguments and its result: -e trace= filters, -f follows children, -c summarises, and the errno
+of the failing call (ENOENT, EACCES...) tells you exactly what went wrong and where.
+"""
+alternatives = ["strace -f -o /tmp/trace.txt CMD, then grep -- '-1 E' /tmp/trace.txt lists every failing call", "sudo strace -p PID attaches to a running process", "ltrace shows library calls instead of system calls"]
+pitfalls = ["Forgetting -f for scripts: the interesting calls happen in the children.", "Drowning in output: filter with -e trace= or grep for '= -1'.", "Tracing other users' processes needs root."]
+next = "Next: a report generator that fails — trace it and fix the cause properly."
+
+[[solution]]
+name = "as instructed"
+steps = ["strace cat /etc/hostname", ":answer read", "strace -e trace=openat cat /etc/shadow", ":answer EACCES", "{{app}}", "strace -f -e trace=openat {{app}}", ":answer /etc/{{app}}/{{conf}}", { input = ["letslinux"] }, "sudo touch /etc/{{app}}/{{conf}}", "{{app}}", ":answer b", "strace -c ls /etc > /dev/null"]
+
+[[solution]]
+name = "trace to a file and grep"
+steps = ["strace -e trace=read cat /etc/hostname", ":answer read()", "strace cat /etc/shadow 2>&1 | grep shadow", ":answer EACCES", "strace -f -o /tmp/trace.txt {{app}}", "grep ENOENT /tmp/trace.txt", ":answer /etc/{{app}}/{{conf}}", { input = ["letslinux"] }, "echo '' | sudo tee /etc/{{app}}/{{conf}}", ":answer 2", "strace -c -o /tmp/sum.txt ls /etc"]
+
+[[counterexample]]
+name = "guessing without tracing"
+steps = [":answer read", ":answer EACCES", ":answer /etc/{{app}}/{{app}}.conf", { input = ["letslinux"] }, "sudo touch /etc/{{app}}/{{app}}.conf", ":answer b"]

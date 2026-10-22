@@ -1,0 +1,120 @@
+schema = 1
+
+[mission]
+id = "e04-case-and-validation"
+title = "Never Trust Input"
+chapter = "E"
+kind = "challenge"
+order = 5
+difficulty = 4
+requires = ["e03b-case-and-functions", "b08-archives"]
+skills = ["e.case", "e.input-validation", "e.test-conditionals"]
+review_for = ["e.positional-args", "b.archives"]
+xp = 160
+estimated_minutes = 30
+
+[briefing]
+context = """
+The team wants one small tool for their document backups: backupctl.sh list shows the
+backups, backupctl.sh create NAME archives ~/docs into ~/backups/NAME.tar.gz. Someone will
+certainly type backupctl.sh craete, or a name like ../../etc/x — the tool must refuse
+nonsense clearly instead of doing something surprising.
+"""
+concept = """
+case "$1" in list) …;; create) …;; *) usage;; esac chooses by pattern — | separates
+alternatives, * matches anything. Validate before acting: [ -z "$name" ] for empty input,
+case "$name" in *[!A-Za-z0-9_-]*) …;; esac (or [[ $name =~ ^[A-Za-z0-9_-]+$ ]]) to allow
+only safe characters, so a name can never contain / or ... Convention: usage errors print to
+stderr and exit with status 2.
+"""
+objectives = ["Dispatch subcommands with case", "Print usage on bad input", "Validate a name with patterns", "Use distinct exit statuses"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "files"
+dir = "~/docs"
+count = 3
+prefix = "minutes-"
+size = 300
+owner = "learner"
+
+[[environment.setup]]
+action = "dir"
+path = "~/bin"
+owner = "learner"
+
+[[task]]
+id = "dispatch"
+title = "Subcommands"
+kind = "independent"
+instructions = "Write the executable ~/bin/backupctl.sh. 'backupctl.sh list' prints the names of the files in ~/backups (nothing if there are none). Without a subcommand, or with an unknown one, it prints a message containing 'Usage' to stderr and exits with status 2."
+skills = { "e.case" = 1.0 }
+checks = [
+    { type = "command_result", command = "~/bin/backupctl.sh", status = 2, stderr_contains = "Usage", stdout_equals = "" },
+    { type = "command_result", command = "~/bin/backupctl.sh craete x", status = 2, stderr_contains = "Usage" },
+    { type = "command_result", setup = ["mkdir -p ~/backups && touch ~/backups/old.tar.gz"], command = "~/bin/backupctl.sh list", status = 0, stdout_equals = "old.tar.gz" },
+]
+hints = [
+    "case \"$1\" in list) …;; *) …;; esac",
+    "list) ls ~/backups 2>/dev/null ;;   and   *) echo \"Usage: backupctl.sh list|create NAME\" >&2; exit 2 ;;",
+    "printf '#!/bin/bash\\ncase \"$1\" in\\n    list) ls ~/backups 2>/dev/null ;;\\n    *) echo \"Usage: backupctl.sh list|create NAME\" >&2; exit 2 ;;\\nesac\\n' > ~/bin/backupctl.sh; chmod +x ~/bin/backupctl.sh",
+]
+explanation = "case compares one value against several patterns, top to bottom: the first match wins, *) catches the rest."
+
+[[task]]
+id = "create"
+title = "Create — safely"
+kind = "independent"
+instructions = "Add 'backupctl.sh create NAME': it archives the ~/docs directory into ~/backups/NAME.tar.gz (create ~/backups if needed). NAME is required and may only contain letters, digits, - and _ — otherwise print an error to stderr, exit with status 2 and create nothing."
+skills = { "e.input-validation" = 1.0, "e.case" = 0.5, "e.test-conditionals" = 0.5 }
+checks = [
+    { type = "command_result", command = "~/bin/backupctl.sh create weekly-01", status = 0, checks = [{ type = "archive_contains", path = "~/backups/weekly-01.tar.gz", members = ["docs/minutes-0"] }] },
+    { type = "command_result", command = "~/bin/backupctl.sh create", status = 2, stdout_equals = "" },
+    { type = "command_result", command = "~/bin/backupctl.sh create '../../tmp/evil'", status = 2, checks = [{ type = "path_absent", path = "/tmp/evil.tar.gz" }, { type = "any_of", checks = [{ type = "path_absent", path = "~/backups" }, { type = "tree_count", path = "~/backups", glob = "*", count = 0 }] }] },
+    { type = "command_result", command = "~/bin/backupctl.sh create 'two words'", status = 2 },
+    { type = "command_result", setup = ["~/bin/backupctl.sh create a1"], command = "~/bin/backupctl.sh list", stdout_contains = "a1.tar.gz" },
+]
+hints = [
+    "First check that the name is not empty, then that it contains no other character than A-Za-z0-9_-.",
+    "case \"$2\" in ''|*[!A-Za-z0-9_-]*) echo \"backupctl: invalid name: '$2'\" >&2; exit 2;; esac",
+    "Then: mkdir -p ~/backups && tar -czf ~/backups/\"$2\".tar.gz -C ~ docs",
+]
+explanation = "Allow-listing the characters ('only these are allowed') is safer than trying to forbid everything dangerous: ../ never gets through."
+
+[debrief]
+summary = """
+case for dispatch; validate every input before using it, by allow-listing; usage errors → stderr
+and exit 2; do nothing at all when input is bad.
+"""
+alternatives = ["[[ $name =~ ^[A-Za-z0-9_-]+$ ]] instead of a case pattern", "getopts for -v style options", "A function per subcommand: cmd_list, cmd_create"]
+pitfalls = ["Checking only for '/' — names like '..' or '-rf' are also trouble.", "Creating the directory or file before validating.", "Unquoted \"$2\" in the tar command."]
+next = "Next: functions and failing safely."
+
+[[solution]]
+name = "case patterns"
+steps = [
+    { edit = "#!/bin/bash\n# backupctl.sh - manage document backups\nusage() {\n    echo \"Usage: backupctl.sh list | create NAME\" >&2\n    exit 2\n}\ncase \"$1\" in\n    list)\n        ls ~/backups 2>/dev/null\n        ;;\n    create)\n        name=$2\n        case \"$name\" in\n            ''|*[!A-Za-z0-9_-]*)\n                echo \"backupctl: invalid name: '$name'\" >&2\n                exit 2\n                ;;\n        esac\n        mkdir -p ~/backups\n        tar -czf ~/backups/\"$name\".tar.gz -C ~ docs\n        ;;\n    *)\n        usage\n        ;;\nesac\n" },
+    "nano ~/bin/backupctl.sh",
+    "chmod +x ~/bin/backupctl.sh",
+    "~/bin/backupctl.sh; echo $?",
+    "~/bin/backupctl.sh create weekly-01 && ~/bin/backupctl.sh list",
+]
+
+[[solution]]
+name = "regular expression and if"
+steps = [
+    { edit = "#!/bin/bash\nif [ \"$1\" = list ]; then\n    ls ~/backups 2>/dev/null\n    exit 0\nfi\nif [ \"$1\" != create ]; then\n    echo 'Usage: backupctl.sh list|create NAME' >&2\n    exit 2\nfi\nif ! [[ $2 =~ ^[A-Za-z0-9_-]+$ ]]; then\n    echo \"invalid backup name\" >&2\n    exit 2\nfi\nmkdir -p ~/backups && tar -C ~ -czf ~/backups/$2.tar.gz docs\n" },
+    "nano ~/bin/backupctl.sh",
+    "chmod 755 ~/bin/backupctl.sh",
+    "~/bin/backupctl.sh create 'x y'; echo $?",
+]
+
+[[counterexample]]
+name = "no validation"
+steps = [
+    { edit = "#!/bin/bash\ncase \"$1\" in\n    list) ls ~/backups ;;\n    create) mkdir -p ~/backups; tar -czf ~/backups/$2.tar.gz -C ~ docs ;;\n    *) echo Usage >&2; exit 2 ;;\nesac\n" },
+    "nano ~/bin/backupctl.sh",
+    "chmod +x ~/bin/backupctl.sh",
+]

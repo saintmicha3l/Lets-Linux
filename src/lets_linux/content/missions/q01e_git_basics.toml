@@ -1,0 +1,153 @@
+schema = 1
+
+[mission]
+id = "q01e-git-basics"
+title = "Version Control with git"
+chapter = "Q"
+kind = "lesson"
+order = 5
+difficulty = 3
+requires = ["q01-toolchain", "c07-compare-and-feed"]
+skills = ["q.version-control"]
+review_for = ["q.version-control"]
+xp = 90
+estimated_minutes = 20
+
+[briefing]
+context = """
+Configuration kept in git answers the questions every incident asks — what changed, when, who
+and why — and makes undoing a change safe. Your team keeps its deployment settings in a git
+repository in ~/deploy. Learn to read its history and to change it properly.
+"""
+concept = """
+A repository records snapshots (commits) of a directory: author, date, message and the diff.
+Reading: git log --oneline (one line per commit), git log -p -- FILE (with diffs, one file),
+git show COMMIT, git blame FILE (which commit last changed each line).
+Changing: edit, then git status (what changed), git diff (exact lines), git add FILE (stage),
+git commit -m "why" (record). git commit -am "why" stages every tracked file that changed.
+Each commit needs an identity: git config user.name / user.email (--global for all repos).
+Undoing: git revert COMMIT adds a NEW commit that reverses an old one — the history stays
+complete. (git reset --hard rewrites history; avoid it on anything shared.)
+"""
+objectives = ["Read history with log, show and blame", "Commit a change with an identity and a message", "Undo a commit with revert"]
+
+[environment]
+profile = "debian"
+packages = ["git"]
+[environment.vars]
+who = { choices = ["Ana Ruiz", "Ben Odede", "Chen Wei"] }
+timeout = { choices = ["45", "90", "120"] }
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "mkdir -p ~/deploy && cd ~/deploy && git init -q -b main && printf 'workers=4\\ntimeout=30\\ndebug=false\\n' > app.conf && GIT_AUTHOR_NAME='Lea Park' GIT_AUTHOR_EMAIL=lea@example.lan GIT_COMMITTER_NAME='Lea Park' GIT_COMMITTER_EMAIL=lea@example.lan sh -c 'git add app.conf && git commit -qm \"Add application settings\"'"
+
+[[environment.setup]]
+action = "clock"
+seconds = 86400
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "cd ~/deploy && sed -i 's/^timeout=30$/timeout={{timeout}}/' app.conf && GIT_AUTHOR_NAME='{{who}}' GIT_AUTHOR_EMAIL=ops@example.lan GIT_COMMITTER_NAME='{{who}}' GIT_COMMITTER_EMAIL=ops@example.lan git commit -qam 'Raise timeout for slow uploads'"
+
+[[environment.setup]]
+action = "clock"
+seconds = 86400
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "cd ~/deploy && sed -i 's/^debug=false$/debug=true/' app.conf && GIT_AUTHOR_NAME='Lea Park' GIT_AUTHOR_EMAIL=lea@example.lan GIT_COMMITTER_NAME='Lea Park' GIT_COMMITTER_EMAIL=lea@example.lan git commit -qam 'Temporary: debug logging for ticket 4711'"
+
+[[task]]
+id = "log"
+title = "The history"
+kind = "guided"
+instructions = "Look at the history:  cd ~/deploy && git log --oneline   (and git log for authors and dates)"
+skills = { "q.version-control" = 1.0 }
+question = { prompt = "How many commits does the repository have?", type = "number", accept = ["3"] }
+hints = ["git log --oneline prints one line per commit.", "Count the lines.", "The answer is 3."]
+explanation = "Newest first: each line is the start of the commit's ID and its message. Good messages say WHY — 'Raise timeout for slow uploads' beats 'change app.conf'."
+
+[[task]]
+id = "blame"
+title = "Who changed this line?"
+kind = "guided"
+instructions = "Find out who last changed each line of app.conf:  git blame app.conf"
+skills = { "q.version-control" = 1.0, "m.evidence-correlation" = 0.5 }
+question = { prompt = "Who set the timeout to {{timeout}}?", type = "exact", accept = ["{{who}}"] }
+hints = ["blame prints the commit, author and date in front of each line.", "Look at the timeout line.", "The answer is {{who}}."]
+explanation = "git blame turns 'who changed this setting?' into a name, a date and — via git show COMMIT — the reason."
+
+[[task]]
+id = "show"
+title = "Why?"
+kind = "guided"
+instructions = "Show the latest commit with its diff:  git show HEAD"
+skills = { "q.version-control" = 1.0 }
+question = { prompt = "Which setting did the latest commit change?", type = "exact", accept = ["debug", "debug=true", "debug=false"] }
+hints = ["Lines starting with - were removed, + were added.", "Read the message, too.", "The answer is debug."]
+explanation = "The message says it was temporary, for a ticket — exactly the kind of change that gets forgotten. History makes it visible."
+
+[[task]]
+id = "revert"
+title = "Undo it properly"
+kind = "independent"
+instructions = "The ticket is closed. Undo the debug commit so that debug=false again — keeping every existing commit in the history. (Set your git identity first if git asks for it.)"
+skills = { "q.version-control" = 1.0 }
+checks = [
+    { type = "file_contains", path = "~/deploy/app.conf", text = "debug=false" },
+    { type = "file_contains", path = "~/deploy/app.conf", text = "timeout={{timeout}}" },
+    { type = "command_result", command = "cd ~/deploy && git log --oneline | grep -c 'Temporary: debug'", stdout_equals = "2" },
+    { type = "command_result", command = "cd ~/deploy && git log --oneline | wc -l", stdout_regex = "^[4-9]" },
+]
+persistent = true
+hints = ["One command creates a new commit that reverses an old one.", "git revert --no-edit HEAD reverses the newest commit.", "git config user.name 'Your Name'; git config user.email you@example.lan; git revert --no-edit HEAD"]
+explanation = "Now the history tells the whole story: debug was switched on for a ticket, and later off again — by you."
+
+[[task]]
+id = "commit"
+title = "Record your own change"
+kind = "independent"
+instructions = "Set workers=8 in app.conf and record it as a commit whose message mentions 'workers'."
+skills = { "q.version-control" = 1.0 }
+checks = [
+    { type = "command_result", command = "cd ~/deploy && git show HEAD", stdout_contains = ["workers=8", "workers"] },
+    { type = "command_result", command = "cd ~/deploy && git status --short", stdout_equals = "" },
+]
+persistent = true
+hints = ["Edit the file, check with git diff, then commit.", "git commit -am 'message' stages the changed tracked file and commits it.", "sed -i 's/^workers=4$/workers=8/' app.conf && git commit -am 'Use 8 workers for the new server'"]
+explanation = "Edit, diff, commit with a reason: small commits with good messages are what make blame, revert and incident timelines useful later."
+
+[[task]]
+id = "stage"
+title = "Nothing to commit?"
+kind = "prediction"
+instructions = "Think about the staging area."
+skills = { "q.version-control" = 1.0 }
+question = { prompt = "You edited app.conf and run  git commit -m 'tune'  without git add or -a. What happens?", type = "choice", choices = ["The change is committed", "git commits nothing: the change is not staged ('no changes added to commit')", "git deletes the change", "git asks which files to add"], answer = 1 }
+hints = ["git commit records what is staged.", "Editing does not stage.", "The answer is (b)."]
+explanation = "The staging area lets you commit some changes and not others. git status always tells you what is staged and what is not."
+
+[debrief]
+summary = """
+git log, show and blame answer what changed, when, who and why; edit, diff and commit -am record
+changes with a reason; git revert undoes a commit while keeping the history complete.
+"""
+alternatives = ["git log -p -- app.conf shows every change to one file", "git diff HEAD~1 compares with the previous commit", "git log --author='{{who}}' lists one person's commits"]
+pitfalls = ["git reset --hard on shared history: commits vanish for everyone.", "Commit messages that say what, not why.", "Forgetting to stage: git commit without -a or add records nothing."]
+next = "Next: an nginx configuration in git — find the change that broke the shop."
+
+[[solution]]
+name = "as instructed"
+steps = ["cd ~/deploy && git log --oneline", "git log", ":answer 3", "git blame app.conf", ":answer {{who}}", "git show HEAD", ":answer debug", "git config user.name 'Learner'", "git config user.email learner@example.lan", "git revert --no-edit HEAD", "sed -i 's/^workers=4$/workers=8/' app.conf", "git diff", "git commit -am 'Use 8 workers for the new server'", ":answer b"]
+
+[[solution]]
+name = "global identity and git add"
+steps = ["git -C ~/deploy log --oneline | wc -l", ":answer 3", "cd ~/deploy", "git log -p -- app.conf | grep -B8 'timeout={{timeout}}'", ":answer {{who}}", "git log -1 -p", ":answer debug=true", "git config --global user.name 'Learner'", "git config --global user.email learner@example.lan", "git revert --no-edit HEAD", "sed -i 's/workers=4/workers=8/' app.conf", "git add app.conf", "git commit -m 'Raise workers to 8'", ":answer 2"]
+
+[[counterexample]]
+name = "editing the file instead of reverting, never committing"
+steps = ["cd ~/deploy && git log --oneline", ":answer 3", ":answer {{who}}", ":answer debug", "sed -i 's/debug=true/debug=false/' app.conf", "sed -i 's/^workers=4$/workers=8/' app.conf", ":answer b"]

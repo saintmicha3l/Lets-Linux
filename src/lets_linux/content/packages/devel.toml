@@ -1,0 +1,318 @@
+# Package catalogue: the C toolchain and libraries to build against (chapter Q).
+# Headers are real C declarations in the subset the simulated compiler understands.
+
+schema = 1
+
+[[package]]
+name = "libc6-dev"
+summary = "GNU C Library: Development Libraries and Header Files"
+section = "libdevel"
+# (on Arch the headers belong to glibc itself; linux-api-headers stands in for them here)
+names = { fedora = "glibc-devel", arch = "linux-api-headers" }
+versions = { debian = "2.36-9+deb12u9", ubuntu = "2.39-0ubuntu8.3", fedora = "2.40-9.fc41", arch = "6.10-1", generic = "2.40" }
+depends = ["libc6"]
+
+[[package.devlink]]
+name = "libm.so"
+target = "libm.so.6"
+
+[[package.file]]
+path = "/usr/include/stdio.h"
+content = """/* Define ISO C stdio on top of C++ iostreams.
+   Copyright (C) 1991-2023 Free Software Foundation, Inc.  (Let's Linux: simplified) */
+#ifndef _STDIO_H
+#define _STDIO_H 1
+
+#define EOF (-1)
+#define BUFSIZ 8192
+
+extern FILE *stdin;
+extern FILE *stdout;
+extern FILE *stderr;
+
+extern int printf (const char *format, ...);
+extern int fprintf (FILE *stream, const char *format, ...);
+extern int sprintf (char *s, const char *format, ...);
+extern int snprintf (char *s, size_t maxlen, const char *format, ...);
+extern int puts (const char *s);
+extern int putchar (int c);
+extern int fputs (const char *s, FILE *stream);
+extern char *fgets (char *s, int n, FILE *stream);
+extern FILE *fopen (const char *filename, const char *modes);
+extern int fclose (FILE *stream);
+extern int feof (FILE *stream);
+extern int fflush (FILE *stream);
+extern void perror (const char *s);
+extern int scanf (const char *format, ...);
+
+#endif /* <stdio.h> included.  */
+"""
+
+[[package.file]]
+path = "/usr/include/stdlib.h"
+content = """/* ISO C99 Standard: 7.20 General utilities  <stdlib.h>  (Let's Linux: simplified) */
+#ifndef _STDLIB_H
+#define _STDLIB_H 1
+
+#define EXIT_FAILURE 1
+#define EXIT_SUCCESS 0
+#define RAND_MAX 2147483647
+
+extern void *malloc (size_t size);
+extern void *calloc (size_t nmemb, size_t size);
+extern void free (void *ptr);
+extern void exit (int status);
+extern void abort (void);
+extern int atexit (void *func);
+extern int atoi (const char *nptr);
+extern long atol (const char *nptr);
+extern double atof (const char *nptr);
+extern long strtol (const char *nptr, char **endptr, int base);
+extern char *getenv (const char *name);
+extern int rand (void);
+extern void srand (unsigned int seed);
+
+#endif /* stdlib.h  */
+"""
+
+[[package.file]]
+path = "/usr/include/string.h"
+families = ["debian", "generic"]
+content = """/* ISO C99 Standard: 7.21 String handling  <string.h>  (Let's Linux: simplified, glibc 2.36) */
+#ifndef _STRING_H
+#define _STRING_H 1
+
+extern size_t strlen (const char *s);
+extern int strcmp (const char *s1, const char *s2);
+extern int strncmp (const char *s1, const char *s2, size_t n);
+extern char *strcpy (char *dest, const char *src);
+extern char *strncpy (char *dest, const char *src, size_t n);
+extern char *strcat (char *dest, const char *src);
+extern char *strdup (const char *s);
+extern char *strchr (const char *s, int c);
+extern char *strstr (const char *haystack, const char *needle);
+extern void *memset (void *s, int c, size_t n);
+extern char *strerror (int errnum);
+
+#endif /* string.h  */
+"""
+
+[[package.file]]
+path = "/usr/include/string.h"
+families = ["fedora", "arch"]
+content = """/* ISO C99 Standard: 7.21 String handling  <string.h>  (Let's Linux: simplified, glibc 2.40) */
+#ifndef _STRING_H
+#define _STRING_H 1
+
+extern size_t strlen (const char *s);
+extern int strcmp (const char *s1, const char *s2);
+extern int strncmp (const char *s1, const char *s2, size_t n);
+extern char *strcpy (char *dest, const char *src);
+extern char *strncpy (char *dest, const char *src, size_t n);
+extern char *strcat (char *dest, const char *src);
+extern char *strdup (const char *s);
+extern char *strchr (const char *s, int c);
+extern char *strstr (const char *haystack, const char *needle);
+extern void *memset (void *s, int c, size_t n);
+extern char *strerror (int errnum);
+/* Copy at most N - 1 bytes and terminate: since glibc 2.38 (GLIBC_2.38).  */
+extern size_t strlcpy (char *dest, const char *src, size_t n);
+extern size_t strlcat (char *dest, const char *src, size_t n);
+
+#endif /* string.h  */
+"""
+
+[[package.file]]
+path = "/usr/include/unistd.h"
+content = """/* POSIX Standard: 2.10 Symbolic Constants  <unistd.h>  (Let's Linux: simplified) */
+#ifndef _UNISTD_H
+#define _UNISTD_H 1
+
+extern unsigned int sleep (unsigned int seconds);
+extern pid_t getpid (void);
+extern uid_t getuid (void);
+extern uid_t geteuid (void);
+
+#endif /* unistd.h  */
+"""
+
+[[package.file]]
+path = "/usr/include/math.h"
+content = """/* Declarations for math functions.  (Let's Linux: simplified) — link with -lm */
+#ifndef _MATH_H
+#define _MATH_H 1
+
+#define M_PI 3.14159265358979323846
+
+extern double sqrt (double x);
+extern double pow (double x, double y);
+extern double floor (double x);
+extern double ceil (double x);
+extern double sin (double x);
+extern double cos (double x);
+extern double fabs (double x);
+extern double log (double x);
+
+#endif /* math.h  */
+"""
+
+[[package.file]]
+path = "/usr/include/assert.h"
+content = """/* ISO C99 Standard: 7.2 Diagnostics  <assert.h>  (Let's Linux: simplified)
+   assert(EXPR) aborts with a message when EXPR is false — unless NDEBUG is defined.  */
+#ifndef __ASSERT_H
+#define __ASSERT_H 1
+#endif
+"""
+
+[[package.file]]
+path = "/usr/include/errno.h"
+content = """/* ISO C99 Standard: 7.5 Errors  <errno.h>  (Let's Linux: simplified) */
+#ifndef _ERRNO_H
+#define _ERRNO_H 1
+#define EPERM 1
+#define ENOENT 2
+#define EACCES 13
+#define EEXIST 17
+#define EINVAL 22
+#endif
+"""
+
+[[package.file]]
+path = "/usr/include/time.h"
+content = """/* ISO C99 Standard: 7.23 Date and time  <time.h>  (Let's Linux: simplified) */
+#ifndef _TIME_H
+#define _TIME_H 1
+extern time_t time (time_t *timer);
+#endif
+"""
+
+[[package.file]]
+path = "/usr/include/stdbool.h"
+content = """/* ISO C99: 7.16 Boolean type and values  <stdbool.h> */
+#ifndef _STDBOOL_H
+#define _STDBOOL_H
+#define true 1
+#define false 0
+#endif
+"""
+
+[[package.file]]
+path = "/usr/lib/x86_64-linux-gnu/libc.a"
+families = ["debian"]
+content = "!<arch>\n/ (Let's Linux: the static C library, used by gcc -static)\n"
+
+[[package.file]]
+path = "/usr/lib/libc.a"
+families = ["arch"]
+content = "!<arch>\n/ (Let's Linux: the static C library, used by gcc -static)\n"
+
+[[package]]
+name = "glibc-static"
+summary = "C library static libraries for -static linking"
+section = "libdevel"
+families = ["fedora"]
+versions = { fedora = "2.40-9.fc41" }
+depends = ["libc6-dev"]
+
+[[package.file]]
+path = "/usr/lib64/libc.a"
+content = "!<arch>\n/ (Let's Linux: the static C library, used by gcc -static)\n"
+
+[[package]]
+name = "gcc"
+summary = "GNU C compiler"
+section = "devel"
+versions = { debian = "4:12.2.0-3", ubuntu = "4:13.2.0-7ubuntu1", fedora = "14.2.1-3.fc41", arch = "14.2.1+r134+gab884fffe3fc-1", generic = "12.2.0" }
+depends = ["libc6-dev", "binutils"]
+bin = ["gcc", "cc=gcc", "x86_64-linux-gnu-gcc=gcc"]
+only = { "x86_64-linux-gnu-gcc" = ["debian"] }
+
+[[package]]
+name = "build-essential"
+summary = "Informational list of build-essential packages"
+section = "devel"
+families = ["debian"]
+versions = { debian = "12.9", ubuntu = "12.10ubuntu1" }
+depends = ["gcc", "make", "libc6-dev"]
+
+[[package]]
+name = "zlib1g"
+summary = "compression library - runtime"
+section = "libs"
+names = { fedora = "zlib-ng-compat", arch = "zlib" }
+versions = { debian = "1:1.2.13.dfsg-1", ubuntu = "1:1.3.dfsg-3.1ubuntu2", fedora = "2.1.7-3.fc41", arch = "1:1.3.1-2", generic = "1.2.13" }
+
+[[package.library]]
+soname = "libz.so.1"
+file = "libz.so.1.2.13"
+builtin = "libz"
+symbols = ["zlibVersion", "compress", "uncompress", "crc32"]
+
+[[package]]
+name = "zlib1g-dev"
+summary = "compression library - development"
+section = "libdevel"
+names = { fedora = "zlib-ng-compat-devel", arch = "zlib-headers" }
+versions = { debian = "1:1.2.13.dfsg-1", ubuntu = "1:1.3.dfsg-3.1ubuntu2", fedora = "2.1.7-3.fc41", arch = "1:1.3.1-2", generic = "1.2.13" }
+depends = ["zlib1g", "libc6-dev"]
+
+[[package.devlink]]
+name = "libz.so"
+target = "libz.so.1.2.13"
+
+[[package.file]]
+path = "/usr/include/zlib.h"
+content = """/* zlib.h -- interface of the 'zlib' general purpose compression library  (Let's Linux: simplified) */
+#ifndef ZLIB_H
+#define ZLIB_H
+#define ZLIB_VERSION "1.2.13"
+extern const char *zlibVersion (void);
+extern unsigned long crc32 (unsigned long crc, const char *buf, unsigned int len);
+#endif /* ZLIB_H */
+"""
+
+[[package]]
+name = "make"
+summary = "utility for directing compilation"
+section = "devel"
+versions = { debian = "4.3-4.1", ubuntu = "4.3-4.1build2", fedora = "1:4.4.1-8.fc41", arch = "4.4.1-2", generic = "4.3" }
+bin = ["make"]
+
+[[package]]
+name = "gdb"
+summary = "GNU Debugger"
+section = "devel"
+versions = { debian = "13.1-3", ubuntu = "15.0.50.20240403-0ubuntu1", fedora = "15.1-1.fc41", arch = "15.2-1", generic = "13.1" }
+bin = ["gdb"]
+
+[[package]]
+name = "ltrace"
+summary = "Tracks runtime library calls in dynamically linked programs"
+section = "utils"
+versions = { debian = "0.7.3-6.4", ubuntu = "0.7.3-6.4ubuntu4", fedora = "0.7.91-50.fc41", arch = "0.7.3.r63.g8eabf68-1", generic = "0.7.3" }
+bin = ["ltrace"]
+
+[[package]]
+name = "git"
+summary = "fast, scalable, distributed revision control system"
+section = "vcs"
+versions = { debian = "1:2.39.5-0+deb12u1", ubuntu = "1:2.43.0-1ubuntu7.1", fedora = "2.47.0-1.fc41", arch = "2.47.0-1", generic = "2.39.5" }
+bin = ["git"]
+
+[[package]]
+name = "ansible-core"
+summary = "Configuration management, deployment, and task execution system"
+section = "admin"
+size_kb = 9000
+versions = { debian = "2.14.3-1+deb12u1", ubuntu = "2.16.3-0ubuntu2", fedora = "2.17.5-1.fc41", arch = "2.18.0-1", generic = "2.14.3" }
+bin = ["ansible", "ansible-playbook"]
+
+[[package]]
+name = "sqlite3"
+summary = "Command line interface for SQLite 3"
+section = "database"
+size_kb = 1800
+names = { fedora = "sqlite", arch = "sqlite" }
+versions = { debian = "3.40.1-2+deb12u1", ubuntu = "3.45.1-1ubuntu2", fedora = "3.46.1-1.fc41", arch = "3.46.1-1", generic = "3.40.1" }
+bin = ["sqlite3"]

@@ -1,0 +1,200 @@
+schema = 1
+
+[mission]
+id = "j05-out-of-inodes"
+title = "Full, With Space to Spare"
+chapter = "J"
+kind = "troubleshooting"
+order = 6
+difficulty = 5
+requires = ["j03-disk-full", "k01-cron-jobs"]
+skills = ["j.inodes", "j.capacity", "m.hypothesis-method"]
+review_for = ["b.links-hard-inodes", "k.cron-basics", "b.find-files"]
+xp = 170
+estimated_minutes = 25
+
+[briefing]
+context = """
+Customers of the web shop are logged out on every click: the application cannot store
+sessions any more. Its log says "No space left on device" — yet df -h shows hundreds of
+megabytes free. Find out what is really full, clean up, and make sure it does not happen
+again. (sudo password: letslinux)
+"""
+concept = """
+Every file needs an inode (the record that holds its metadata), and a filesystem has a
+fixed number of them, set by mkfs. Millions of tiny files can use up the inodes long before
+the blocks: creating files then fails with "No space left on device" although df -h shows
+free space. df -i shows inode usage. find DIR -xdev -type f | cut -d/ -f1-5 | sort | uniq -c
+counts files per directory; find -mtime +N -delete removes old ones.
+"""
+objectives = ["Reproduce the error", "Tell block exhaustion from inode exhaustion", "Find the directory with the most files", "Clean up by age", "Automate the cleanup"]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "user"
+name = "webshop"
+system = true
+shell = "/usr/sbin/nologin"
+home = "/var/lib/webshop"
+create_home = false
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "512M"
+partitions = [{ size = "rest", fs = "ext4", label = "webshop", mount = "/var/lib/webshop", fstab = true, owner = "webshop", inodes = 3000 }]
+
+[[environment.setup]]
+action = "dir"
+path = "/var/lib/webshop/uploads"
+owner = "webshop"
+
+[[environment.setup]]
+action = "file"
+path = "/var/lib/webshop/uploads/catalogue-2026.pdf"
+owner = "webshop"
+size = 83886080
+
+[[environment.setup]]
+action = "file"
+path = "/var/lib/webshop/uploads/product-photos.tar"
+owner = "webshop"
+size = 125829120
+
+[[environment.setup]]
+action = "files"
+dir = "/var/lib/webshop/sessions"
+count = 12
+prefix = "sess_live_"
+size = 180
+owner = "webshop"
+
+[[environment.setup]]
+action = "files"
+dir = "/var/lib/webshop/sessions"
+count = 5000
+prefix = "sess_"
+size = 0
+owner = "webshop"
+age_days = 21
+until_full = true
+
+[[environment.setup]]
+action = "journal"
+identifier = "webshop"
+priority = "warning"
+facility = "daemon"
+message = "PHP Warning: session_start(): open(/var/lib/webshop/sessions/sess_9f2c1d, O_RDWR) failed: No space left on device (28)"
+repeat = 3
+
+[[task]]
+id = "symptom"
+title = "Reproduce it"
+kind = "guided"
+instructions = "Try to create an empty file in /var/lib/webshop/sessions (as root)."
+skills = { "j.inodes" = 1.0 }
+checks = [{ type = "command_used", command = "touch", failed = true }]
+hints = ["touch creates an empty file.", "sudo touch /var/lib/webshop/sessions/test", "sudo touch /var/lib/webshop/sessions/test — even root cannot."]
+explanation = "\"No space left on device\" — for an empty file, which needs no data blocks at all."
+
+[[task]]
+id = "puzzle"
+title = "What is full?"
+kind = "troubleshooting"
+instructions = "df -h /var/lib/webshop shows plenty of free space. Find out what is exhausted."
+skills = { "j.inodes" = 1.0 }
+question = { prompt = "What has run out on /var/lib/webshop?", type = "choice", choices = ["The blocks reserved for root", "Inodes", "A size limit of the directory", "Memory"], answer = 1 }
+hints = ["df has an option that reports inodes instead of blocks.", "df -i /var/lib/webshop", "IUse% is 100%: (b) inodes."]
+explanation = "df -i: every inode is in use. Each file, however small, costs one."
+
+[[task]]
+id = "where"
+title = "Where are they?"
+kind = "troubleshooting"
+instructions = "Find the directory that contains most of the files."
+skills = { "j.inodes" = 1.0, "j.capacity" = 0.5 }
+question = { prompt = "Which directory holds most of the files?", type = "exact", accept = ["/var/lib/webshop/sessions", "sessions", "/var/lib/webshop/sessions/"] }
+hints = ["Count files per directory with find, cut, sort and uniq -c.", "sudo find /var/lib/webshop -xdev -type f | cut -d/ -f1-5 | sort | uniq -c", "/var/lib/webshop/sessions — thousands of session files."]
+explanation = "Session files are tiny, so du hardly notices them — but each one takes an inode."
+
+[[task]]
+id = "clean"
+title = "Clean up"
+kind = "troubleshooting"
+instructions = "Sessions expire after 7 days. Delete session files that have not been modified for more than 7 days; keep the live ones."
+skills = { "j.inodes" = 1.0, "b.find-files" = 0.5 }
+checks = [
+    { type = "inodes_free", mount = "/var/lib/webshop", min_percent = 50 },
+    { type = "path_exists", path = "/var/lib/webshop/sessions/sess_live_0" },
+    { type = "path_exists", path = "/var/lib/webshop/sessions/sess_live_11" },
+]
+persistent = true
+hints = ["find -mtime +7 selects files modified more than 7 days ago.", "Check first: sudo find /var/lib/webshop/sessions -type f -mtime +7 | wc -l", "sudo find /var/lib/webshop/sessions -type f -mtime +7 -delete; df -i /var/lib/webshop"]
+explanation = "rm /var/lib/webshop/sessions/* would have logged out every customer — and with very many files fails with 'Argument list too long'. find selects and deletes in one pass."
+
+[[task]]
+id = "automate"
+title = "Never again"
+kind = "independent"
+instructions = "Create /etc/cron.d/webshop-sessions: every day at 03:15, as root, delete session files older than 7 days."
+skills = { "k.cron-basics" = 1.0, "j.inodes" = 0.5 }
+checks = [
+    { type = "file_contains", path = "/etc/cron.d/webshop-sessions", regex = "(?m)^\\s*15\\s+0?3\\s+\\*\\s+\\*\\s+\\*\\s+root\\s+.*find\\s+/var/lib/webshop/sessions\\b.*-mtime\\s+\\+7.*-delete" },
+]
+persistent = true
+hints = ["Files in /etc/cron.d have a user field between the schedule and the command.", "15 3 * * * root COMMAND", "echo '15 3 * * * root find /var/lib/webshop/sessions -type f -mtime +7 -delete' | sudo tee /etc/cron.d/webshop-sessions"]
+explanation = "A nightly cleanup keeps the directory small. (Many applications have their own session garbage collection — check why it was not running, too.)"
+
+[debrief]
+summary = """
+"No space left on device" with free space in df -h → df -i. Find the directory with the
+most files, delete by age with find, and automate the cleanup.
+"""
+alternatives = ["du --inodes -s DIR/* counts inodes per directory with GNU du (not simulated here)", "Re-creating the filesystem with more inodes (mkfs.ext4 -i or -N) when small files are its normal use", "A filesystem with dynamic inode allocation (XFS, btrfs) for such workloads"]
+pitfalls = ["rm DIR/* with thousands of files: 'Argument list too long'.", "Deleting live sessions logs out every customer.", "Looking only at df -h."]
+next = "Next: swap space."
+
+[[solution]]
+name = "df -i, find and cron.d"
+steps = [
+    { input = ["letslinux"] },
+    "sudo touch /var/lib/webshop/sessions/test",
+    "df -h /var/lib/webshop",
+    "df -i /var/lib/webshop",
+    ":answer b",
+    "sudo find /var/lib/webshop -xdev -type f | cut -d/ -f1-5 | sort | uniq -c",
+    ":answer /var/lib/webshop/sessions",
+    "sudo find /var/lib/webshop/sessions -type f -mtime +7 | wc -l",
+    "sudo find /var/lib/webshop/sessions -type f -mtime +7 -delete",
+    "df -i /var/lib/webshop",
+    "echo '15 3 * * * root find /var/lib/webshop/sessions -type f -mtime +7 -delete' | sudo tee /etc/cron.d/webshop-sessions",
+]
+
+[[solution]]
+name = "root shell and an editor"
+steps = [
+    { input = ["letslinux"] },
+    "sudo -i",
+    "touch /var/lib/webshop/sessions/probe",
+    "df -i",
+    ":answer Inodes",
+    "cd /var/lib/webshop; for d in */; do echo \"$(find \"$d\" -type f | wc -l) $d\"; done",
+    ":answer sessions",
+    "find sessions -name 'sess_*' -mtime +7 -exec rm -f {} +",
+    { edit = "# clean up expired web shop sessions\n15 03 * * * root /usr/bin/find /var/lib/webshop/sessions -type f -mtime +7 -delete\n" },
+    "nano /etc/cron.d/webshop-sessions",
+    "exit",
+]
+
+[[counterexample]]
+name = "deleting every session"
+steps = [
+    { input = ["letslinux"] },
+    "sudo touch /var/lib/webshop/sessions/x",
+    ":answer b",
+    ":answer sessions",
+    "sudo rm -rf /var/lib/webshop/sessions",
+    "sudo mkdir /var/lib/webshop/sessions",
+]

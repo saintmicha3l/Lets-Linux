@@ -1,0 +1,792 @@
+# Package catalogue: the service manager and logging daemons, with their unit files.
+#
+# Unit files are installed under /usr/lib/systemd/system (on Debian 12 that
+# directory is reached through the /lib symlink and shown as /lib/systemd/system).
+# File entries: path, content, mode, or kind = "symlink" with a target.
+
+schema = 1
+
+[[package]]
+name = "systemd"
+summary = "system and service manager"
+section = "admin"
+essential = true
+versions = { debian = "252.31-1~deb12u1", ubuntu = "255.4-1ubuntu8.4", fedora = "256.7-1.fc41", arch = "256.7-1", generic = "256.7" }
+bin = [
+    "journalctl", "systemctl", "hostnamectl", "systemd-analyze", "systemd-cgls", "systemd-cgtop", "systemd-run", "systemd-detect-virt",
+    "networkctl",
+    "/usr/lib/systemd/systemd-networkd=systemd-networkd",
+    "/usr/lib/systemd/systemd-journald=systemd-journald",
+    "/usr/lib/systemd/systemd-udevd=systemd-udevd",
+    "/usr/lib/systemd/systemd-logind=systemd-logind",
+]
+
+[[package.file]]
+path = "/usr/lib/systemd/system/systemd-networkd.service"
+content = """#  SPDX-License-Identifier: LGPL-2.1-or-later
+#
+#  This file is part of systemd.
+
+[Unit]
+Description=Network Configuration
+Documentation=man:systemd-networkd.service(8)
+DefaultDependencies=no
+After=systemd-udevd.service network-pre.target
+Before=network.target multi-user.target shutdown.target
+Conflicts=shutdown.target
+Wants=network.target
+
+[Service]
+Type=notify
+ExecStart=/usr/lib/systemd/systemd-networkd
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/systemd-journald.service"
+content = """#  SPDX-License-Identifier: LGPL-2.1-or-later
+#
+#  This file is part of systemd.
+
+[Unit]
+Description=Journal Service
+Documentation=man:systemd-journald.service(8) man:journald.conf(5)
+DefaultDependencies=no
+Before=sysinit.target
+
+[Service]
+Type=notify
+ExecStart=/usr/lib/systemd/systemd-journald
+Restart=always
+RestartSec=0
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/systemd-udevd.service"
+content = """#  SPDX-License-Identifier: LGPL-2.1-or-later
+#
+#  This file is part of systemd.
+
+[Unit]
+Description=Rule-based Manager for Device Events and Files
+Documentation=man:systemd-udevd.service(8) man:udev(7)
+DefaultDependencies=no
+After=systemd-journald.service
+Before=sysinit.target
+
+[Service]
+Type=notify
+ExecStart=/usr/lib/systemd/systemd-udevd
+Restart=always
+RestartSec=0
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/systemd-logind.service"
+content = """#  SPDX-License-Identifier: LGPL-2.1-or-later
+#
+#  This file is part of systemd.
+
+[Unit]
+Description=User Login Management
+Documentation=man:sd-login(3)
+Documentation=man:systemd-logind.service(8)
+Documentation=man:logind.conf(5)
+After=nss-user-lookup.target user.slice
+
+[Service]
+Type=notify
+ExecStart=/usr/lib/systemd/systemd-logind
+Restart=always
+RestartSec=0
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/systemd-fsck@.service"
+content = """#  SPDX-License-Identifier: LGPL-2.1-or-later
+#
+#  This file is part of systemd.
+
+[Unit]
+Description=File System Check on %f
+Documentation=man:systemd-fsck@.service(8)
+DefaultDependencies=no
+BindsTo=%i.device
+Conflicts=shutdown.target
+After=%i.device systemd-fsck-root.service local-fs-pre.target
+Before=systemd-quotacheck.service shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/systemd/systemd-fsck %f
+StandardOutput=journal+console
+TimeoutSec=infinity
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/local-fs.target"
+content = """[Unit]
+Description=Local File Systems
+Documentation=man:systemd.special(7)
+DefaultDependencies=no
+Conflicts=shutdown.target
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/sysinit.target"
+content = """[Unit]
+Description=System Initialization
+Documentation=man:systemd.special(7)
+Wants=local-fs.target swap.target
+After=local-fs.target swap.target
+Conflicts=emergency.service emergency.target
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/sockets.target"
+content = """[Unit]
+Description=Socket Units
+Documentation=man:systemd.special(7)
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/timers.target"
+content = """[Unit]
+Description=Timer Units
+Documentation=man:systemd.special(7)
+DefaultDependencies=no
+Conflicts=shutdown.target
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/paths.target"
+content = """[Unit]
+Description=Path Units
+Documentation=man:systemd.special(7)
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/basic.target"
+content = """[Unit]
+Description=Basic System
+Documentation=man:systemd.special(7)
+Requires=sysinit.target
+Wants=sockets.target timers.target paths.target
+After=sysinit.target sockets.target paths.target timers.target
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/network.target"
+content = """[Unit]
+Description=Network
+Documentation=man:systemd.special(7)
+Documentation=https://systemd.io/NETWORK_ONLINE
+After=network-pre.target
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/network-online.target"
+content = """[Unit]
+Description=Network is Online
+Documentation=man:systemd.special(7)
+Documentation=https://systemd.io/NETWORK_ONLINE
+After=network.target
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/multi-user.target"
+content = """[Unit]
+Description=Multi-User System
+Documentation=man:systemd.special(7)
+Requires=basic.target
+Conflicts=rescue.service rescue.target
+After=basic.target rescue.service rescue.target
+AllowIsolate=yes
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/graphical.target"
+content = """[Unit]
+Description=Graphical Interface
+Documentation=man:systemd.special(7)
+Requires=multi-user.target
+Wants=display-manager.service
+Conflicts=rescue.service rescue.target
+After=multi-user.target rescue.service rescue.target display-manager.service
+AllowIsolate=yes
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/default.target"
+kind = "symlink"
+target = "graphical.target"
+
+[[package.file]]
+path = "/usr/lib/systemd/system/sysinit.target.wants"
+kind = "dir"
+mode = "0755"
+
+[[package.file]]
+path = "/usr/lib/systemd/system/sysinit.target.wants/systemd-journald.service"
+kind = "symlink"
+target = "../systemd-journald.service"
+
+[[package.file]]
+path = "/usr/lib/systemd/system/sysinit.target.wants/systemd-udevd.service"
+kind = "symlink"
+target = "../systemd-udevd.service"
+
+[[package.file]]
+path = "/usr/lib/systemd/system/multi-user.target.wants"
+kind = "dir"
+mode = "0755"
+
+[[package.file]]
+path = "/usr/lib/systemd/system/multi-user.target.wants/systemd-logind.service"
+kind = "symlink"
+target = "../systemd-logind.service"
+
+[[package]]
+name = "rsyslog"
+summary = "reliable system and kernel logging daemon"
+section = "admin"
+families = ["debian"]
+versions = { debian = "8.2302.0-1+deb12u1", ubuntu = "8.2312.0-3ubuntu9" }
+depends = ["systemd"]
+sbin = ["rsyslogd"]
+services = ["rsyslog.service"]
+
+[[package.file]]
+path = "/etc/logrotate.d/rsyslog"
+content = """/var/log/syslog
+/var/log/mail.log
+/var/log/kern.log
+/var/log/auth.log
+/var/log/user.log
+/var/log/cron.log
+{
+	rotate 4
+	weekly
+	missingok
+	notifempty
+	compress
+	delaycompress
+	sharedscripts
+	postrotate
+		/usr/lib/rsyslog/rsyslog-rotate
+	endscript
+}
+"""
+
+[[package.file]]
+path = "/usr/lib/rsyslog/rsyslog-rotate"
+mode = "755"
+content = """#!/bin/sh
+
+if [ -d /run/systemd/system ]; then
+    systemctl kill -s HUP rsyslog.service
+else
+    invoke-rc.d rsyslog rotate > /dev/null
+fi
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/rsyslog.service"
+content = """[Unit]
+Description=System Logging Service
+Documentation=man:rsyslogd(8)
+Documentation=man:rsyslog.conf(5)
+Documentation=https://www.rsyslog.com/doc/
+
+[Service]
+Type=notify
+ExecStart=/usr/sbin/rsyslogd -n -iNONE
+StandardOutput=null
+Restart=on-failure
+
+# Increase the default a bit in order to allow many simultaneous
+# files to be monitored, we might need a lot of fds.
+LimitNOFILE=16384
+
+[Install]
+WantedBy=multi-user.target
+Alias=syslog.service
+"""
+
+# ---------------------------------------------------------------- package managers
+
+[[package]]
+name = "apt"
+summary = "commandline package manager"
+section = "admin"
+essential = true
+families = ["debian", "generic"]
+versions = { debian = "2.6.1", ubuntu = "2.7.14build2", generic = "2.7.14" }
+bin = ["apt", "apt-get", "apt-cache", "apt-mark", "apt-key"]
+depends = ["dpkg"]
+
+[[package]]
+name = "dpkg"
+summary = "Debian package management system"
+section = "admin"
+essential = true
+families = ["debian", "generic"]
+versions = { debian = "1.21.22", ubuntu = "1.22.6ubuntu6.1", generic = "1.22.6" }
+bin = ["dpkg"]
+
+[[package]]
+name = "dnf"
+summary = "Command-line package manager"
+section = "admin"
+essential = true
+families = ["fedora"]
+names = { fedora = "dnf5" }
+versions = { fedora = "5.2.6.2-1.fc41" }
+bin = ["dnf=dnf", "dnf5=dnf"]
+depends = ["rpm"]
+
+[[package]]
+name = "rpm"
+summary = "The RPM package management system"
+section = "admin"
+essential = true
+families = ["fedora"]
+versions = { fedora = "4.20.0-1.fc41" }
+bin = ["rpm"]
+
+[[package]]
+name = "pacman"
+summary = "A library-based package manager with dependency support"
+section = "admin"
+essential = true
+families = ["arch"]
+versions = { arch = "7.0.0.r6.gc685ae6-2" }
+bin = ["pacman"]
+
+[[package]]
+name = "systemd-sysv"
+summary = "system and service manager - SysV compatibility symlinks (reboot, shutdown)"
+section = "admin"
+essential = true
+names = { fedora = "systemd", arch = "systemd-sysvcompat" }
+versions = { debian = "252.31-1~deb12u1", ubuntu = "255.4-1ubuntu8.4", fedora = "256.7-1.fc41", arch = "256.7-1", generic = "256.7" }
+sbin = ["reboot", "poweroff", "halt", "shutdown"]
+depends = ["systemd"]
+
+[[package]]
+name = "logrotate"
+summary = "Log rotation utility"
+section = "admin"
+versions = { debian = "3.21.0-1", ubuntu = "3.21.0-2build1", fedora = "3.22.0-2.fc41", arch = "3.22.0-1", generic = "3.22.0" }
+sbin = ["logrotate"]
+services = ["logrotate.timer"]
+
+[[package.file]]
+path = "/etc/logrotate.conf"
+content = """# see "man logrotate" for details
+
+# global options do not affect preceding include directives
+
+# rotate log files weekly
+weekly
+
+# keep 4 weeks worth of backlogs
+rotate 4
+
+# create new (empty) log files after rotating old ones
+create
+
+# use date as a suffix of the rotated file
+#dateext
+
+# uncomment this if you want your log files compressed
+#compress
+
+# packages drop log rotation information into this directory
+include /etc/logrotate.d
+
+# system-specific logs may also be configured here.
+"""
+
+[[package.file]]
+path = "/etc/logrotate.d"
+kind = "dir"
+mode = "755"
+
+[[package.file]]
+path = "/var/lib/logrotate"
+kind = "dir"
+mode = "755"
+
+[[package.file]]
+path = "/usr/lib/systemd/system/logrotate.service"
+content = """[Unit]
+Description=Rotate log files
+Documentation=man:logrotate(8) man:logrotate.conf(5)
+RequiresMountsFor=/var/log
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/logrotate /etc/logrotate.conf
+Nice=19
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/logrotate.timer"
+content = """[Unit]
+Description=Daily rotation of log files
+Documentation=man:logrotate(8) man:logrotate.conf(5)
+
+[Timer]
+OnCalendar=daily
+AccuracySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+
+[[package]]
+name = "gnupg"
+summary = "GNU privacy guard - a free PGP replacement"
+section = "utils"
+names = { fedora = "gnupg2" }
+versions = { debian = "2.2.40-1.1", ubuntu = "2.4.4-2ubuntu17", fedora = "2.4.5-3.fc41", arch = "2.4.5-2", generic = "2.4.5" }
+bin = ["gpg"]
+
+[[package]]
+name = "kmod"
+summary = "tools for managing Linux kernel modules"
+section = "admin"
+essential = true
+versions = { debian = "30+20221128-1", ubuntu = "31+20240202-2ubuntu7", fedora = "33-1.fc41", arch = "33-3", generic = "33" }
+bin = ["lsmod"]
+sbin = ["modprobe", "insmod", "rmmod", "depmod", "modinfo"]
+
+[[package]]
+name = "grub"
+summary = "GRand Unified Bootloader"
+section = "admin"
+names = { debian = "grub-pc", fedora = "grub2-tools", arch = "grub" }
+versions = { debian = "2.06-13+deb12u1", ubuntu = "2.12-1ubuntu7", fedora = "1:2.12-4.fc41", arch = "2:2.12-3", generic = "2.12" }
+sbin = ["grub-mkconfig", "grub2-mkconfig", "update-grub"]
+only = { grub-mkconfig = ["debian", "arch", "generic"], update-grub = ["debian", "generic"], grub2-mkconfig = ["fedora"] }
+
+[[package]]
+name = "grubby"
+summary = "Command line tool for updating bootloader configs"
+section = "admin"
+families = ["fedora"]
+versions = { fedora = "8.40-78.fc41" }
+sbin = ["grubby"]
+
+[[package]]
+name = "initramfs"
+summary = "tools for generating an initramfs"
+section = "admin"
+names = { debian = "initramfs-tools", fedora = "dracut", arch = "mkinitcpio" }
+versions = { debian = "0.142+deb12u1", ubuntu = "0.142ubuntu25.4", fedora = "102-3.fc41", arch = "39.2-2", generic = "0.142" }
+sbin = ["update-initramfs", "lsinitramfs", "dracut", "lsinitrd", "mkinitcpio", "lsinitcpio"]
+only = { update-initramfs = ["debian", "generic"], lsinitramfs = ["debian", "generic"], dracut = ["fedora"], lsinitrd = ["fedora"], mkinitcpio = ["arch"], lsinitcpio = ["arch"] }
+
+[[package.file]]
+path = "/etc/initramfs-tools/modules"
+conffile = true
+families = ["debian", "generic"]
+content = """# List of modules that you want to include in your initramfs.
+# They will be loaded at boot time in the order below.
+#
+# Syntax:  module_name [args ...]
+#
+# You must run update-initramfs(8) to effect this change.
+#
+# Examples:
+#
+# raid1
+# sd_mod
+"""
+
+[[package.file]]
+path = "/etc/initramfs-tools/initramfs.conf"
+conffile = true
+families = ["debian", "generic"]
+content = """#
+# initramfs.conf
+# Configuration file for mkinitramfs(8). See initramfs.conf(5).
+#
+
+MODULES=most
+BUSYBOX=auto
+COMPRESS=zstd
+"""
+
+[[package.file]]
+path = "/etc/mkinitcpio.conf"
+conffile = true
+families = ["arch"]
+content = """# vim:set ft=sh
+# MODULES
+# The following modules are loaded before any boot hooks are run.
+MODULES=()
+
+BINARIES=()
+FILES=()
+
+HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck)
+"""
+
+[[package.file]]
+path = "/etc/dracut.conf.d/README"
+families = ["fedora"]
+content = """Put *.conf files here, e.g. add_drivers+=" xfs " — then run dracut -f.
+"""
+
+[[package]]
+name = "strace"
+summary = "System call tracer"
+section = "utils"
+versions = { debian = "6.1-0.1", ubuntu = "6.8-0ubuntu2", fedora = "6.11-1.fc41", arch = "6.11-1", generic = "6.11" }
+bin = ["strace"]
+
+[[package]]
+name = "sysstat"
+summary = "system performance tools for Linux (iostat, mpstat, pidstat, sar)"
+section = "admin"
+versions = { debian = "12.6.1-1", ubuntu = "12.6.1-2", fedora = "12.7.6-1.fc41", arch = "12.7.6-1", generic = "12.7.6" }
+bin = ["iostat", "mpstat", "pidstat", "sar", "/usr/lib/sysstat/sa1=sa1"]
+services = ["sysstat.service", "sysstat-collect.timer"]
+
+[[package.file]]
+path = "/etc/default/sysstat"
+conffile = true
+families = ["debian", "generic"]
+content = """#
+# Default settings for /etc/init.d/sysstat, /etc/cron.d/sysstat
+# and /etc/cron.daily/sysstat files
+#
+
+# Should sadc collect system activity informations? Valid values
+# are "true" and "false". Please do not put other values, they
+# will be overwritten by debconf!
+ENABLED="false"
+"""
+
+[[package.file]]
+path = "/etc/sysstat/sysstat"
+conffile = true
+content = """# sysstat configuration file. See sysstat(5) manual page.
+
+# How long to keep log files (in days).
+HISTORY=7
+
+# Compress (using xz, gzip or bzip2) sa and sar files older than (in days):
+COMPRESSAFTER=10
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/sysstat.service"
+content = """[Unit]
+Description=Resets System Activity Logs
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+ExecStart=/usr/lib/sysstat/sa1 --boot
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/sysstat-collect.timer"
+content = """[Unit]
+Description=Run system activity accounting tool every 10 minutes
+
+[Timer]
+OnCalendar=*:00/10
+
+[Install]
+WantedBy=sysstat.service
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/sysstat-collect.service"
+content = """[Unit]
+Description=system activity accounting tool
+Documentation=man:sa1(8)
+After=sysstat.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/lib/sysstat/sa1 1 1
+"""
+
+[[package]]
+name = "iotop"
+summary = "simple top-like I/O monitor"
+section = "admin"
+names = { fedora = "iotop-c", arch = "iotop" }
+versions = { debian = "0.6-42-ga14256a-0.1+b2", ubuntu = "0.6-42-ga14256a-0.2", fedora = "1.26-2.fc41", arch = "0.6-11", generic = "0.6" }
+sbin = ["iotop"]
+
+[[package]]
+name = "podman"
+summary = "tool to manage containers and pods"
+section = "admin"
+versions = { debian = "4.3.1+ds1-8+deb12u1", ubuntu = "4.9.3+ds1-1ubuntu0.2", fedora = "5:5.2.5-1.fc41", arch = "5.2.5-1", generic = "4.3.1" }
+bin = ["podman", "conmon", "crun"]
+services = ["podman-restart.service"]
+enable = false
+
+[[package.file]]
+path = "/etc/containers/registries.conf"
+conffile = true
+families = ["debian", "generic", "arch"]
+content = """# For more information on this configuration file, see containers-registries.conf(5).
+#
+# An array of host[:port] registries to try when pulling an unqualified image, in order.
+# unqualified-search-registries = ["example.com"]
+"""
+
+[[package.file]]
+path = "/etc/containers/registries.conf"
+conffile = true
+families = ["fedora"]
+content = """unqualified-search-registries = ["registry.fedoraproject.org", "registry.access.redhat.com", "docker.io", "quay.io"]
+short-name-mode = "enforcing"
+"""
+
+[[package.file]]
+path = "/etc/containers/registries.conf.d/000-shortnames.conf"
+families = ["fedora"]
+content = """[aliases]
+  "alpine" = "docker.io/library/alpine"
+  "debian" = "docker.io/library/debian"
+  "nginx" = "docker.io/library/nginx"
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/podman-restart.service"
+content = """[Unit]
+Description=Podman Start All Containers With Restart Policy Set To Always
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/usr/bin/podman start --all --filter restart-policy=always
+
+[Install]
+WantedBy=default.target
+"""
+
+[[package]]
+name = "stress-ng"
+summary = "tool to load and stress a computer system"
+section = "devel"
+versions = { debian = "0.15.06-2", ubuntu = "0.17.06-1build1", fedora = "0.18.04-1.fc41", arch = "0.18.04-1", generic = "0.15.06" }
+bin = ["stress-ng"]
+
+[[package]]
+name = "systemd-coredump"
+summary = "tools for storing and retrieving coredumps"
+section = "admin"
+versions = { debian = "252.33-1~deb12u1", ubuntu = "255.4-1ubuntu8.4", fedora = "256.7-1.fc41", arch = "256.7-1", generic = "252" }
+bin = ["coredumpctl"]
+
+[[package.file]]
+path = "/usr/lib/sysctl.d/50-coredump.conf"
+content = """# Pipe core dumps to systemd-coredump.
+kernel.core_pattern=|/usr/lib/systemd/systemd-coredump %P %u %g %s %t %c %h
+"""
+
+[[package.file]]
+path = "/etc/systemd/coredump.conf"
+content = """[Coredump]
+#Storage=external
+#Compress=yes
+#ProcessSizeMax=2G
+#ExternalSizeMax=2G
+#MaxUse=
+"""
+
+[[package]]
+name = "ifupdown"
+summary = "high level tools to configure network interfaces"
+section = "admin"
+families = ["debian", "generic"]
+versions = { debian = "0.8.41", ubuntu = "0.8.41ubuntu1", generic = "0.8.41" }
+sbin = ["ifup", "ifdown", "ifquery"]
+services = ["networking.service"]
+
+[[package.file]]
+path = "/usr/lib/systemd/system/networking.service"
+content = """[Unit]
+Description=Raise network interfaces
+Documentation=man:interfaces(5)
+DefaultDependencies=no
+Before=network.target shutdown.target network-online.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/sbin/ifup -a --read-environment
+ExecStop=/sbin/ifdown -a --read-environment --exclude=lo
+RemainAfterExit=true
+TimeoutStartSec=5min
+
+[Install]
+WantedBy=multi-user.target
+WantedBy=network-online.target
+"""
+
+[[package]]
+name = "netplan.io"
+summary = "YAML network configuration abstraction for various backends"
+section = "net"
+families = ["debian", "generic"]
+versions = { debian = "0.106-2+deb12u1", ubuntu = "1.0.1-1ubuntu2~24.04.1", generic = "0.106" }
+sbin = ["netplan"]
+
+[[package]]
+name = "network-manager"
+summary = "network management framework"
+section = "net"
+names = { fedora = "NetworkManager", arch = "networkmanager" }
+versions = { debian = "1.42.4-1", ubuntu = "1.46.0-1ubuntu2", fedora = "1:1.48.10-1.fc41", arch = "1.48.10-1", generic = "1.42" }
+bin = ["nmcli"]
+sbin = ["NetworkManager"]
+services = ["NetworkManager.service"]
+
+[[package.file]]
+path = "/usr/lib/systemd/system/NetworkManager.service"
+content = """[Unit]
+Description=Network Manager
+Documentation=man:NetworkManager(8)
+Wants=network.target
+After=network-pre.target dbus.service
+Before=network.target
+
+[Service]
+Type=dbus
+BusName=org.freedesktop.NetworkManager
+ExecStart=/usr/sbin/NetworkManager --no-daemon
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[package.file]]
+path = "/etc/NetworkManager/NetworkManager.conf"
+content = """# Configuration file for NetworkManager.
+# See "man 5 NetworkManager.conf" for details.
+[main]
+plugins=keyfile
+"""

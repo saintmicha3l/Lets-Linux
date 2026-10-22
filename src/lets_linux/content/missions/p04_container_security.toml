@@ -1,0 +1,144 @@
+schema = 1
+
+[mission]
+id = "p04-container-security"
+title = "A Container With the Keys to the House"
+chapter = "P"
+kind = "troubleshooting"
+order = 6
+difficulty = 6
+requires = ["p03-containers", "l03-permission-audit", "p03b-container-risks"]
+skills = ["p.container-security", "p.container-usage"]
+review_for = ["l.permission-audit", "p.container-concepts"]
+xp = 240
+estimated_minutes = 35
+
+[briefing]
+context = """
+A contractor deployed the shop's API on this server as a container — as root, with
+--privileged and the host's whole filesystem mounted "because it would not start
+otherwise". It works, and that is the problem. Find out what the container can do, then
+redeploy the API with the least privilege that still works: rootless, under your account,
+on the same port. (sudo password: letslinux)
+"""
+concept = """
+Isolation is only as strong as the container's configuration. A rootful container runs as
+real root; its root user is limited by namespaces, dropped capabilities, seccomp and
+SELinux/AppArmor — --privileged switches most of that off. Bind mounts punch holes: -v /:/host
+gives the container the host's files; with root inside that means editing /etc/shadow,
+sudoers or systemd units on the host. Mounting the container engine's socket
+(/run/podman/podman.sock, /var/run/docker.sock) is equivalent to root on the host: whoever
+can talk to it can start a privileged container. Least privilege for containers: rootless
+(root inside maps to an unprivileged user outside), no --privileged, only the mounts the
+application needs (read-only where possible), configuration through environment
+variables (-e) or mounted files. When a container "will not start", read podman logs
+before adding privileges.
+"""
+objectives = ["Inspect a container's privileges and mounts", "Recognise dangerous container options", "Debug a failing container from its logs", "Redeploy a service rootless with least privilege"]
+
+[environment]
+profile = "debian"
+packages = ["podman"]
+
+[[environment.setup]]
+action = "run"
+command = "podman run -d --name api --privileged -v /:/host -p 8080:8080 -e DB_HOST=db.example.lan registry.example.lan/shop/api:1.4"
+
+[[task]]
+id = "mounts"
+title = "What does it see?"
+kind = "troubleshooting"
+instructions = "The API container belongs to root (sudo podman …). Find out which host directory is mounted into it, and where."
+skills = { "p.container-security" = 1.0, "p.container-usage" = 0.5 }
+question = { prompt = "Which host directory is mounted into the api container?", type = "exact", accept = ["/"] }
+hints = ["Your own podman ps shows nothing: root's containers live in root's storage. Use sudo.", "sudo podman inspect api — look at Mounts (Source, Destination, RW).", "Source: / , Destination: /host"]
+explanation = "The whole host filesystem is at /host inside the container, read-write — and the container's root is real root."
+
+[[task]]
+id = "proof"
+title = "Proof"
+kind = "guided"
+instructions = "Show the risk to the team: from inside the container, read the first line of the host's /etc/shadow."
+skills = { "p.container-security" = 1.0 }
+question = { prompt = "Whose password hash is on the first line?", type = "exact", accept = ["root"] }
+hints = ["sudo podman exec api … runs a command inside.", "The host's /etc is /host/etc in there.", "sudo podman exec api head -1 /host/etc/shadow"]
+explanation = "Any compromise of the API — a bug, a malicious dependency — would be a compromise of the server: the attacker could just as well write to /host/etc/sudoers or install a systemd unit."
+
+[[task]]
+id = "redeploy"
+title = "Least privilege"
+kind = "independent"
+instructions = "Replace root's api container with a rootless one under your account: also named api, from registry.example.lan/shop/api:1.4, published on port 8080, not privileged, with no host mounts. It needs DB_HOST=db.example.lan. Root must have no containers left."
+skills = { "p.container-security" = 1.0, "p.container-usage" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "podman ps -a -q | wc -l", stdout_equals = "0\n" },
+    { type = "command_result", user = "learner", command = "podman inspect -f '{{.State.Running}} {{.HostConfig.Privileged}} {{json .Mounts}} {{.Rootless}}' api", stdout_equals = "true false [] true\n" },
+    { type = "command_result", user = "learner", command = "podman logs api", stdout_contains = ["database db.example.lan", "listening on :8080"] },
+    { type = "command_result", user = "learner", command = "ss -tlnp | grep ':8080 '", stdout_contains = ["rootlessport"] },
+]
+hints = ["First remove root's container (sudo podman rm -f api) — it holds port 8080.", "Run it as yourself without the dangerous options. If it exits at once, read podman logs api.", "podman run -d --name api -p 8080:8080 -e DB_HOST=db.example.lan registry.example.lan/shop/api:1.4"]
+explanation = "The API only ever needed its port and one environment variable — \"it would not start\" was the missing DB_HOST, which its log said plainly. Rootless, a compromise lands as learner: no access to /etc/shadow, no ports below 1024, no other users' files."
+
+[[task]]
+id = "socket"
+title = "The worst mount"
+kind = "explanation"
+instructions = "One more option you may meet in deployment instructions."
+skills = { "p.container-security" = 1.0 }
+question = { prompt = "Why is -v /var/run/docker.sock:/var/run/docker.sock (or the podman socket) as dangerous as -v /:/host?", type = "choice", choices = ["It is not: a socket carries no files", "Whoever can talk to the engine's API can start a new privileged container with the host's / mounted — root on the host", "It only lets the container read logs"], answer = 1 }
+hints = ["What does the socket accept?", "Any API call — including run --privileged -v /:/host.", "(b)"]
+explanation = "Access to the engine's API is access to everything the engine can do, and a rootful engine can do anything. Treat the socket like the root password."
+
+[debrief]
+summary = """
+podman inspect shows privileges (HostConfig.Privileged), mounts (Mounts: Source, Destination,
+RW) and whether the engine is rootless. Least privilege: rootless podman, no --privileged,
+no host-root or engine-socket mounts, read-only mounts for what is needed, configuration
+via -e. Read podman logs before adding privileges.
+"""
+alternatives = ["--cap-drop=ALL --cap-add=… to keep only the capabilities a rootful container needs (not simulated)", "--read-only for a container whose root filesystem cannot be changed", "--user 1000 to run as a non-root user inside the container too"]
+pitfalls = ["Adding --privileged to \"fix\" a container that fails for another reason.", "Mounting / or the engine socket into application containers.", "Forgetting that root's and your containers are separate (sudo podman vs podman)."]
+next = "Next: virtual machines — and how they differ from containers."
+
+[[solution]]
+name = "inspect, exec, redeploy"
+steps = [
+    { input = ["letslinux"] },
+    "podman ps",
+    "sudo podman inspect api",
+    ":answer /",
+    "sudo podman exec api head -1 /host/etc/shadow",
+    ":answer root",
+    "sudo podman rm -f api",
+    "podman run -d --name api -p 8080:8080 registry.example.lan/shop/api:1.4",
+    "podman logs api",
+    "podman rm api",
+    "podman run -d --name api -p 8080:8080 -e DB_HOST=db.example.lan registry.example.lan/shop/api:1.4",
+    ":answer b",
+]
+
+[[solution]]
+name = "format strings, stop then rm"
+steps = [
+    { input = ["letslinux"] },
+    "sudo podman inspect -f '{{json .Mounts}}' api",
+    ":answer /",
+    "sudo podman exec api cat /host/etc/shadow",
+    ":answer root",
+    "sudo podman stop api",
+    "sudo podman rm api",
+    "podman pull registry.example.lan/shop/api:1.4",
+    "podman run --detach --name=api --publish=8080:8080 --env DB_HOST=db.example.lan registry.example.lan/shop/api:1.4",
+    ":answer Whoever can talk to the engine's API can start a new privileged container with the host's / mounted — root on the host",
+]
+
+[[counterexample]]
+name = "still privileged"
+steps = [
+    { input = ["letslinux"] },
+    ":answer /",
+    ":answer root",
+    "sudo podman rm -f api",
+    "podman run -d --name api --privileged -p 8080:8080 -e DB_HOST=db.example.lan registry.example.lan/shop/api:1.4",
+    ":answer b",
+]

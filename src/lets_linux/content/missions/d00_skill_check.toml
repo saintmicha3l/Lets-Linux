@@ -1,0 +1,211 @@
+schema = 1
+
+[mission]
+id = "d00-skill-check"
+title = "Skill Check D: Permissions and Accounts"
+chapter = "D"
+placement = "D"
+kind = "assessment"
+order = 0
+difficulty = 4
+requires = []
+skills = ["d.permission-bits", "d.chmod-octal", "d.chmod-symbolic", "d.chown-chgrp", "d.directory-permissions", "d.user-management", "d.group-management", "d.sudo-least-privilege", "d.umask", "d.special-bits", "d.acls", "d.credential-hygiene", "d.users-groups-concepts"]
+xp = 80
+estimated_minutes = 18
+sequential = false
+
+[briefing]
+context = """
+This skill check covers chapter D: permission bits, ownership, directory permissions,
+accounts and groups, sudo rules, umask, setuid and ACLs. Tasks in any order, any commands;
+you have sudo (password: letslinux). Solve them all (one slip allowed) to test out of
+chapter D. Anything you cannot do is simply not counted — :submit ends the check.
+"""
+concept = "No hints: show what you can do on your own. The checks test who can actually access what."
+objectives = ["Demonstrate the chapter's skills without help"]
+
+[environment]
+profile = "debian"
+
+[environment.vars]
+group = { choices = ["planners", "finance", "editors"] }
+user = { choices = ["tomas", "greta", "yusuf"] }
+newuser = { choices = ["ines", "pavel", "kemal"] }
+auditor = { choices = ["ada", "leif", "noor"] }
+gone = { choices = ["jbauer", "mreyes", "kowens"] }
+proj = { choices = ["atlas", "orbit", "delta"] }
+umask = { choices = ["027", "077", "007"] }
+suid = { choices = ["report-tool", "fixperms", "cleanup"] }
+
+[[environment.setup]]
+action = "group"
+name = "{{group}}"
+
+[[environment.setup]]
+action = "user"
+name = "{{user}}"
+groups = ["{{group}}"]
+
+[[environment.setup]]
+action = "user"
+name = "{{auditor}}"
+
+[[environment.setup]]
+action = "user"
+name = "{{gone}}"
+password = "Spring2024!"
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /srv/shared /srv/projects/{{proj}} && echo 'Q3 plan' > /srv/shared/plan.txt && chmod 644 /srv/shared/plan.txt && echo 'read me' > /srv/projects/{{proj}}/README && chmod 644 /srv/projects/{{proj}}/README && chmod 700 /srv/projects/{{proj}} && chmod 755 /srv/projects && cp /usr/bin/id /usr/local/bin/{{suid}} && chmod 4755 /usr/local/bin/{{suid}} && cp /usr/bin/id /usr/local/bin/helper && chmod 755 /usr/local/bin/helper"
+
+[[task]]
+id = "group"
+title = "A shared file"
+kind = "assessment"
+instructions = "/srv/shared/plan.txt must be readable and writable by its owner and by the group {{group}} — and not accessible at all to anyone else."
+skills = { "d.chown-chgrp" = 1.0, "d.chmod-octal" = 1.0, "d.permission-bits" = 1.0 }
+checks = [
+    { type = "user_can_access", user = "{{user}}", path = "/srv/shared/plan.txt", access = "rw" },
+    { type = "user_cannot_access", user = "{{auditor}}", path = "/srv/shared/plan.txt", access = "r" },
+    { type = "command_result", user = "root", command = "stat -c '%G %a' /srv/shared/plan.txt", stdout_regex = "^{{group}} [67]60$" },
+]
+explanation = "sudo chgrp {{group}} /srv/shared/plan.txt && sudo chmod 660 /srv/shared/plan.txt (or chmod ug=rw,o= …)."
+
+[[task]]
+id = "traverse"
+title = "Readable, yet not"
+kind = "assessment"
+instructions = "{{user}} cannot read /srv/projects/{{proj}}/README although the file itself is readable by everyone. Let every user read it — without giving anyone write access."
+skills = { "d.directory-permissions" = 1.0, "d.chmod-symbolic" = 0.5 }
+checks = [
+    { type = "user_can_access", user = "{{user}}", path = "/srv/projects/{{proj}}/README", access = "r" },
+    { type = "user_cannot_access", user = "{{user}}", path = "/srv/projects/{{proj}}/README", access = "w" },
+    { type = "user_cannot_access", user = "{{user}}", path = "/srv/projects/{{proj}}", access = "w" },
+]
+explanation = "Reaching a file needs x (search) on every directory on the way: sudo chmod o+x /srv/projects/{{proj}} (755 lets them list it too)."
+
+[[task]]
+id = "account"
+title = "A new colleague"
+kind = "assessment"
+instructions = "Create the account {{newuser}} with a home directory /home/{{newuser}}, as a member of the group {{group}}."
+skills = { "d.user-management" = 1.0, "d.group-management" = 1.0 }
+checks = [
+    { type = "user_exists", name = "{{newuser}}", home = "/home/{{newuser}}" },
+    { type = "path_exists", path = "/home/{{newuser}}", kind = "dir" },
+    { type = "in_group", user = "{{newuser}}", group = "{{group}}" },
+]
+explanation = "sudo useradd -m -G {{group}} {{newuser}} (adduser on Debian asks interactively)."
+
+[[task]]
+id = "sudo"
+title = "One command only"
+kind = "assessment"
+instructions = "Allow {{newuser}} to run exactly `systemctl restart nginx` as root with sudo — and nothing else as root."
+skills = { "d.sudo-least-privilege" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "sudo -l -U {{newuser}}", stdout_regex = "\\(root\\)\\s*(NOPASSWD:\\s*)?/(usr/)?bin/systemctl restart nginx" },
+    { type = "command_result", user = "root", command = "sudo -l -U {{newuser}} | grep -cE '\\(ALL( : ALL)?\\) (NOPASSWD: )?ALL$|\\(root\\) (NOPASSWD: )?ALL$'", stdout_equals = "0" },
+    { type = "command_result", user = "root", command = "visudo -c >/dev/null 2>&1 && echo valid", stdout_equals = "valid" },
+]
+explanation = "A drop-in, checked before it is installed: echo '{{newuser}} ALL=(root) /usr/bin/systemctl restart nginx' | sudo tee /etc/sudoers.d/{{newuser}}; sudo visudo -c."
+
+[[task]]
+id = "umask"
+title = "Default permissions"
+kind = "assessment"
+instructions = "A service runs with umask {{umask}} and creates a new regular file (requested mode 666)."
+skills = { "d.umask" = 1.0, "d.permission-bits" = 0.5 }
+question = { prompt = "Which permissions does the file get? (octal, e.g. 640)", type = "state", state = { command = "printf '%o' $(( 0666 & ~0{{umask}} ))" } }
+explanation = "The umask removes bits: 666 with {{umask}} masked out. Try it: (umask {{umask}}; touch /tmp/t; stat -c %a /tmp/t)."
+
+[[task]]
+id = "suid"
+title = "Elevated programs"
+kind = "assessment"
+instructions = "One program in /usr/local/bin runs with its owner's (root's) privileges whoever starts it."
+skills = { "d.special-bits" = 1.0 }
+question = { prompt = "Its full path?", type = "exact", accept = ["/usr/local/bin/{{suid}}"] }
+explanation = "find /usr/local/bin -perm -4000 — the setuid bit shows as s in ls -l (-rwsr-xr-x)."
+
+[[task]]
+id = "acl"
+title = "Read access for the auditor"
+kind = "assessment"
+instructions = "Give {{auditor}} read access to /srv/shared/plan.txt — without changing its owner, group or permission bits, and without adding them to a group."
+skills = { "d.acls" = 1.0 }
+checks = [
+    { type = "user_can_access", user = "{{auditor}}", path = "/srv/shared/plan.txt", access = "r" },
+    { type = "user_cannot_access", user = "{{auditor}}", path = "/srv/shared/plan.txt", access = "w" },
+    { type = "command_result", user = "root", command = "getfacl -p /srv/shared/plan.txt 2>/dev/null | grep -c '^user:{{auditor}}:r'", stdout_equals = "1" },
+    { type = "command_result", user = "root", command = "id -nG {{auditor}} | tr ' ' '\\n' | grep -cx {{group}}", stdout_equals = "0" },
+]
+explanation = "sudo setfacl -m u:{{auditor}}:r /srv/shared/plan.txt — ls -l then shows + after the mode; getfacl lists the entries."
+
+[[task]]
+id = "lock"
+title = "A colleague left"
+kind = "assessment"
+instructions = "{{gone}} has left the company. Make sure nobody can log in with that account's password any more — but keep the account and its files for now."
+skills = { "d.credential-hygiene" = 1.0, "d.user-management" = 0.5 }
+checks = [
+    { type = "user_exists", name = "{{gone}}", locked = true },
+    { type = "path_exists", path = "/home/{{gone}}", kind = "dir" },
+]
+explanation = "sudo usermod -L {{gone}} (or passwd -l); add --expiredate 1 to stop key logins too."
+
+[debrief]
+summary = """
+The check covered chapter D. Solved tasks are evidence for their skills; chapter D's missions
+stay open to replay.
+"""
+next = "Take another skill check, or continue with the first mission you have not tested out of."
+
+[[solution]]
+name = "octal and drop-ins"
+steps = [
+    { input = ["letslinux"] },
+    "sudo chgrp {{group}} /srv/shared/plan.txt && sudo chmod 660 /srv/shared/plan.txt",
+    "sudo chmod 755 /srv/projects/{{proj}}",
+    "sudo useradd -m -G {{group}} {{newuser}}",
+    "echo '{{newuser}} ALL=(root) /usr/bin/systemctl restart nginx' | sudo tee /etc/sudoers.d/{{newuser}}",
+    "sudo chmod 440 /etc/sudoers.d/{{newuser}} && sudo visudo -c",
+    { answer_with = "printf '%o' $(( 0666 & ~0{{umask}} ))" },
+    "find /usr/local/bin -perm -4000",
+    ":answer /usr/local/bin/{{suid}}",
+    "sudo setfacl -m u:{{auditor}}:r /srv/shared/plan.txt",
+    "sudo usermod -L {{gone}}",
+]
+
+[[solution]]
+name = "symbolic modes and other tools"
+steps = [
+    { input = ["letslinux"] },
+    "sudo -i",
+    "passwd -l {{gone}}",
+    "chown :{{group}} /srv/shared/plan.txt",
+    "chmod ug=rw,o= /srv/shared/plan.txt",
+    "setfacl -m user:{{auditor}}:r-- /srv/shared/plan.txt",
+    "chmod o+x /srv/projects/{{proj}}",
+    "useradd -m {{newuser}} && usermod -aG {{group}} {{newuser}}",
+    "printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl restart nginx\\n' {{newuser}} > /etc/sudoers.d/{{newuser}}",
+    "ls -l /usr/local/bin",
+    ":answer /usr/local/bin/{{suid}}",
+    "exit",
+    { answer_with = "printf '%o' $(( 0666 & ~0{{umask}} ))" },
+]
+
+[[counterexample]]
+name = "open for all and ALL in sudoers"
+steps = [
+    { input = ["letslinux"] },
+    "sudo chmod 666 /srv/shared/plan.txt",
+    "sudo chmod 777 /srv/projects/{{proj}}",
+    "sudo useradd -m -G {{group}} {{newuser}}",
+    "echo '{{newuser}} ALL=(ALL) ALL' | sudo tee /etc/sudoers.d/{{newuser}}",
+    { answer_with = "printf '%o' $(( 0666 & ~0{{umask}} ))" },
+    ":answer /usr/local/bin/{{suid}}",
+    "sudo usermod -aG {{group}} {{auditor}}",
+    "sudo userdel -r {{gone}}",
+]

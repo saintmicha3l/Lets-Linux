@@ -1,0 +1,213 @@
+schema = 1
+
+[mission]
+id = "r02-one-policy"
+title = "One Policy, Three Firewalls"
+chapter = "R"
+kind = "lesson"
+order = 2
+difficulty = 6
+requires = ["r01-three-families", "i07-firewall", "l02-service-exposure", "h02-reading-the-journal"]
+skills = ["r.firewall-tools", "r.logging-differences"]
+review_for = ["i.firewalls", "l.firewall-hardening", "h.journalctl"]
+xp = 230
+estimated_minutes = 40
+
+[briefing]
+context = """
+The security baseline says: every server accepts only SSH (22) and HTTP (80) from the
+network, everything else incoming is refused or dropped — permanently. Apply it to this
+Ubuntu machine (ufw), to 'fed' (Fedora, firewalld) and to 'arch' (Arch, plain nftables).
+Then answer a question that needs each family's logs. Remote logins: ssh -t admin@HOST
+(password letslinux). (sudo password here: letslinux)
+"""
+concept = """
+All three front-ends write the same kernel ruleset (nft list ruleset shows it):
+- ufw (Ubuntu): sudo ufw default deny incoming; sudo ufw allow 22/tcp; sudo ufw allow
+  80/tcp; sudo ufw enable — saved and loaded at boot automatically.
+- firewalld (Fedora, RHEL): zones; the public zone allows ssh, dhcpv6-client and cockpit
+  by default. --add-service/--remove-service, with --permanent (or --runtime-to-permanent)
+  so it survives a reload or reboot.
+- nftables (Arch, Debian): the ruleset in /etc/nftables.conf, loaded at boot by
+  nftables.service once it is enabled. A minimal policy: an input chain with policy drop,
+  'iif lo accept', 'ct state established,related accept', 'tcp dport { 22, 80 } accept'.
+Logs differ too: Debian and Ubuntu (with rsyslog) write /var/log/auth.log; Fedora and Arch
+keep everything in the journal only — journalctl -u sshd.
+"""
+objectives = ["Apply one policy with ufw, firewall-cmd and nftables", "Make each persistent", "Find authentication logs on rsyslog and journal-only systems"]
+
+[environment]
+profile = "ubuntu"
+packages = ["nginx"]
+
+[[environment.setup]]
+action = "peer"
+name = "fed"
+addresses = ["10.0.2.61"]
+
+[[environment.setup]]
+action = "dns"
+name = "fed.example.lan"
+value = "10.0.2.61"
+
+[[environment.setup]]
+action = "remote"
+host = "fed"
+profile = "fedora"
+packages = ["nginx"]
+steps = [{ action = "run", command = "systemctl enable --now nginx" }]
+
+[[environment.setup]]
+action = "peer"
+name = "arch"
+addresses = ["10.0.2.62"]
+
+[[environment.setup]]
+action = "dns"
+name = "arch.example.lan"
+value = "10.0.2.62"
+
+[[environment.setup]]
+action = "remote"
+host = "arch"
+profile = "arch"
+packages = ["nginx", "nftables"]
+steps = [
+    { action = "run", command = "systemctl enable --now nginx" },
+    { action = "ssh_logins", entries = [{ user = "root", from = "198.51.100.23", ago = 120, failures = 7, success = false }, { user = "admin", from = "10.0.2.15", ago = 60, duration = 5 }] },
+]
+
+[[task]]
+id = "ufw"
+title = "Here: ufw"
+kind = "independent"
+instructions = "Apply the baseline on this Ubuntu machine."
+skills = { "r.firewall-tools" = 1.0, "i.firewalls" = 0.5 }
+checks = [
+    { type = "not", check = { type = "firewall_blocks", from = "10.0.2.40", port = 22 } },
+    { type = "not", check = { type = "firewall_blocks", from = "10.0.2.40", port = 80 } },
+    { type = "firewall_blocks", from = "10.0.2.40", port = 8080 },
+    { type = "after_reboot", checks = [{ type = "firewall_blocks", from = "10.0.2.40", port = 8080 }, { type = "not", check = { type = "firewall_blocks", from = "10.0.2.40", port = 22 } }] },
+]
+hints = ["ufw allows only what you allow once it is enabled and the default is deny.", "Rules first, then enable.", "sudo ufw default deny incoming && sudo ufw allow 22/tcp && sudo ufw allow 80/tcp && sudo ufw enable"]
+explanation = "ufw is enabled and remembers its rules across reboots."
+
+[[task]]
+id = "firewalld"
+title = "fed: firewalld"
+kind = "independent"
+instructions = "Apply the baseline on fed — permanently."
+skills = { "r.firewall-tools" = 1.0 }
+checks = [
+    { type = "on_host", host = "fed", checks = [
+        { type = "not", check = { type = "firewall_blocks", from = "10.0.2.40", port = 22 } },
+        { type = "not", check = { type = "firewall_blocks", from = "10.0.2.40", port = 80 } },
+        { type = "firewall_blocks", from = "10.0.2.40", port = 9090 },
+        { type = "after_reboot", checks = [{ type = "not", check = { type = "firewall_blocks", from = "10.0.2.40", port = 80 } }, { type = "firewall_blocks", from = "10.0.2.40", port = 9090 }] },
+    ] },
+]
+hints = ["What does the public zone allow today? ssh -t admin@fed 'sudo firewall-cmd --list-all'", "Add http, remove cockpit (and dhcpv6-client is UDP — it may stay). Permanent and runtime!", "ssh -t admin@fed 'sudo firewall-cmd --add-service=http --remove-service=cockpit && sudo firewall-cmd --runtime-to-permanent'"]
+explanation = "Fedora's default zone opened port 9090 (Cockpit, a web console) — not in the baseline."
+
+[[task]]
+id = "nft"
+title = "arch: nftables"
+kind = "independent"
+instructions = "Apply the baseline on arch with nftables, loaded at every boot."
+skills = { "r.firewall-tools" = 1.0, "i.firewalls" = 0.5 }
+checks = [
+    { type = "on_host", host = "arch", checks = [
+        { type = "not", check = { type = "firewall_blocks", from = "10.0.2.40", port = 22 } },
+        { type = "not", check = { type = "firewall_blocks", from = "10.0.2.40", port = 80 } },
+        { type = "firewall_blocks", from = "10.0.2.40", port = 8080 },
+        { type = "after_reboot", checks = [{ type = "firewall_blocks", from = "10.0.2.40", port = 8080 }, { type = "not", check = { type = "firewall_blocks", from = "10.0.2.40", port = 22 } }] },
+    ] },
+]
+hints = [
+    "Write the ruleset to /etc/nftables.conf on arch, test it with nft -c -f, then enable nftables.service.",
+    "table inet filter { chain input { type filter hook input priority filter; policy drop; iif lo accept; ct state established,related accept; tcp dport { 22, 80 } accept } }",
+    "On arch: sudo sh -c 'printf \"flush ruleset\\ntable inet filter {\\n chain input {\\n  type filter hook input priority filter; policy drop;\\n  iif lo accept\\n  ct state established,related accept\\n  tcp dport { 22, 80 } accept\\n }\\n}\\n\" > /etc/nftables.conf' && sudo nft -c -f /etc/nftables.conf && sudo systemctl enable --now nftables",
+]
+explanation = "The same kernel ruleset ufw and firewalld generate — written by hand."
+
+[[task]]
+id = "logs"
+title = "Where are the failed logins?"
+kind = "troubleshooting"
+instructions = "Someone tried to log in to arch as root over SSH earlier today. arch has no /var/log/auth.log."
+skills = { "r.logging-differences" = 1.0, "h.journalctl" = 0.5 }
+question = { prompt = "How many failed password attempts for root does arch's log show?", type = "number", accept = [7] }
+hints = ["Arch keeps logs only in the journal.", "ssh -t admin@arch 'sudo journalctl -u sshd | grep \"Failed password\"'", "Count them: … | grep -c 'Failed password for root'"]
+explanation = "On Fedora and Arch, journalctl -u sshd (or _COMM=sshd) is the place; on Debian and Ubuntu with rsyslog, /var/log/auth.log too."
+
+[debrief]
+summary = """
+Same policy, three syntaxes: ufw default/allow/enable · firewall-cmd services with
+--permanent · nftables.conf + nftables.service. Verify from another host or with the
+ruleset itself (nft list ruleset), and reboot-test.
+"""
+alternatives = ["ufw and firewalld can coexist with nft rules, but mixing tools on one host invites confusion", "iptables-nft translates old iptables commands into nftables"]
+pitfalls = ["firewalld runtime-only changes.", "Writing /etc/nftables.conf but not enabling the service.", "A policy drop without 'ct state established' and 'iif lo' rules."]
+next = "Chapter R is done."
+
+[[solution]]
+name = "three tools"
+steps = [
+    { input = ["letslinux"] },
+    "sudo ufw default deny incoming",
+    "sudo ufw allow 22/tcp",
+    "sudo ufw allow 80/tcp",
+    { input = ["y"] },
+    "sudo ufw enable",
+    { input = ["yes", "letslinux", "letslinux"] },
+    "ssh -t admin@fed 'sudo firewall-cmd --add-service=http --remove-service=cockpit && sudo firewall-cmd --runtime-to-permanent'",
+    { input = ["yes", "letslinux", "letslinux"] },
+    "printf 'flush ruleset\\ntable inet filter {\\n chain input {\\n  type filter hook input priority filter; policy drop;\\n  iif lo accept\\n  ct state established,related accept\\n  tcp dport { 22, 80 } accept\\n }\\n}\\n' > ~/arch.nft",
+    "scp ~/arch.nft admin@arch:/tmp/arch.nft",
+    { input = ["letslinux", "letslinux"] },
+    "ssh -t admin@arch 'sudo cp /tmp/arch.nft /etc/nftables.conf && sudo nft -c -f /etc/nftables.conf && sudo systemctl enable --now nftables'",
+    { input = ["letslinux", "letslinux"] },
+    "ssh -t admin@arch 'sudo journalctl -u sshd | grep -c \"Failed password for root\"'",
+    ":answer 7",
+]
+
+[[solution]]
+name = "permanent then reload; interactive arch session"
+steps = [
+    { input = ["letslinux"] },
+    "sudo ufw allow ssh",
+    "sudo ufw allow http",
+    { input = ["y"] },
+    "sudo ufw enable",
+    { input = ["yes", "letslinux", "letslinux"] },
+    "ssh -t admin@fed 'sudo firewall-cmd --permanent --add-service=http; sudo firewall-cmd --permanent --remove-service=cockpit; sudo firewall-cmd --reload'",
+    { input = ["yes", "letslinux"] },
+    "ssh admin@arch",
+    { input = ["letslinux"] },
+    "sudo nft add table inet filter",
+    "sudo nft add chain inet filter input '{ type filter hook input priority 0 ; policy drop ; }'",
+    "sudo nft add rule inet filter input iif lo accept",
+    "sudo nft add rule inet filter input ct state established,related accept",
+    "sudo nft add rule inet filter input tcp dport { 22, 80 } accept",
+    "sudo sh -c 'echo flush ruleset > /etc/nftables.conf; nft list ruleset >> /etc/nftables.conf'",
+    "sudo systemctl enable nftables",
+    "sudo journalctl -u sshd | grep 'Failed password'",
+    "exit",
+    ":answer 7",
+]
+
+[[counterexample]]
+name = "fed runtime only, arch not enabled"
+steps = [
+    { input = ["letslinux"] },
+    "sudo ufw default deny incoming",
+    "sudo ufw allow 22/tcp",
+    "sudo ufw allow 80/tcp",
+    { input = ["y"] },
+    "sudo ufw enable",
+    { input = ["yes", "letslinux", "letslinux"] },
+    "ssh -t admin@fed 'sudo firewall-cmd --add-service=http --remove-service=cockpit'",
+    { input = ["yes", "letslinux", "letslinux"] },
+    "ssh -t admin@arch 'sudo nft add table inet filter'",
+    ":answer 7",
+]

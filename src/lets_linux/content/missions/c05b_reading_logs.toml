@@ -1,0 +1,137 @@
+schema = 1
+
+[mission]
+id = "c05b-reading-logs"
+title = "Reading Logs"
+chapter = "C"
+kind = "lesson"
+order = 6
+difficulty = 2
+requires = ["c04-columns", "c05-sed"]
+skills = ["c.log-filtering", "c.awk-fields", "c.sort-uniq"]
+review_for = ["c.log-filtering"]
+xp = 80
+estimated_minutes = 15
+
+[briefing]
+context = """
+Logs are where Linux systems tell you what happened. ~/web.log is a web server's access log
+from this morning. You already know grep, cut, awk, sort and uniq one at a time; this lesson
+puts them together into the pipelines administrators use every day to answer questions
+from logs.
+"""
+concept = """
+Each line of an access log is one request, with fields separated by spaces: the client
+address ($1), the time ($4), the request ("$6 $7 $8": method, path, protocol), the status code
+($9) and the size ($10). The investigator's pipeline has three steps:
+  1. select the lines you care about:  awk '$9 == 404'  or  grep ' 503 '
+  2. keep the field you want to count:  awk '{print $7}'  or  cut -d: -f2
+  3. count and rank:  sort | uniq -c | sort -rn | head
+Build it one stage at a time and look at the output after each stage.
+"""
+objectives = ["Identify the fields of a log line", "Select lines by a field's exact value", "Count and rank with sort | uniq -c | sort -rn", "Save a report"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+missing = { choices = ["/blog/2019/launch", "/docs/v1/api", "/promo/spring-sale"] }
+badhour = { choices = ["09", "10", "11"] }
+
+[[environment.setup]]
+action = "run"
+command = '''
+awk -v missing='{{missing}}' -v bad='{{badhour}}' 'BEGIN {
+    split("10.0.4.11 10.0.4.12 172.16.9.3 192.168.50.7 10.0.4.30", ip, " ")
+    split("/ /products /search /static/app.css", page, " ")
+    for (i = 0; i < 300; i++) {
+        h = 8 + int(i / 60); p = page[i % 4 + 1]; s = 200
+        if (i % 6 == 0) { s = 404; p = (i % 12 == 0) ? missing : ((i % 18 == 0) ? "/old-page" : "/favicon.ico") }
+        else if (sprintf("%02d", h) == bad && i % 3 == 1) { s = 503; p = "/checkout" }
+        else if (i % 41 == 5) { s = 503; p = "/checkout" }
+        printf "%s - - [12/Mar/2026:%02d:%02d:%02d +0000] \"GET %s HTTP/1.1\" %d %d\n", ip[i % 5 + 1], h, i % 60, (i * 7) % 60, p, s, 200 + (i * 37) % 3000
+    }
+}' > /home/learner/web.log
+chown learner:learner /home/learner/web.log
+'''
+
+[[task]]
+id = "fields"
+title = "Know your fields"
+kind = "guided"
+instructions = "Look at the first lines:  head -3 web.log   Count the space-separated fields from the left: the client address is field 1."
+skills = { "c.log-filtering" = 0.5, "c.awk-fields" = 1.0 }
+question = { prompt = "Which field number holds the HTTP status code (200, 404, ...)?", type = "number", accept = ["9"] }
+hints = ["Split a line at every space and count: 1 is the address, 2 and 3 are dashes, 4 is [12/Mar/2026:..., 5 is +0000].", "\"GET is 6, the path 7, HTTP/1.1\" 8.", "The answer is 9. Check it: awk '{print $9}' web.log | head -3"]
+explanation = "Knowing which field holds what lets awk select by exact value: awk '$9 == 404' compares the status field, not any 404 that happens to appear in the line."
+
+[[task]]
+id = "select"
+title = "Select by a field"
+kind = "guided"
+instructions = "Count the requests that ended with status 404:  awk '$9 == 404' web.log | wc -l"
+skills = { "c.log-filtering" = 1.0, "c.awk-fields" = 0.5 }
+question = { prompt = "How many requests returned 404?", type = "state", state = { command = "awk '$9 == 404' /home/learner/web.log | wc -l" } }
+hints = ["awk with only a condition prints the lines for which the condition is true.", "Pipe those lines into wc -l to count them.", "Run: awk '$9 == 404' web.log | wc -l"]
+explanation = "Step 1 of every log investigation: select the lines you care about, by an exact field value where possible."
+
+[[task]]
+id = "rank"
+title = "Count and rank"
+kind = "guided"
+instructions = "Which missing page do clients ask for most? Build it stage by stage, ending with:  awk '$9 == 404 {print $7}' web.log | sort | uniq -c | sort -rn | head -3"
+skills = { "c.log-filtering" = 1.0, "c.sort-uniq" = 1.0 }
+question = { prompt = "Which path produces the most 404 responses?", type = "exact", accept = ["{{missing}}"] }
+hints = ["Select the 404 lines, print only the path field ($7), then count identical lines.", "uniq -c only merges adjacent duplicates, so sort first; then sort -rn ranks by the count.", "Run: awk '$9 == 404 {print $7}' web.log | sort | uniq -c | sort -rn | head -3 — the answer is {{missing}}"]
+explanation = "sort | uniq -c | sort -rn is the most useful idiom in log analysis: it turns a column of values into a ranked frequency table."
+
+[[task]]
+id = "when"
+title = "When did it fail?"
+kind = "independent"
+instructions = "The /checkout page returned 503 (service unavailable) for a while. Find the hour (two digits, for example 08) with the most 503 responses."
+skills = { "c.log-filtering" = 1.0, "c.cut-paste-tr" = 0.5 }
+question = { prompt = "Which hour had the most 503 responses?", type = "exact", accept = ["{{badhour}}", "{{badhour}}:00"] }
+hints = ["Select the 503 lines first, then keep only the hour, then count.", "The time looks like [12/Mar/2026:10:15:42 — splitting at : makes the hour field 2: cut -d: -f2.", "Run: awk '$9 == 503' web.log | cut -d: -f2 | sort | uniq -c | sort -rn — the answer is {{badhour}}"]
+explanation = "The same three steps answer 'when' questions: select, keep the time field, count. Grouping by hour (or minute) shows when an incident started and ended."
+
+[[task]]
+id = "report"
+title = "Write the report"
+kind = "independent"
+instructions = "Save a ranked table of 404 paths into ~/404-report.txt: one line per path with its count first (as uniq -c prints it), most frequent first."
+skills = { "c.log-filtering" = 1.0, "c.redirect-output" = 0.5 }
+checks = [{ type = "file_equals_command", path = "~/404-report.txt", command = "awk '$9 == 404 {print $7}' /home/learner/web.log | sort | uniq -c | sort -rn" }]
+persistent = true
+hints = ["You built this pipeline two tasks ago, without head.", "Redirect the pipeline's output with > into the file.", "Run: awk '$9 == 404 {print $7}' web.log | sort | uniq -c | sort -rn > ~/404-report.txt"]
+explanation = "Saving the exact pipeline output turns an investigation into evidence others can check — and rerun."
+
+[[task]]
+id = "why-awk"
+title = "Why not just grep?"
+kind = "prediction"
+instructions = "Think about what else in a line can contain the digits 404."
+skills = { "c.log-filtering" = 0.5, "c.grep-basics" = 0.5 }
+question = { prompt = "Why can  grep 404 web.log | wc -l  give a bigger number than  awk '$9 == 404' web.log | wc -l ?", type = "choice", choices = ["grep counts each match twice", "grep also matches 404 in other fields, such as a response size of 1404 or a path containing 404", "awk skips the first line", "They always give the same number"], answer = 1 }
+hints = ["grep looks at the whole line; awk '$9 == 404' looks at one field.", "Sizes, times and paths can contain the same digits.", "The answer is (b)."]
+explanation = "grep matches text anywhere in the line; awk compares one field exactly. When a value has a fixed column, select on the column."
+
+[debrief]
+summary = """
+Log questions follow one pattern: select the lines (awk '$9 == 404', grep), keep the field you
+need (awk '{print $7}', cut), then count and rank (sort | uniq -c | sort -rn | head).
+"""
+alternatives = ["grep '\" 404 ' web.log matches the status with its surrounding quote and spaces", "awk '$9 == 404 {n[$7]++} END {for (p in n) print n[p], p}' web.log | sort -rn counts inside awk", "cut -d' ' -f9 web.log | sort | uniq -c summarises every status code at once"]
+pitfalls = ["uniq without sort only merges adjacent duplicates and silently undercounts.", "grep for a number matches it anywhere in the line — including sizes and times.", "Looking only at the final output: build pipelines stage by stage and check each stage."]
+next = "Next: the noisy-log assessment — the same pipelines, no commands given."
+
+[[solution]]
+name = "as instructed"
+steps = ["head -3 web.log", ":answer 9", "awk '$9 == 404' web.log | wc -l", { answer_with = "awk '$9 == 404' /home/learner/web.log | wc -l" }, "awk '$9 == 404 {print $7}' web.log | sort | uniq -c | sort -rn | head -3", ":answer {{missing}}", "awk '$9 == 503' web.log | cut -d: -f2 | sort | uniq -c | sort -rn", ":answer {{badhour}}", "awk '$9 == 404 {print $7}' web.log | sort | uniq -c | sort -rn > ~/404-report.txt", ":answer b"]
+
+[[solution]]
+name = "with grep and cut"
+steps = ["awk '{print $9}' web.log | head -3", ":answer 9", "cut -d' ' -f9 web.log | grep -c '^404$'", { answer_with = "cut -d' ' -f9 /home/learner/web.log | grep -c '^404$'" }, "grep '\" 404 ' web.log | cut -d' ' -f7 | sort | uniq -c | sort -rn", ":answer {{missing}}", "grep '\" 503 ' web.log | cut -d: -f2 | sort | uniq -c | sort -rn | head -1", ":answer {{badhour}}:00", "grep '\" 404 ' web.log | cut -d' ' -f7 | sort | uniq -c | sort -rn > ~/404-report.txt", ":answer grep also matches 404 in other fields, such as a response size of 1404 or a path containing 404"]
+
+[[counterexample]]
+name = "counting without sorting first"
+steps = ["head -3 web.log", ":answer 9", "awk '$9 == 404' web.log | wc -l", { answer_with = "awk '$9 == 404' /home/learner/web.log | wc -l" }, ":answer {{missing}}", ":answer {{badhour}}", "awk '$9 == 404 {print $7}' web.log | uniq -c > ~/404-report.txt", ":answer b"]

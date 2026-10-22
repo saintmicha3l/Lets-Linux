@@ -1,0 +1,149 @@
+schema = 1
+
+[mission]
+id = "b01-where-am-i"
+title = "Where Am I?"
+chapter = "B"
+kind = "lesson"
+order = 1
+difficulty = 1
+requires = ["a01-first-contact"]
+skills = ["b.pwd-cd", "b.absolute-relative-paths", "b.special-dirs"]
+xp = 50
+estimated_minutes = 10
+
+[briefing]
+context = """
+The web team keeps its files in ~/projects/website and shared reports live under
+/srv/shared. You need to move around the filesystem confidently before you can work on
+either.
+"""
+concept = """
+Every shell has a current working directory; pwd prints it and cd changes it. An absolute
+path starts at the root, /, and means the same thing from anywhere. A relative path starts
+from where you are. Special names: . is here, .. is the parent, ~ is your home directory,
+and cd - jumps back to the previous directory.
+"""
+objectives = ["Print and change the working directory", "Use absolute and relative paths", "Use .., ~ and cd -"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+team = { choices = ["finance", "ops", "sales", "research"] }
+
+[[environment.setup]]
+action = "dir"
+path = "~/projects/website/css"
+
+[[environment.setup]]
+action = "dir"
+path = "~/projects/website/images"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/shared/reports/{{team}}/summary.txt"
+content = "Q3 summary for {{team}}\n"
+mode = "0644"
+
+[[task]]
+id = "pwd"
+title = "Where are you?"
+kind = "guided"
+instructions = "Print your current working directory with `pwd`."
+skills = { "b.pwd-cd" = 1.0 }
+checks = [{ type = "output_contains", text = "/home/learner", command = "pwd" }]
+hints = ["The command is short for 'print working directory'.", "Three letters: p, w, d.", "Type: pwd"]
+explanation = "You start in your home directory, /home/learner, which is also what ~ means."
+
+[[task]]
+id = "relative"
+title = "Go into the website project"
+kind = "guided"
+instructions = "Change into projects/website using a relative path (no leading /)."
+skills = { "b.pwd-cd" = 1.0, "b.absolute-relative-paths" = 1.0 }
+checks = [
+    { type = "cwd_is", path = "~/projects/website" },
+    { type = "not", check = { type = "line_matches", regex = "cd\\s+[/~]" } },
+]
+hints = ["A relative path is interpreted from your current directory.", "From your home, the path is projects/website.", "Type: cd projects/website"]
+explanation = "projects/website was resolved relative to /home/learner, so you are now in /home/learner/projects/website."
+
+[[task]]
+id = "up"
+title = "Up one level"
+kind = "guided"
+instructions = "Move up to the parent directory (projects) using the special name for the parent."
+skills = { "b.special-dirs" = 1.0 }
+checks = [
+    { type = "cwd_is", path = "~/projects" },
+    { type = "line_matches", regex = "\\.\\." },
+]
+hints = ["Every directory contains an entry for its parent.", "The parent directory is written as two dots.", "Type: cd .."]
+explanation = ".. always means 'the directory above this one'."
+
+[[task]]
+id = "absolute"
+title = "Jump with an absolute path"
+kind = "guided"
+instructions = "Go to the {{team}} reports directory under /srv/shared/reports using an absolute path."
+skills = { "b.absolute-relative-paths" = 1.0 }
+checks = [
+    { type = "cwd_is", path = "/srv/shared/reports/{{team}}" },
+    { type = "line_matches", regex = "cd\\s+/" },
+]
+hints = ["Absolute paths start with /.", "Write the whole path from the root: /srv/shared/reports/...", "Type: cd /srv/shared/reports/{{team}}"]
+explanation = "An absolute path works no matter where you are, which makes it the safest choice in scripts."
+
+[[task]]
+id = "predict"
+title = "Predict"
+kind = "prediction"
+instructions = "Think before you test."
+skills = { "b.special-dirs" = 1.0, "b.absolute-relative-paths" = 0.5 }
+question = { prompt = "You are in /srv/shared/reports/{{team}}. Which directory does cd ../../.. take you to? Answer with an absolute path.", type = "exact", accept = ["/srv", "/srv/"], feedback_wrong = "Count the levels: each .. removes one directory from the end of the path." }
+hints = ["Each .. climbs exactly one level.", "Remove one component per ..: {{team}}, then reports, then shared.", "The answer is /srv: /srv/shared/reports/{{team}} → /srv/shared/reports → /srv/shared → /srv."]
+explanation = "Each .. removes one component from the end of the path. You can check with cd ../../.. && pwd."
+
+[[task]]
+id = "home"
+title = "Home again"
+kind = "independent"
+instructions = "Return to your home directory with the shortest possible command."
+skills = { "b.special-dirs" = 1.0 }
+checks = [{ type = "cwd_is", path = "~" }]
+hints = ["cd has a default destination.", "cd with no arguments goes home (so does cd ~).", "Type: cd"]
+explanation = "cd with no argument takes you home; cd ~ does the same."
+
+[[task]]
+id = "back"
+title = "Back to where you were"
+kind = "independent"
+instructions = "Jump straight back to the previous directory (the {{team}} reports) without typing its path."
+skills = { "b.special-dirs" = 1.0 }
+checks = [
+    { type = "cwd_is", path = "/srv/shared/reports/{{team}}" },
+    { type = "line_matches", regex = "cd\\s+-\\s*$" },
+]
+hints = ["The shell remembers the previous directory in $OLDPWD.", "cd has a one-character shortcut for 'previous directory'.", "Type: cd -"]
+explanation = "cd - swaps between the current and previous directories and prints where it took you."
+
+[debrief]
+summary = """
+pwd tells you where you are, cd moves you, absolute paths start at /, relative paths start
+where you are, and ., .., ~ and cd - are the shortcuts you will use every day.
+"""
+alternatives = ["cd ~/projects/website works from anywhere", "cd $OLDPWD is what cd - does"]
+pitfalls = ["Forgetting where you are before running a destructive command: check with pwd (or your prompt)."]
+next = "Next: looking around with ls."
+
+[[solution]]
+name = "as instructed"
+steps = ["pwd", "cd projects/website", "cd ..", "cd /srv/shared/reports/{{team}}", ":answer /srv", "cd", "cd -"]
+
+[[solution]]
+name = "variations"
+steps = ["pwd", "cd ./projects/website/", "cd ../", "cd /srv/shared/reports/{{team}}/", ":answer /srv", "cd ~", "cd -"]
+
+[[counterexample]]
+name = "absolute paths where relative were asked"
+steps = ["pwd", "cd /home/learner/projects/website", "cd /home/learner/projects"]

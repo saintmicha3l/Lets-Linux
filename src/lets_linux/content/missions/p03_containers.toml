@@ -1,0 +1,191 @@
+schema = 1
+
+[mission]
+id = "p03-containers"
+title = "The Shop in a Box"
+chapter = "P"
+kind = "lesson"
+order = 4
+difficulty = 5
+requires = ["p02-cgroups"]
+skills = ["p.container-usage", "p.container-concepts"]
+review_for = ["p.namespaces", "i.ports-sockets"]
+xp = 220
+estimated_minutes = 35
+
+[briefing]
+context = """
+The web team wants their shop page served from a container instead of the system nginx —
+"so it runs the same everywhere". podman is installed on this Debian server. Run it as
+yourself (no sudo needed): pull the image, serve the team's files from ~/shop on port 8080,
+look inside, and tidy up after an earlier experiment.
+"""
+concept = """
+An image is a read-only template: a root filesystem plus settings (command, environment,
+exposed ports). A container is a process started from it — with its own root (a copy of
+the image's files), namespaces and cgroup. podman pull NAME:TAG fetches an image (fully
+qualified: docker.io/library/nginx:1.27; short names like nginx resolve only if
+/etc/containers/registries.conf configures them). podman run -d --name N -p 8080:80
+-v HOSTDIR:CTRDIR:ro IMAGE starts one detached, publishes host port 8080 to the container's
+port 80 and bind-mounts a directory read-only. podman ps [-a], logs, exec N CMD (-it for a
+shell), inspect (-f '{{.State.Status}}'), top, stop, rm, images, rmi. Changes made inside a
+container stay in that container — not in the image, and they are gone with podman rm;
+data that must last belongs in volumes or bind mounts. Rootless podman runs everything as
+your user: root inside the container is you outside, and ports below 1024 are not allowed.
+"""
+objectives = ["Pull an image by its full name", "Run a detached container with a published port and a read-only bind mount", "Inspect a container from outside and inside", "Explain image versus container", "Clean up stopped containers"]
+
+[environment]
+profile = "debian"
+packages = ["podman"]
+
+[[environment.setup]]
+action = "dir"
+path = "/home/learner/shop"
+owner = "learner"
+group = "learner"
+
+[[environment.setup]]
+action = "file"
+path = "/home/learner/shop/index.html"
+owner = "learner"
+group = "learner"
+content = "<h1>Example Shop</h1>\n<p>Spring sale: everything 20% off.</p>\n"
+
+[[environment.setup]]
+action = "run"
+as = "learner"
+command = "podman run --name old-test docker.io/library/alpine:3.20 echo testing >/dev/null 2>&1; podman run --name scratch docker.io/library/alpine:3.20 sh -c 'exit 1' >/dev/null 2>&1"
+allow_failure = true
+
+[[task]]
+id = "pull"
+title = "Get the image"
+kind = "guided"
+instructions = "Pull the nginx image, tag 1.27, from Docker Hub (docker.io/library/nginx). Try the short name nginx first and read the error."
+skills = { "p.container-usage" = 1.0 }
+checks = [
+    { type = "command_result", user = "learner", command = "podman images", stdout_regex = "docker\\.io/library/nginx\\s+1\\.27" },
+]
+hints = ["podman pull nginx:1.27 fails on Debian: no short-name aliases or search registries are configured.", "Use the fully qualified name: registry/namespace/name:tag.", "podman pull docker.io/library/nginx:1.27"]
+explanation = "Fully qualified names say exactly which registry to trust. Distributions that allow short names (Fedora) list aliases and search registries in /etc/containers/registries.conf(.d)."
+
+[[task]]
+id = "run"
+title = "Serve the shop"
+kind = "independent"
+instructions = "Run a detached container named shop from nginx 1.27 that serves the files in ~/shop (read-only) on the server's port 8080. nginx inside serves /usr/share/nginx/html on port 80."
+skills = { "p.container-usage" = 1.0, "i.ports-sockets" = 0.5 }
+checks = [
+    { type = "command_result", user = "learner", command = "podman inspect -f '{{.State.Running}}' shop", stdout_equals = "true\n" },
+    { type = "command_result", user = "learner", command = "wget -qO- http://localhost:8080/", stdout_contains = ["Example Shop"] },
+    { type = "command_result", user = "learner", command = "podman inspect -f '{{json .Mounts}}' shop", stdout_regex = "/usr/share/nginx/html\", \"RW\": false" },
+]
+hints = ["podman run -d --name shop -p HOSTPORT:CONTAINERPORT -v HOSTDIR:CONTAINERDIR:ro IMAGE", "Use an absolute host path: $HOME/shop or /home/learner/shop.", "podman run -d --name shop -p 8080:80 -v ~/shop:/usr/share/nginx/html:ro docker.io/library/nginx:1.27"]
+explanation = "-p 8080:80 creates a listener on the host (owned by rootlessport, since you are not root) that forwards to port 80 in the container's network namespace. The bind mount makes the host directory appear inside; :ro keeps the container from changing it."
+
+[[task]]
+id = "inside"
+title = "PID 1 is nginx"
+kind = "guided"
+instructions = "Compare the view from inside with the view from outside: podman top shop, podman exec -it shop bash (look around, then exit), and ps on the host."
+skills = { "p.container-concepts" = 1.0, "p.namespaces" = 0.5 }
+question = { prompt = "Which PID does the nginx master process have inside the container?", type = "number", accept = ["1"] }
+hints = ["podman top shop lists the container's processes with their PIDs as seen inside.", "On the host, ps -ef | grep nginx shows the same processes with host PIDs.", "1"]
+explanation = "The container has its own PID namespace: its first process — nginx's master — is PID 1 inside and an ordinary process on the host, child of conmon."
+
+[[task]]
+id = "hostpid"
+title = "Just a process"
+kind = "troubleshooting"
+instructions = "Monitoring on the host reports PIDs, not containers. Find the shop container's nginx master process in the host's process table."
+skills = { "p.container-concepts" = 1.0 }
+question = { prompt = "Which PID does the shop container's nginx master have on the host?", type = "state", state = { command = "su - learner -c \"podman inspect -f '{{.State.Pid}}' shop\"" } }
+hints = ["On the host it is an ordinary process: ps -ef | grep 'nginx: master'.", "podman inspect -f '{{.State.Pid}}' shop prints it directly; its parent is conmon.", "ps -eo pid,ppid,args | grep -E 'conmon|nginx: master'"]
+explanation = "Seen from the host a container is a process tree under conmon — kill, nice, strace, cgroup limits and /proc/PID all work on it like on any other process. The PID namespace only changes how the container sees itself."
+
+[[task]]
+id = "rootless"
+title = "Root inside, you outside"
+kind = "guided"
+instructions = "Inside the container nginx's master runs as root. Look at it from the host."
+skills = { "p.container-concepts" = 1.0 }
+question = { prompt = "As which user does the nginx master process run on the host?", type = "exact", accept = ["learner"] }
+hints = ["ps -eo user,pid,args | grep 'nginx: master'", "Rootless containers map root inside to the user who started them.", "learner"]
+explanation = "A user namespace maps UID 0 in the container to your UID outside (the workers' user to one of your subordinate IDs from /etc/subuid). A breakout from this container would land as learner, not root."
+
+[[task]]
+id = "image"
+title = "Image versus container"
+kind = "explanation"
+instructions = "Think about what lives where."
+skills = { "p.container-concepts" = 1.0 }
+question = { prompt = "You edit /etc/nginx/nginx.conf inside the running shop container, then podman rm -f shop and start a new container from the same image. What does the new one have?", type = "choice", choices = ["Your edited nginx.conf — containers share their files", "The image's original nginx.conf: changes live only in the removed container's own copy", "No nginx.conf at all"], answer = 1 }
+hints = ["Where was the changed file stored?", "podman rm deletes the container's filesystem; the image is read-only.", "(b)"]
+explanation = "Each container starts from the image's files; what it changes is its own. Configuration belongs in the image (build) or in mounts, data in volumes — never only inside a container."
+
+[[task]]
+id = "tidy"
+title = "Tidy up"
+kind = "independent"
+instructions = "Earlier experiments left stopped containers behind. Remove every stopped container — the shop must keep running."
+skills = { "p.container-usage" = 1.0 }
+checks = [
+    { type = "command_result", user = "learner", command = "podman ps -a -q | wc -l", stdout_equals = "1\n" },
+    { type = "command_result", user = "learner", command = "podman inspect -f '{{.State.Running}}' shop", stdout_equals = "true\n" },
+]
+hints = ["podman ps -a shows stopped containers too.", "podman rm NAME… removes containers; it refuses running ones (without -f) — which is what you want here.", "podman rm old-test scratch"]
+explanation = "Stopped containers keep their filesystem copy and logs until removed. podman ps -a shows them; podman rm (or podman container prune on a real system) clears them."
+
+[debrief]
+summary = """
+podman pull REGISTRY/NAME:TAG; podman run -d --name N -p HOST:CTR -v DIR:CTRDIR:ro IMAGE;
+podman ps -a / top / exec -it N bash / inspect -f '{{…}}' / logs / stop / rm; images and
+rmi for images. Rootless: your UID outside, no ports < 1024, storage in
+~/.local/share/containers.
+"""
+alternatives = ["podman run --rm … for one-off commands that clean up after themselves", "podman volume create DATA; -v DATA:/var/lib/app for data that outlives containers", "podman generate systemd / Quadlet units to run containers as services (not simulated)"]
+pitfalls = ["Short image names: on Debian they do not resolve; elsewhere they may resolve to an unexpected registry.", "Relative host paths in -v.", "Expecting changes made with podman exec to survive podman rm.", "Publishing port 80 as a normal user."]
+next = "Next: what can go wrong — container security."
+
+[[solution]]
+name = "step by step"
+steps = [
+    "podman pull nginx:1.27",
+    "podman pull docker.io/library/nginx:1.27",
+    "podman run -d --name shop -p 8080:80 -v ~/shop:/usr/share/nginx/html:ro docker.io/library/nginx:1.27",
+    "wget -qO- http://localhost:8080/",
+    "podman top shop",
+    ":answer 1",
+    "ps -eo user,pid,args | grep nginx",
+    { answer_with = "su - learner -c \"podman inspect -f '{{.State.Pid}}' shop\"" },
+    ":answer learner",
+    ":answer b",
+    "podman ps -a",
+    "podman rm old-test scratch",
+]
+
+[[solution]]
+name = "run pulls, long options"
+steps = [
+    "podman run --detach --name=shop --publish 8080:80 --volume /home/learner/shop:/usr/share/nginx/html:ro docker.io/library/nginx:1.27",
+    "podman exec shop cat /etc/os-release",
+    ":answer 1",
+    "ps -eo pid,ppid,args | grep -E 'conmon|nginx: master'",
+    { answer_with = "su - learner -c \"podman inspect -f '{{.State.Pid}}' shop\"" },
+    ":answer learner",
+    ":answer The image's original nginx.conf: changes live only in the removed container's own copy",
+    "podman rm old-test",
+    "podman rm scratch",
+]
+
+[[counterexample]]
+name = "writable mount, prune by force"
+steps = [
+    "podman run -d --name shop -p 8080:80 -v ~/shop:/usr/share/nginx/html docker.io/library/nginx:1.27",
+    ":answer 1",
+    { answer_with = "su - learner -c \"podman inspect -f '{{.State.Pid}}' shop\"" },
+    ":answer learner",
+    ":answer b",
+    "podman rm -f old-test scratch shop",
+]

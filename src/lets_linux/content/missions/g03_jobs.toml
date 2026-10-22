@@ -1,0 +1,142 @@
+schema = 1
+
+[mission]
+id = "g03-jobs"
+title = "Juggling Jobs"
+chapter = "G"
+kind = "lesson"
+order = 3
+difficulty = 2
+requires = ["g02-signals"]
+skills = ["g.jobs-control", "g.nohup-disown"]
+xp = 70
+estimated_minutes = 12
+
+[briefing]
+context = """
+You want to keep working in your shell while long tasks run. The shell's job control lets
+you start commands in the background, list them, pause, resume and end them — all from one
+terminal.
+"""
+concept = """
+COMMAND & runs a command in the background and prints its job number and PID ($! holds the
+PID). jobs lists the shell's jobs; %1, %2 refer to them (and %+ to the current one). kill
+works with job specs (kill %2), bg resumes a stopped job in the background, fg brings one to
+the foreground, and wait waits for background jobs to finish. In a real terminal Ctrl+Z
+stops the foreground job.
+"""
+objectives = ["Start and list background jobs", "Stop, resume and end jobs by job number", "Wait for jobs"]
+
+[environment]
+profile = "debian"
+
+[[task]]
+id = "start"
+title = "Into the background"
+kind = "guided"
+instructions = "Start `sleep 600` in the background."
+skills = { "g.jobs-control" = 1.0 }
+checks = [{ type = "process_running", args_regex = "sleep 600$" }]
+hints = ["A trailing & runs a command in the background.", "The shell prints [job] PID and returns immediately.", "Type: sleep 600 &"]
+explanation = "[1] is the job number, the second number the PID. Your prompt came back at once."
+
+[[task]]
+id = "list"
+title = "What is running?"
+kind = "guided"
+instructions = "List your shell's jobs."
+skills = { "g.jobs-control" = 1.0 }
+checks = [{ type = "output_contains", text = "Running", command = "jobs" }]
+hints = ["The command is named after what it shows.", "jobs (-l adds PIDs).", "Type: jobs"]
+explanation = "Jobs belong to this shell: another terminal would not list them (ps would still show the processes)."
+
+[[task]]
+id = "second"
+title = "Another one, and its PID"
+kind = "guided"
+instructions = "Start `sleep 900` in the background too, then print its PID using the special parameter $!."
+skills = { "g.jobs-control" = 1.0 }
+checks = [
+    { type = "process_running", args_regex = "sleep 900$" },
+    { type = "output_contains", regex = "(?m)^\\d+$", command = ["echo", "printf"] },
+]
+hints = ["Start it like the first one.", "$! holds the PID of the most recent background job.", "Type: sleep 900 &   then: echo $!"]
+explanation = "Scripts use $! to remember a background process so they can wait for it or signal it later."
+
+[[task]]
+id = "stop"
+title = "Pause job 1"
+kind = "independent"
+instructions = "Stop (pause) job 1 — the `sleep 600` — using its job number rather than its PID."
+skills = { "g.jobs-control" = 1.0, "g.signals-kill" = 0.5 }
+checks = [{ type = "process_running", args_regex = "sleep 600$", state = "T" }]
+hints = ["kill accepts job specs such as %1.", "Send SIGSTOP to %1.", "Type: kill -STOP %1   (Ctrl+Z does this to a foreground job in a real terminal)"]
+explanation = "jobs now shows job 1 as Stopped."
+
+[[task]]
+id = "bg"
+title = "Resume in the background"
+kind = "independent"
+instructions = "Let job 1 continue running in the background."
+skills = { "g.jobs-control" = 1.0 }
+checks = [
+    { type = "process_running", args_regex = "sleep 600$" },
+    { type = "not", check = { type = "process_running", args_regex = "sleep 600$", state = "T" } },
+]
+hints = ["One built-in resumes a stopped job in the background.", "bg %1", "Type: bg %1   (kill -CONT %1 also works)"]
+explanation = "bg sends SIGCONT and marks the job as running in the background; fg would bring it to the foreground."
+
+[[task]]
+id = "end"
+title = "End job 2"
+kind = "independent"
+instructions = "Terminate job 2 (the `sleep 900`)."
+skills = { "g.jobs-control" = 1.0, "g.signals-kill" = 0.5 }
+checks = [{ type = "process_absent", args_regex = "sleep 900$" }]
+hints = ["kill works with job specs.", "kill %2", "Type: kill %2"]
+explanation = "The shell reports the job as Terminated before the next prompt."
+
+[[task]]
+id = "wait"
+title = "Wait for it"
+kind = "independent"
+instructions = "Run `sleep 20` in the background, then use a built-in to wait until it has finished."
+skills = { "g.jobs-control" = 1.0 }
+checks = [
+    { type = "command_used", command = ["sleep"], args_regex = "^20$", scope = "history" },
+    { type = "command_used", command = ["wait"], success = true, scope = "history" },
+    { type = "process_absent", args_regex = "sleep 20$" },
+]
+hints = ["Start it with &, then use the built-in that blocks until jobs end.", "wait (or wait %3, or wait $!).", "Type: sleep 20 &   then: wait $!"]
+explanation = "wait returns the job's exit status. Here simulated time jumped forward by 20 seconds."
+
+[[task]]
+id = "hangup"
+title = "Closing the terminal"
+kind = "prediction"
+instructions = "Think about what happens to background jobs when you log out."
+skills = { "g.nohup-disown" = 1.0 }
+question = { prompt = "You start `long-task &` and close the terminal. What usually happens to long-task?", type = "choice", choices = ["It keeps running forever", "It receives SIGHUP and normally ends, unless started with nohup or disowned", "It is paused until you log in again", "It moves to another terminal"], answer = 1 }
+hints = ["The terminal going away is signalled to its jobs.", "The signal is SIGHUP (hang up).", "The answer is (b)."]
+explanation = "nohup COMMAND & or disown keep a job alive after logout; for real services use systemd (chapter H) or tmux."
+
+[debrief]
+summary = """
+& starts background jobs, jobs lists them, %N names them, kill/bg/fg control them and wait
+synchronises. Jobs belong to one shell; processes are visible system-wide with ps.
+"""
+alternatives = ["fg %1 then Ctrl+Z, bg", "disown -h %1 keeps a job alive after logout"]
+pitfalls = ["Background jobs still write to your terminal, which can interleave output.", "Jobs die with the terminal unless protected (nohup, disown, tmux, a systemd service)."]
+next = "Next: services."
+
+[[solution]]
+name = "job specs"
+steps = ["sleep 600 &", "jobs", "sleep 900 &", "echo $!", "kill -STOP %1", "jobs", "bg %1", "kill %2", "sleep 20 &", "wait $!", ":answer b"]
+
+[[solution]]
+name = "PIDs and signals"
+steps = ["sleep 600 &", "jobs -l", "sleep 900 & pid=$!", "echo $pid", "kill -TSTP %1", "kill -CONT %1", "kill $pid", "sleep 20 &", "wait", ":answer 2"]
+
+[[counterexample]]
+name = "foreground only"
+steps = ["sleep 600", "jobs", ":answer a"]

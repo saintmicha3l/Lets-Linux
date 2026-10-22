@@ -1,0 +1,117 @@
+schema = 1
+
+[mission]
+id = "e08-shell-startup"
+title = "Make the Shell Yours"
+chapter = "E"
+kind = "lesson"
+order = 10
+difficulty = 3
+requires = ["e02-first-script"]
+skills = ["e.shell-startup", "e.functions", "e.env-inheritance"]
+review_for = ["a.env-vars-intro", "e.path-lookup"]
+xp = 130
+estimated_minutes = 20
+
+[briefing]
+context = """
+You type the same long commands every day. Shells can be customised: short aliases, small
+functions and your preferred settings, loaded automatically in every new session. Set up
+your account so a fresh login has them — and learn which file is read when.
+"""
+concept = """
+A login shell (SSH, console) reads /etc/profile and then the first of ~/.bash_profile,
+~/.bash_login, ~/.profile; Debian's ~/.profile in turn sources ~/.bashrc. An interactive
+non-login shell (a new terminal window, typing bash) reads only ~/.bashrc. Put aliases and
+functions in ~/.bashrc (Debian's also reads ~/.bash_aliases); put exported environment
+variables in ~/.profile (or ~/.bashrc). Changes apply to new shells — . ~/.bashrc (source)
+applies them to the current one. alias name='command' defines an alias; type name shows what
+a name means to the shell.
+"""
+objectives = ["Add a persistent alias", "Add a shell function", "Set an environment variable for future sessions", "Know which startup file is read"]
+
+[environment]
+profile = "debian"
+
+[[task]]
+id = "alias"
+title = "A short name"
+kind = "independent"
+instructions = "Make the alias ports, meaning 'ss -tln', available in every new interactive session."
+skills = { "e.shell-startup" = 1.0 }
+checks = [{ type = "command_result", login = true, command = "type ports", stdout_contains = "ports is aliased to `ss -tln'" }]
+persistent = true
+hints = ["An alias typed at the prompt is gone when you log out.", "Add the alias line to ~/.bashrc (or ~/.bash_aliases).", "echo \"alias ports='ss -tln'\" >> ~/.bashrc; . ~/.bashrc; ports"]
+explanation = "Every new interactive shell reads ~/.bashrc and defines the alias again."
+
+[[task]]
+id = "function"
+title = "A function: mkcd"
+kind = "independent"
+instructions = "Add a shell function mkcd DIR to your startup files: it creates DIR (with parent directories) and changes into it. (A script could not do this — why?)"
+skills = { "e.functions" = 1.0, "e.shell-startup" = 1.0 }
+checks = [{ type = "command_result", login = true, command = "mkcd /tmp/proj/a/b && pwd", stdout_equals = "/tmp/proj/a/b" }]
+persistent = true
+hints = ["mkcd() { …; } — inside, \"$1\" is the directory.", "mkdir -p \"$1\" && cd \"$1\"", "echo 'mkcd() { mkdir -p \"$1\" && cd \"$1\"; }' >> ~/.bashrc; . ~/.bashrc; mkcd /tmp/x/y; pwd"]
+explanation = "A function runs inside your current shell, so its cd changes your directory. A script runs as a separate process: its cd would end with it."
+
+[[task]]
+id = "editor"
+title = "Your editor"
+kind = "independent"
+instructions = "Programs such as crontab -e and git use the EDITOR environment variable. Make sure every new login session has EDITOR=nano exported."
+skills = { "e.shell-startup" = 1.0, "e.env-inheritance" = 1.0 }
+checks = [{ type = "command_result", login = true, command = "bash -c 'echo \"editor=$EDITOR\"'", stdout_equals = "editor=nano" }]
+persistent = true
+hints = ["It must be exported so child processes (the editor-launching program) see it.", "export EDITOR=nano in ~/.profile (or ~/.bashrc).", "echo 'export EDITOR=nano' >> ~/.profile"]
+explanation = "The check ran a child bash in a fresh login: it inherited EDITOR because the variable was exported."
+
+[[task]]
+id = "which"
+title = "Which file?"
+kind = "prediction"
+instructions = "Think about the two kinds of interactive shells."
+skills = { "e.shell-startup" = 1.0 }
+question = { prompt = "You define an alias only in ~/.profile. You then open a new terminal window on a desktop (an interactive non-login shell). Is the alias there?", type = "choice", choices = ["Yes, ~/.profile is always read", "No, a non-login shell reads only ~/.bashrc", "Only after a reboot"], answer = 1 }
+hints = ["Which file does an interactive non-login bash read?", "~/.profile is read by login shells only.", "(b)"]
+explanation = "That is why aliases belong in ~/.bashrc: Debian's ~/.profile sources ~/.bashrc, so login shells get them too."
+
+[debrief]
+summary = """
+~/.bashrc: aliases, functions, prompt (every interactive shell). ~/.profile: exported variables
+and PATH (login shells; Debian's sources ~/.bashrc). Apply changes now with . FILE.
+"""
+alternatives = ["~/.bash_aliases for aliases (sourced by Debian's ~/.bashrc)", "/etc/profile.d/*.sh for settings for all users", "/etc/bash.bashrc for every user's interactive shells"]
+pitfalls = ["Expecting a script to change the caller's directory or variables.", "Editing ~/.bashrc and testing in the same shell without sourcing it.", "Creating ~/.bash_profile: bash then stops reading ~/.profile."]
+next = "Chapter E complete."
+
+[[solution]]
+name = "append to the startup files"
+steps = [
+    "echo \"alias ports='ss -tln'\" >> ~/.bashrc",
+    "echo 'mkcd() { mkdir -p \"$1\" && cd \"$1\"; }' >> ~/.bashrc",
+    "echo 'export EDITOR=nano' >> ~/.profile",
+    ". ~/.profile",
+    "ports; mkcd /tmp/demo; pwd; echo $EDITOR",
+    ":answer b",
+]
+
+[[solution]]
+name = ".bash_aliases and an editor"
+steps = [
+    "echo \"alias ports='ss -tln'\" > ~/.bash_aliases",
+    { edit = "# my additions\nmkcd() {\n    mkdir -p -- \"$1\" && cd -- \"$1\"\n}\nexport EDITOR=nano\n" },
+    "nano ~/.bashrc.local",
+    "echo '. ~/.bashrc.local' >> ~/.bashrc",
+    "exec bash -l",
+    ":answer No, a non-login shell reads only ~/.bashrc",
+]
+
+[[counterexample]]
+name = "only in the current shell"
+steps = [
+    "alias ports='ss -tln'",
+    "mkcd() { mkdir -p \"$1\" && cd \"$1\"; }",
+    "export EDITOR=nano",
+    ":answer a",
+]

@@ -1,0 +1,102 @@
+schema = 1
+
+[mission]
+id = "b05-wildcards"
+title = "Wildcards"
+chapter = "B"
+kind = "lesson"
+order = 5
+difficulty = 2
+requires = ["b03-making-things"]
+skills = ["b.globbing"]
+xp = 60
+estimated_minutes = 12
+
+[briefing]
+context = """
+The camera upload folder ~/photos holds {{n}} photos mixed with notes and thumbnails. Sorting
+them one file at a time would take ages; wildcards let one command match many names.
+"""
+concept = """
+The shell expands wildcards (globs) before running the command: * matches any characters,
+? exactly one character, and [abc] or [0-9] one character from a set. Hidden files (starting
+with .) are not matched unless the pattern starts with a dot. If nothing matches, the pattern
+is passed on unchanged. echo PATTERN shows what a glob expands to — a safe way to test it.
+"""
+objectives = ["Predict glob expansion", "Move and copy groups of files with patterns"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+n = { range = [12, 20] }
+
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /home/learner/photos && cd /home/learner/photos && for i in $(seq -w 1 {{n}}); do echo jpeg > IMG_0$i.jpg; done && echo png > IMG_010.png && echo png > IMG_011.png && echo 'shot list' > notes.txt && echo cache > .thumbs && chown -R learner:learner /home/learner/photos"
+
+[[task]]
+id = "predict"
+title = "Predict an expansion"
+kind = "prediction"
+instructions = "In ~/photos, think about what the shell will do with a pattern."
+skills = { "b.globbing" = 1.0 }
+question = { prompt = "In ~/photos, what does  echo *.txt  print?", type = "exact", accept = ["notes.txt"] }
+hints = ["*.txt matches names ending in .txt.", "Which file in ~/photos ends in .txt?", "It prints notes.txt (try it!)."]
+explanation = "The shell replaced *.txt with the matching names before echo ever ran."
+
+[[task]]
+id = "move-jpg"
+title = "Sort the photos"
+kind = "independent"
+instructions = "Create ~/photos/jpg and move every .jpg file from ~/photos into it with one mv command."
+skills = { "b.globbing" = 1.0, "b.copy-move-rename" = 0.5 }
+checks = [
+    { type = "dir_entries", path = "~/photos/jpg", glob = "*.jpg", count = "{{n}}" },
+    { type = "dir_entries", path = "~/photos", glob = "*.jpg", count = 0 },
+]
+hints = ["mv accepts many sources followed by a directory.", "The pattern *.jpg matches all the photos at once.", "Type: mkdir ~/photos/jpg && mv ~/photos/*.jpg ~/photos/jpg/"]
+explanation = "mv *.jpg jpg/ became mv IMG_001.jpg IMG_002.jpg ... jpg/ after expansion."
+
+[[task]]
+id = "select"
+title = "Pick a range"
+kind = "independent"
+instructions = "Copy only the PNG images numbered 010 to 019 into a new directory ~/selected (use a character class)."
+skills = { "b.globbing" = 1.0 }
+checks = [
+    { type = "dir_entries", path = "~/selected", glob = "*.png", count = 2 },
+    { type = "dir_entries", path = "~/selected", glob = "*.jpg", count = 0 },
+]
+hints = ["[0-9] matches one digit.", "IMG_01[0-9].png matches IMG_010.png to IMG_019.png.", "Type: mkdir ~/selected && cp ~/photos/IMG_01[0-9].png ~/selected/"]
+explanation = "Character classes match exactly one character; IMG_01? would also work here."
+
+[[task]]
+id = "hidden"
+title = "Why is .thumbs missing?"
+kind = "explanation"
+instructions = "Run  ls ~/photos/*  and notice what is not listed."
+skills = { "b.globbing" = 1.0, "b.hidden-files" = 0.5 }
+question = { prompt = "Why does * not match .thumbs?", type = "choice", choices = ["Because .thumbs is empty", "Because * never matches names starting with a dot", "Because .thumbs is a directory", "Because ls hides it"], answer = 1 }
+hints = ["Look at the name, not the contents.", "Globs skip dotfiles unless the pattern itself starts with a dot.", "The answer is (b). Use .* to match hidden names."]
+explanation = "Hidden files are protected from accidental globbing: rm * does not delete them."
+
+[debrief]
+summary = """
+Wildcards are expanded by the shell, not by the command. Test patterns with echo first;
+* and ? never match a leading dot; [0-9] matches a single character from a set.
+"""
+alternatives = ["mv ~/photos/IMG_*.jpg ~/photos/jpg", "cp ~/photos/IMG_01?.png ~/selected"]
+pitfalls = ["rm * .bak (with a space) removes everything and then tries to remove '.bak'. echo the pattern before deleting with it.", "Quoting a pattern ('*.jpg') stops the shell from expanding it."]
+next = "Next: links."
+
+[[solution]]
+name = "from home"
+steps = ["echo photos/*.txt", ":answer notes.txt", "mkdir ~/photos/jpg && mv ~/photos/*.jpg ~/photos/jpg/", "mkdir ~/selected && cp ~/photos/IMG_01[0-9].png ~/selected/", "ls ~/photos/*", ":answer b"]
+
+[[solution]]
+name = "inside photos"
+steps = ["cd photos", ":answer notes.txt", "mkdir jpg; mv IMG_*.jpg jpg", "mkdir ../selected; cp IMG_01?.png ../selected", ":answer 2"]
+
+[[counterexample]]
+name = "copying everything"
+steps = ["cd photos", ":answer notes.txt", "mkdir jpg; cp *.jpg jpg"]

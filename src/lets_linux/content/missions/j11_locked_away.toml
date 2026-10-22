@@ -1,0 +1,224 @@
+schema = 1
+
+[mission]
+id = "j11-locked-away"
+title = "Locked Away"
+chapter = "J"
+kind = "lesson"
+order = 13
+difficulty = 4
+requires = ["j01-new-disk", "j09-room-to-grow"]
+skills = ["j.encryption-concepts", "j.backup-restore", "l.secrets-management"]
+review_for = ["j.backup-restore", "j.mount-umount"]
+xp = 200
+estimated_minutes = 30
+
+[briefing]
+context = """
+Every Friday a backup of the customer records goes onto a USB disk that someone takes home
+— the off-site copy. Last month a colleague left one on the train. From now on the disk
+(/dev/sdb, freshly plugged in) must be encrypted, so that a lost disk is only a lost disk.
+(sudo password: letslinux)
+"""
+concept = """
+LUKS encrypts a whole block device. cryptsetup luksFormat writes a LUKS header (and destroys
+whatever was on the disk); cryptsetup open asks for a passphrase and creates a decrypted
+view of the disk, /dev/mapper/NAME, on which you make a filesystem and mount it as usual.
+cryptsetup close removes the view: what remains on the disk is ciphertext. The header has
+key slots: several passphrases (or key files) can unlock the same disk, each one
+replaceable — losing all of them means losing the data.
+"""
+objectives = ["Encrypt a disk with LUKS", "Use the decrypted device", "Add a recovery key", "Close a container safely", "Explain what encryption protects against"]
+
+[environment]
+profile = "debian"
+packages = ["cryptsetup"]
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "8G"
+removable = true
+
+[[environment.setup]]
+action = "files"
+dir = "/srv/records"
+count = 40
+prefix = "customer-"
+size = 2048
+
+[[environment.setup]]
+action = "file"
+path = "/root/recovery.key"
+mode = "0400"
+content = "rk-4f9c1a7e2b8d05c3e6a91f72d4b08e5c\n"
+
+[[task]]
+id = "destroy"
+title = "Before you type YES"
+kind = "guided"
+instructions = "`cryptsetup luksFormat` will ask you to confirm with YES in capital letters."
+skills = { "j.encryption-concepts" = 1.0 }
+question = { prompt = "What happens to the data that is on the disk now?", type = "choice", choices = ["It is encrypted in place", "It is destroyed: luksFormat creates a new, empty encrypted container", "It is moved into the container", "Nothing until the container is opened"], answer = 1 }
+hints = ["luksFormat formats.", "Encrypting existing data in place needs other tools (cryptsetup reencrypt) — and a backup first."]
+explanation = "luksFormat writes a new header and a new master key; whatever was on the device is unreadable from then on. Always check lsblk / blkid that you have the right device."
+
+[[task]]
+id = "encrypt"
+title = "Encrypt the disk"
+kind = "independent"
+instructions = """
+Make /dev/sdb a LUKS container with a passphrase of your choice (at least 8 characters),
+open it as `offsite`, put an ext4 filesystem on it and mount it at /mnt/offsite.
+"""
+skills = { "j.encryption-concepts" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "blkid -s TYPE -o value /dev/sdb", stdout_equals = "crypto_LUKS" },
+    { type = "command_result", user = "root", command = "findmnt -n -o SOURCE,FSTYPE /mnt/offsite", stdout_regex = "^/dev/mapper/offsite\\s+ext4" },
+]
+hints = [
+    "cryptsetup luksFormat /dev/sdb, then cryptsetup open /dev/sdb offsite — afterwards /dev/mapper/offsite is an ordinary empty block device.",
+    "mkfs.ext4 /dev/mapper/offsite (not /dev/sdb!), mkdir -p /mnt/offsite, mount.",
+    "sudo cryptsetup luksFormat /dev/sdb; sudo cryptsetup open /dev/sdb offsite; sudo mkfs.ext4 /dev/mapper/offsite; sudo mkdir -p /mnt/offsite; sudo mount /dev/mapper/offsite /mnt/offsite",
+]
+explanation = "lsblk shows the stack: sdb → offsite (crypt) → /mnt/offsite. Everything written through /dev/mapper/offsite is encrypted before it reaches the disk."
+
+[[task]]
+id = "copy"
+title = "This week's copy"
+kind = "independent"
+instructions = "Copy /srv/records to the disk, as /mnt/offsite/records."
+skills = { "j.backup-restore" = 1.0 }
+checks = [
+    { type = "tree_count", path = "/mnt/offsite/records", glob = "customer-*", min = 40 },
+]
+hints = ["Any copy tool that keeps the files' attributes will do.", "cp -a or rsync -a (mind the trailing slashes with rsync).", "sudo rsync -a /srv/records/ /mnt/offsite/records/"]
+explanation = "From the filesystem's point of view this is an ordinary copy; the encryption happens one layer below."
+
+[[task]]
+id = "recovery"
+title = "A second key"
+kind = "independent"
+instructions = """
+If the only person who knows the passphrase is ill, the backup is useless. Add the recovery
+key in /root/recovery.key (it is kept in the company safe too) as a second way to unlock the
+disk.
+"""
+skills = { "j.encryption-concepts" = 1.0, "l.secrets-management" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "cryptsetup open --test-passphrase --key-file /root/recovery.key /dev/sdb", status = 0 },
+]
+persistent = true
+hints = ["Key slots: cryptsetup luksAddKey adds one (it first asks for an existing passphrase).", "The new key can come from a file: luksAddKey DEVICE KEYFILE.", "sudo cryptsetup luksAddKey /dev/sdb /root/recovery.key"]
+explanation = "cryptsetup luksDump /dev/sdb now lists two key slots. Either unlocks the same master key; each can be removed (luksRemoveKey, luksKillSlot) without re-encrypting the disk."
+
+[[task]]
+id = "close"
+title = "Ready for the train"
+kind = "independent"
+instructions = "Make the disk safe to unplug and take home: nothing mounted, nothing decrypted left open."
+skills = { "j.encryption-concepts" = 1.0 }
+checks = [
+    { type = "not", check = { type = "command_result", user = "root", command = "findmnt /mnt/offsite", status = 0 } },
+    { type = "command_result", user = "root", command = "cryptsetup status offsite", stdout_contains = "inactive" },
+    { type = "command_result", user = "root", setup = ["cryptsetup open --key-file /root/recovery.key /dev/sdb check", "mkdir -p /mnt/check", "mount /dev/mapper/check /mnt/check"], command = "ls /mnt/check/records | wc -l", stdout_equals = "40" },
+]
+hints = ["Unmount first, then close the container — in that order.", "cryptsetup close refuses while the filesystem is still mounted.", "sudo umount /mnt/offsite && sudo cryptsetup close offsite"]
+explanation = "After close only ciphertext and the LUKS header remain. The last check opened the disk with the recovery key — the copy is there."
+
+[[task]]
+id = "threat"
+title = "What it protects against"
+kind = "explanation"
+instructions = "The colleague asks whether the encrypted disk would also have helped against ransomware on the server."
+skills = { "j.encryption-concepts" = 1.0 }
+question = { prompt = "What is right?", type = "choice", choices = ["Yes: encrypted data cannot be encrypted again", "No: disk encryption protects data at rest — a lost or stolen disk. While the container is open, every program on the server sees the plain data, ransomware included", "Only if the passphrase is long", "Yes, as long as the disk is mounted read-only"], answer = 1 }
+hints = ["When is the data readable?", "Encryption at rest protects a closed container.", "Answer (b): an offline (closed, unplugged) copy is what protects backups from ransomware."]
+explanation = "LUKS protects against physical loss and theft. Against attackers on a running system it does nothing while open — there the protection is that the off-site disk is closed and unplugged most of the time."
+
+[debrief]
+summary = """
+cryptsetup luksFormat (destroys data) → open NAME → mkfs/mount /dev/mapper/NAME → umount →
+close. Keep more than one key slot (luksAddKey) and keep the recovery key safe; luksDump shows
+the slots. Encryption at rest protects lost disks, not running systems.
+"""
+alternatives = ["/etc/crypttab (NAME DEVICE KEYFILE|none luks) opens containers at boot", "cryptsetup luksHeaderBackup — a header backup, stored safely, saves a disk whose header gets damaged", "Fedora/Ubuntu installers offer LUKS for the whole system (unlocked at boot)"]
+pitfalls = ["luksFormat on the wrong device", "mkfs on /dev/sdb instead of /dev/mapper/NAME (it destroys the LUKS header)", "A single passphrase that only one person knows", "Unplugging without umount and close"]
+next = "Chapter J continues with backups."
+
+[[solution]]
+name = "passphrase, rsync, key file"
+steps = [
+    { input = ["letslinux"] },
+    "lsblk",
+    ":answer 2",
+    { input = ["YES", "Offsite-2026!", "Offsite-2026!"] },
+    "sudo cryptsetup luksFormat /dev/sdb",
+    { input = ["Offsite-2026!"] },
+    "sudo cryptsetup open /dev/sdb offsite",
+    "sudo mkfs.ext4 -q /dev/mapper/offsite",
+    "sudo mkdir -p /mnt/offsite",
+    "sudo mount /dev/mapper/offsite /mnt/offsite",
+    "sudo rsync -a /srv/records/ /mnt/offsite/records/",
+    { input = ["Offsite-2026!"] },
+    "sudo cryptsetup luksAddKey /dev/sdb /root/recovery.key",
+    "sudo cryptsetup luksDump /dev/sdb",
+    "sudo umount /mnt/offsite",
+    "sudo cryptsetup close offsite",
+    ":answer 2",
+]
+
+[[solution]]
+name = "batch mode with a key file first"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    "sudo sh -c 'printf %s \"long passphrase here\" | cryptsetup luksFormat -q /dev/sdb -'",
+    "sudo sh -c 'printf %s \"long passphrase here\" | cryptsetup open --key-file - /dev/sdb offsite'",
+    "sudo mkfs.ext4 /dev/mapper/offsite",
+    "sudo mkdir /mnt/offsite",
+    "sudo mount /dev/mapper/offsite /mnt/offsite",
+    "sudo cp -a /srv/records /mnt/offsite/",
+    { input = ["long passphrase here"] },
+    "sudo cryptsetup luksAddKey /dev/sdb /root/recovery.key",
+    "sudo umount /mnt/offsite",
+    "sudo cryptsetup luksClose offsite",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "unplugged while open"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    { input = ["YES", "Offsite-2026!", "Offsite-2026!"] },
+    "sudo cryptsetup luksFormat /dev/sdb",
+    { input = ["Offsite-2026!"] },
+    "sudo cryptsetup open /dev/sdb offsite",
+    "sudo mkfs.ext4 -q /dev/mapper/offsite",
+    "sudo mkdir -p /mnt/offsite",
+    "sudo mount /dev/mapper/offsite /mnt/offsite",
+    "sudo rsync -a /srv/records/ /mnt/offsite/records/",
+    { input = ["Offsite-2026!"] },
+    "sudo cryptsetup luksAddKey /dev/sdb /root/recovery.key",
+    "sudo umount /mnt/offsite",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "no recovery key"
+steps = [
+    { input = ["letslinux"] },
+    ":answer 2",
+    { input = ["YES", "Offsite-2026!", "Offsite-2026!"] },
+    "sudo cryptsetup luksFormat /dev/sdb",
+    { input = ["Offsite-2026!"] },
+    "sudo cryptsetup open /dev/sdb offsite",
+    "sudo mkfs.ext4 -q /dev/mapper/offsite",
+    "sudo mkdir -p /mnt/offsite",
+    "sudo mount /dev/mapper/offsite /mnt/offsite",
+    "sudo rsync -a /srv/records/ /mnt/offsite/records/",
+    "sudo umount /mnt/offsite",
+    "sudo cryptsetup close offsite",
+    ":answer 2",
+]

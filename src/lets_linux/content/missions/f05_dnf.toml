@@ -1,0 +1,140 @@
+schema = 1
+
+[mission]
+id = "f05-dnf"
+title = "Same Job, Other Tools: Fedora"
+chapter = "F"
+kind = "lesson"
+order = 7
+difficulty = 3
+requires = ["f01-installing-software"]
+skills = ["f.dnf-basics", "f.search-info", "f.file-ownership"]
+review_for = ["h.enable-disable"]
+xp = 140
+estimated_minutes = 20
+
+[briefing]
+context = """
+You know apt. This server runs Fedora, where packages are RPMs and the package manager is
+dnf. Set up the small web server the team needs and answer a few questions about the
+installed software — the Fedora way. (sudo password: letslinux)
+"""
+concept = """
+dnf corresponds to apt: dnf search WORD, dnf info PKG, sudo dnf install PKG, sudo dnf remove
+PKG, sudo dnf upgrade, dnf check-upgrade, dnf list --installed. Finding packages by file:
+dnf provides /usr/bin/NAME (also for files of packages that are not installed). rpm is the
+low-level tool, like dpkg: rpm -q PKG (version), rpm -qi (info), rpm -ql (files),
+rpm -qc (configuration files), rpm -qf FILE (owner). One important difference: Fedora
+installs services but does not start or enable them — that is up to you (systemctl enable
+--now). dnf asks "Is this ok [y/N]" — the default is no.
+"""
+objectives = ["Find a package by file name", "Install and remove with dnf", "Query versions and files with rpm", "Enable a freshly installed service"]
+
+[environment]
+profile = "fedora"
+
+[[task]]
+id = "provides"
+title = "Who has tree?"
+kind = "guided"
+instructions = "The command tree is missing. Ask dnf which package provides /usr/bin/tree."
+skills = { "f.dnf-basics" = 1.0, "f.search-info" = 1.0 }
+question = { prompt = "Package name?", type = "exact", accept = ["tree"] }
+hints = ["dnf has a subcommand that searches by file.", "dnf provides /usr/bin/tree", "tree (the line starts with tree-2.1.1-…)."]
+explanation = "dnf provides works for any file path, installed or not — the equivalent of apt-file search on Debian."
+
+[[task]]
+id = "install"
+title = "Install"
+kind = "guided"
+instructions = "Install tree and nginx."
+skills = { "f.dnf-basics" = 1.0 }
+checks = [
+    { type = "package_state", name = "tree", state = "installed" },
+    { type = "package_state", name = "nginx", state = "installed" },
+]
+hints = ["sudo dnf install PKG…", "Answer y at 'Is this ok [y/N]' — or add -y.", "sudo dnf install -y tree nginx"]
+explanation = "Both are installed. Is nginx running?"
+
+[[task]]
+id = "service"
+title = "Not started on Fedora"
+kind = "independent"
+instructions = "Make nginx run now and start at every boot."
+skills = { "f.dnf-basics" = 1.0, "h.enable-disable" = 0.5 }
+checks = [
+    { type = "unit_state", unit = "nginx.service", active = "active" },
+    { type = "unit_enabled", unit = "nginx.service", state = "enabled" },
+    { type = "port_listening", port = 80 },
+]
+hints = ["systemctl status nginx shows it is installed but inactive and disabled.", "One systemctl command can enable and start.", "sudo systemctl enable --now nginx"]
+explanation = "On Debian the package would have started and enabled nginx itself; Fedora leaves the decision to the administrator."
+
+[[task]]
+id = "query"
+title = "Ask rpm"
+kind = "independent"
+instructions = "Find out which package installed the program /usr/bin/ss."
+skills = { "f.file-ownership" = 1.0, "f.dnf-basics" = 0.5 }
+question = { prompt = "Package name (without version)?", type = "exact", accept = ["iproute"] }
+hints = ["rpm has a query mode for files.", "rpm -qf /usr/bin/ss", "iproute — Debian calls the same software iproute2."]
+explanation = "Package names differ between families even for the same software — a constant source of confusion when following instructions for another distribution."
+
+[[task]]
+id = "remove"
+title = "Clean up"
+kind = "guided"
+instructions = "tree was only needed once. Remove it again."
+skills = { "f.dnf-basics" = 1.0 }
+checks = [{ type = "package_state", name = "tree", state = "absent" }, { type = "package_state", name = "nginx", state = "installed" }]
+hints = ["The opposite of install.", "sudo dnf remove tree", "sudo dnf remove -y tree"]
+explanation = "dnf remove also removes dependencies that were installed only for tree and are no longer needed (clean_requirements_on_remove)."
+
+[debrief]
+summary = """
+apt ↔ dnf: install/remove/upgrade/search/info are the same verbs; apt-file search ↔ dnf
+provides; dpkg -L/-S ↔ rpm -ql/-qf. Fedora does not enable services on install.
+"""
+alternatives = ["dnf repoquery -l PKG lists files of packages that are not installed", "yum is an alias for dnf on Fedora and RHEL"]
+pitfalls = ["Expecting a service to run after dnf install.", "Using Debian package names (iproute2, dnsutils) on Fedora."]
+next = "Next: the same on Arch Linux."
+
+[[solution]]
+name = "dnf and systemctl"
+steps = [
+    "dnf provides /usr/bin/tree",
+    ":answer tree",
+    { input = ["letslinux"] },
+    "sudo dnf install -y tree nginx",
+    "sudo systemctl enable --now nginx",
+    "rpm -qf /usr/bin/ss",
+    ":answer iproute",
+    "sudo dnf remove -y tree",
+]
+
+[[solution]]
+name = "confirm interactively"
+steps = [
+    "dnf search tree",
+    ":answer tree",
+    { input = ["letslinux", "y"] },
+    "sudo dnf install tree",
+    { input = ["y"] },
+    "sudo dnf install nginx",
+    "sudo systemctl start nginx",
+    "sudo systemctl enable nginx",
+    "rpm -qf $(which ss)",
+    ":answer iproute",
+    { input = ["y"] },
+    "sudo dnf remove tree",
+]
+
+[[counterexample]]
+name = "install only"
+steps = [
+    ":answer tree",
+    { input = ["letslinux"] },
+    "sudo dnf install -y tree nginx",
+    ":answer iproute",
+    "sudo dnf remove -y tree",
+]

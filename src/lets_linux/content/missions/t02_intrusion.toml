@@ -1,0 +1,277 @@
+schema = 1
+
+[mission]
+id = "t02-intrusion"
+title = "Capstone: The Intrusion"
+chapter = "T"
+kind = "capstone"
+order = 2
+difficulty = 7
+requires = ["l08-incident-response", "l07-suspicious-process", "m01-what-changed"]
+skills = ["t.security-incident", "l.incident-response", "m.evidence-correlation", "l.audit-logging", "l.account-security"]
+review_for = ["l.incident-response", "m.evidence-correlation", "l.account-security"]
+xp = 420
+estimated_minutes = 60
+sequential = false
+
+[briefing]
+context = """
+02:40. The monitoring host noticed this Debian web server (web1) making an outbound
+connection to {{attacker}}:{{port}} and a sudden spike in CPU. Treat it as a confirmed
+break-in. The shop's site (nginx) and its order API should keep running, but the attacker
+must be cut off and every way back removed. Do not reboot — a process and its connection are
+live evidence — and do not delete the logs. When you are done the incident manager will ask
+how they got in. (sudo password: letslinux)
+"""
+concept = """
+A capstone incident: no steps are given. Work the phases in order — identify, contain,
+eradicate, recover — and contain before you clean up, or an attacker with a live shell
+simply re-plants what you remove. Evidence lives in /var/log/auth.log (sshd Accepted/Failed,
+sudo COMMAND=), /var/log/nginx, last/lastb, ss -tnp, /proc/PID, /etc/passwd (awk -F: '$3==0'
+lists every UID-0 account), authorized_keys files, crontabs and systemd timers. A real
+attacker leaves more than one door: expect a privileged account, a key, and something that
+restarts their tool.
+"""
+objectives = ["Reconstruct the entry and the timeline from several logs", "Contain the live attacker", "Find and remove every persistence mechanism", "Keep the legitimate services and access working", "Explain the root cause"]
+
+[environment]
+profile = "debian"
+packages = ["nginx", "cron"]
+
+[environment.vars]
+attacker = { choices = ["203.0.113.77", "198.51.100.66", "192.0.2.143"] }
+port = { choices = ["4444", "9001", "1337"] }
+backdoor = { choices = ["sysupdate", "netsvc", "dbus-monitor"] }
+
+[[environment.setup]]
+action = "run"
+command = "useradd -m -s /bin/bash -c 'Deploy bot' deploy && echo 'deploy:deploy' | chpasswd && mkdir -p /home/deploy/.ssh && chown -R deploy:deploy /home/deploy/.ssh && chmod 700 /home/deploy/.ssh"
+
+# Persistence 1: a second UID-0 account the attacker added
+[[environment.setup]]
+action = "run"
+command = "useradd -o -u 0 -g 0 -M -d /root -s /bin/bash {{backdoor}} && echo '{{backdoor}}:x7Kpoem19Z' | chpasswd"
+
+# Persistence 2: the attacker's key in root's and deploy's authorized_keys
+[[environment.setup]]
+action = "run"
+command = "mkdir -p /root/.ssh && printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINv6p2Q8rk3pXm0bQ1cJ8wZ5tH9nF2eX4uD7vA0bC1dE attacker@{{attacker}}\\n' | tee -a /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys && chown deploy:deploy /home/deploy/.ssh/authorized_keys"
+
+# Persistence 3: a cron job that re-launches the implant
+[[environment.setup]]
+action = "file"
+path = "/opt/.cache/run"
+mode = "0755"
+content = """#!/bin/sh
+pgrep -f /opt/.cache/agent >/dev/null && exit 0
+/opt/.cache/agent {{port}} >/dev/null 2>&1 &
+"""
+
+[[environment.setup]]
+action = "run"
+command = "cp /usr/bin/sleep /opt/.cache/agent && chmod 755 /opt/.cache/agent && echo '*/10 * * * * /opt/.cache/run' > /etc/cron.d/cache-sync && chmod 644 /etc/cron.d/cache-sync"
+
+# The live implant: a process connected to the attacker
+[[environment.setup]]
+action = "process"
+comm = "agent"
+argv = ["/opt/.cache/agent", "{{port}}"]
+user = "root"
+cwd = "/opt/.cache"
+cpu = 180.0
+age_minutes = 150
+exe = "/opt/.cache/agent"
+connect = ["{{attacker}}:{{port}}"]
+
+# The timeline: brute force, then a successful deploy login and sudo abuse
+[[environment.setup]]
+action = "ssh_logins"
+entries = [
+    { user = "learner", from = "10.0.2.20", ago = 1400, duration = 40 },
+    { user = "root", from = "{{attacker}}", ago = 180, failures = 8, success = false },
+    { user = "admin", from = "{{attacker}}", ago = 176, failures = 5, success = false },
+    { user = "deploy", from = "{{attacker}}", ago = 170, failures = 3, duration = 95, sudo = [
+        "/usr/bin/id",
+        "/usr/sbin/useradd -o -u 0 -g 0 -M -d /root -s /bin/bash {{backdoor}}",
+        "/usr/bin/tee -a /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys",
+        "/usr/bin/tee /etc/cron.d/cache-sync",
+    ] },
+]
+
+[[environment.setup]]
+action = "run"
+command = "echo 'deploy ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/deploy && chmod 440 /etc/sudoers.d/deploy"
+
+[[task]]
+id = "entry"
+title = "How did they get in?"
+kind = "guided"
+instructions = "Read /var/log/auth.log. Several accounts were tried from one address; one login succeeded. Which account did the attacker use?"
+skills = { "t.security-incident" = 1.0, "l.incident-response" = 1.0, "m.evidence-correlation" = 1.0 }
+question = { prompt = "Which account did the attacker log in as?", type = "exact", accept = ["deploy"] }
+hints = ["sudo grep -E 'Accepted|Failed' /var/log/auth.log", "The brute force hit root and admin and failed; one 'Accepted password' line names the account that got in.", "The deploy account — and its password was 'deploy'."]
+explanation = "Failed attempts on root and admin from {{attacker}}, then an Accepted password for deploy: a weak password on a sudo-capable account was the way in."
+
+[[task]]
+id = "what"
+title = "What did they do with root?"
+kind = "guided"
+instructions = "From the same log, find what deploy ran through sudo. Those COMMAND= lines are the attacker's actions as root."
+skills = { "t.security-incident" = 1.0, "l.audit-logging" = 1.0 }
+question = { prompt = "What kind of account did they create with useradd?", type = "choice", choices = ["A normal user", "A second UID-0 account (useradd -o -u 0): a hidden root account", "A service account with nologin", "No account — only a cron job"], answer = 1 }
+hints = ["sudo grep COMMAND= /var/log/auth.log", "Look at the useradd options: -o -u 0 -g 0.", "A UID-0 account is root under another name."]
+explanation = "sudo logged every command: id, a UID-0 useradd, appends to authorized_keys, and a new /etc/cron.d file. Each is a door to close."
+
+[[task]]
+id = "contain"
+title = "Cut them off"
+kind = "troubleshooting"
+instructions = """
+Stop the live attack now: block the attacker's address, end the implant process, and lock
+the abused deploy account — before you start cleaning up. The implant must not be running
+and the connection to {{attacker}} must be gone.
+"""
+skills = { "t.security-incident" = 1.0, "l.incident-response" = 1.0, "l.account-security" = 1.0 }
+checks = [
+    { type = "process_absent", comm = "agent" },
+    { type = "command_result", user = "root", command = "ss -tnp | grep -c {{attacker}}", stdout_equals = "0" },
+    { type = "command_result", user = "root", command = "passwd -S deploy | awk '{print $2}'", stdout_equals = "L" },
+]
+persistent = true
+hints = [
+    "Find the implant first: sudo ss -tnp | grep {{port}}, then its PID, then sudo kill it.",
+    "Lock the account so the attacker's password stops working: sudo passwd -l deploy (or usermod -L).",
+    "Block the source: sudo nft add rule inet filter input ip saddr {{attacker}} drop (create the table/chain first if needed) — or iptables.",
+]
+explanation = "Containment before eradication: a locked account and a killed session mean the attacker cannot re-plant what you are about to remove."
+
+[[task]]
+id = "eradicate"
+title = "Close every door"
+kind = "troubleshooting"
+instructions = """
+Remove everything the attacker left so they cannot return: the hidden root account, their
+SSH keys in every authorized_keys, the cron persistence and the implant on disk. When you
+are done, no UID-0 account but root may remain, and nothing may re-launch the agent.
+"""
+skills = { "t.security-incident" = 1.0, "l.incident-response" = 1.0, "l.account-security" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "awk -F: '$3 == 0 {print $1}' /etc/passwd | sort | tr '\\n' ' '", stdout_equals = "root " },
+    { type = "command_result", user = "root", command = "grep -rl attacker /root/.ssh /home/*/.ssh 2>/dev/null | wc -l", stdout_equals = "0" },
+    { type = "command_result", user = "root", command = "test -e /etc/cron.d/cache-sync && echo present || echo gone", stdout_equals = "gone" },
+    { type = "command_result", user = "root", command = "test -e /opt/.cache/agent && echo present || echo gone", stdout_equals = "gone" },
+    { type = "command_result", user = "root", command = "crontab -l -u root 2>/dev/null | grep -c cache || true; ls /etc/cron.d | grep -c cache || true", stdout_regex = "^0\\n?0?$" },
+]
+persistent = true
+hints = [
+    "Hidden account: awk -F: '$3 == 0' /etc/passwd shows it; sudo userdel -f {{backdoor}} (a UID-0 account shares root's UID, so userdel needs -f).",
+    "Keys: edit or remove the attacker line from /root/.ssh/authorized_keys and /home/deploy/.ssh/authorized_keys (grep -rl attacker /root/.ssh /home/*/.ssh).",
+    "Persistence and tool: sudo rm /etc/cron.d/cache-sync /opt/.cache/run /opt/.cache/agent.",
+]
+explanation = "A single missed key or cron line is enough to let the attacker back in; that is why eradication is a checklist, verified, not a guess."
+
+[[task]]
+id = "recover"
+title = "Still serving, properly secured"
+kind = "troubleshooting"
+instructions = """
+Recovery: the shop must still work (nginx serves http://localhost/), and deploy should be
+usable again — but by key, not by its guessable password. Leave its password locked, install
+a legitimate deploy key in /home/deploy/.ssh/authorized_keys, and take away its blanket
+NOPASSWD sudo (remove the rule or scope it). Confirm nginx is up.
+"""
+skills = { "t.security-incident" = 1.0, "l.account-security" = 1.0 }
+checks = [
+    { type = "unit_state", unit = "nginx.service", active = "active", sub = "running" },
+    { type = "command_result", user = "root", command = "cat /etc/sudoers.d/deploy 2>/dev/null | grep -c 'NOPASSWD: ALL'", stdout_equals = "0" },
+    { type = "command_result", user = "root", command = "test -s /home/deploy/.ssh/authorized_keys && echo yes || echo no", stdout_equals = "yes" },
+    { type = "command_result", user = "root", command = "passwd -S deploy | awk '{print $2}'", stdout_equals = "L" },
+]
+persistent = true
+hints = [
+    "nginx should never have stopped; if it did, start it. systemctl status nginx.",
+    "Keys beat passwords: keep the password locked (passwd -l deploy), add deploy's real public key to /home/deploy/.ssh/authorized_keys (owned by deploy, mode 600).",
+    "Remove /etc/sudoers.d/deploy, or replace it with a scoped rule such as 'deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart nginx'.",
+]
+explanation = "Recovery closes the original weakness (a guessable password on an over-privileged account) by switching to key authentication and least-privilege sudo — without breaking the service deploy exists to run."
+
+[[task]]
+id = "rootcause"
+title = "The report"
+kind = "explanation"
+instructions = "The incident manager asks for the one-line root cause."
+skills = { "t.security-incident" = 1.0, "m.evidence-correlation" = 1.0 }
+question = { prompt = "Which is the honest root cause?", type = "choice", choices = ["nginx had a vulnerability", "A weak password ('deploy') on the deploy account, which also had passwordless sudo, let a brute-force attacker log in and become root", "The kernel was out of date", "The firewall was disabled"], answer = 1 }
+hints = ["What let the attacker in, per auth.log, and what let them become root?", "The entry was a password guess; the escalation was NOPASSWD sudo.", "Answer (b)."]
+explanation = "The fix is both: strong authentication (keys, no password login) and least privilege (scoped sudo), plus brute-force protection (fail2ban, no password SSH)."
+
+[debrief]
+summary = """
+Incident response end to end: identify (auth.log, sudo COMMAND=, the live connection),
+contain (block, kill, lock) before eradicate (hidden UID-0 account, keys, cron, implant),
+then recover (keep services, close the weakness). Attackers plant several doors — find all
+of them, and verify.
+"""
+alternatives = ["chattr +i on authorized_keys and tripwire/AIDE to detect future tampering", "fail2ban to stop password brute force; PasswordAuthentication no in sshd", "A scoped sudoers rule (deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart shop) instead of ALL"]
+pitfalls = ["Cleaning up before cutting the attacker off", "Removing one authorized_keys but not the other", "Leaving the hidden UID-0 account or the cron job", "Deleting logs (the evidence)"]
+next = "Last capstone: building a server to specification."
+
+[[solution]]
+name = "phases in order"
+steps = [
+    { input = ["letslinux"] },
+    "sudo grep -E 'Accepted|Failed password' /var/log/auth.log",
+    ":answer deploy",
+    "sudo grep COMMAND= /var/log/auth.log",
+    ":answer 2",
+    "sudo ss -tnp | grep {{port}}",
+    "sudo pkill -f /opt/.cache/agent",
+    "sudo passwd -l deploy",
+    "sudo nft add table inet filter",
+    "sudo nft add chain inet filter input '{ type filter hook input priority 0; }'",
+    "sudo nft add rule inet filter input ip saddr {{attacker}} drop",
+    "sudo userdel -f {{backdoor}}",
+    "sudo sed -i '/attacker@/d' /root/.ssh/authorized_keys /home/deploy/.ssh/authorized_keys",
+    "sudo rm -f /etc/cron.d/cache-sync /opt/.cache/run /opt/.cache/agent",
+    "awk -F: '$3 == 0' /etc/passwd",
+    "printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGnewdeploykeyForCIpipeline0000000000000000000 ci@build\\n' | sudo tee /home/deploy/.ssh/authorized_keys",
+    "sudo chown deploy:deploy /home/deploy/.ssh/authorized_keys && sudo chmod 600 /home/deploy/.ssh/authorized_keys",
+    "sudo rm -f /etc/sudoers.d/deploy",
+    "sudo systemctl status nginx",
+    ":answer 2",
+]
+
+[[solution]]
+name = "usermod, iptables, userdel -r"
+steps = [
+    { input = ["letslinux"] },
+    ":answer deploy",
+    ":answer 2",
+    "PID=$(sudo ss -tnp | awk -F'pid=' '/{{port}}/ {print $2}' | cut -d, -f1); sudo kill \"$PID\"",
+    "sudo usermod -L deploy",
+    "sudo nft add table inet filter; sudo nft add chain inet filter input '{ type filter hook input priority 0; policy accept; }'; sudo nft add rule inet filter input ip saddr {{attacker}} drop",
+    "sudo userdel -f {{backdoor}}",
+    "sudo sed -i '/attacker@/d' /home/deploy/.ssh/authorized_keys",
+    "sudo sed -i '/attacker@/d' /root/.ssh/authorized_keys",
+    "sudo rm /etc/cron.d/cache-sync",
+    "sudo rm /opt/.cache/run /opt/.cache/agent",
+    "printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGnewdeploykeyForCIpipeline0000000000000000000 ci@build\\n' | sudo tee /home/deploy/.ssh/authorized_keys",
+    "sudo chown deploy:deploy /home/deploy/.ssh/authorized_keys",
+    "printf 'deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart nginx\\n' | sudo tee /etc/sudoers.d/deploy",
+    "sudo systemctl restart nginx",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "cleaned up before containing, missed a key"
+steps = [
+    { input = ["letslinux"] },
+    ":answer deploy",
+    ":answer 2",
+    "sudo userdel -f {{backdoor}}",
+    "sudo rm /etc/cron.d/cache-sync /opt/.cache/run /opt/.cache/agent",
+    "sudo sed -i '/attacker@/d' /root/.ssh/authorized_keys",
+    "sudo passwd -l deploy",
+    "sudo pkill -f /opt/.cache/agent",
+    ":answer 2",
+]
