@@ -23,6 +23,27 @@ exact command you typed, so any valid approach counts.
 
 > Nothing you type in the game ever runs on your real computer.
 
+## Security & File Integrity
+
+The official release of Let's Linux includes a VirusTotal scan report and SHA-256 checksum for transparency and download verification.
+
+- **VirusTotal Scan:** [View Scan Results](https://www.virustotal.com/gui/file/dd2bf8609471b306165ed5215c6e2676915f0fec8df0e5f9d92123807665088b)
+- **SHA-256:** `dd2bf8609471b306165ed5215c6e2676915f0fec8df0e5f9d92123807665088b`
+
+### Verify Your Download
+
+**Linux:**
+```bash
+sha256sum lets-linux-v1.zip
+```
+
+**Windows (PowerShell):**
+```powershell
+Get-FileHash .\lets-linux-v1.zip -Algorithm SHA256
+```
+
+Compare the resulting SHA-256 hash against the published checksum above to verify that your downloaded file matches the official release.
+
 ## Contents
 
 - [About this release](#about-this-release)
