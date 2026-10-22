@@ -26,7 +26,7 @@ approach counts.
 
 ---
 
-##  Features
+## ✨ Features
 
 - **A coherent simulated Linux machine** — files, permissions, users and sudo, processes and
   signals, systemd services, packages, networking (routes, DNS, firewalls, TLS, SSH), disks,
@@ -34,14 +34,14 @@ approach counts.
   everything after it.
 - **A real shell** — pipes, redirection, variables, quoting, loops, functions, scripts and
   `set -euo pipefail`, with the error messages and exit codes you will see on a real system.
-- **130 missions across 20 chapters** — from your very first terminal session to
+- **157 missions across 20 chapters** — from your very first terminal session to
   troubleshooting, security, automation, specialist paths and three capstone scenarios
   (a multi-fault outage, an intrusion, a server build-out). All 218 skills of the
   curriculum are covered.
 - **Mastery, not XP** — your skill level comes from what you solved on your own. Hints are
   there when you need them but are tracked separately; *Mastered* means you solved it again
   later, in a different situation. Spaced review brings skills back before you forget them.
-- **Skill checks** — already know the basics? 11 placement tests let you prove it and skip
+- **Skill checks** — already know the basics? 19 placement tests let you prove it and skip
   ahead.
 - **Progress & recommendations** — see your strong and weak areas and what to do next.
   Updates keep your progress.
@@ -49,7 +49,7 @@ approach counts.
   reduced-motion mode, high-contrast theme and a plain line mode for screen readers.
 - **Debian, Ubuntu, Fedora and Arch flavours** — learn how distributions differ.
 
-##  Quick start
+## 🚀 Quick start
 
 ```sh
 ./install.sh
@@ -66,16 +66,19 @@ That's it. The installer needs no internet connection — everything the game ne
 
 On **Windows**? See [Windows (WSL)](#-windows-wsl) below.
 
-##  Requirements
+## 📋 Requirements
 
 - Linux — or Windows 10/11 through WSL (see [below](#-windows-wsl))
-- Python 3.11 or newer, with its `venv` module
+- Python 3.11 or newer, with its `venv` module — installed for you if it is missing
 
-If Python (or `venv`) is missing, the installer offers to install it with your package
-manager (`apt`, `dnf`, `pacman` or `zypper`) — the only time it asks for your sudo password.
-The game itself never needs root.
+You don't need to install anything first: if Python 3.11+ (or its `venv` module) is
+missing, `./install.sh` installs it with your package manager (`apt`, `dnf`, `zypper`,
+`pacman` or `apk`) — the only time it asks for your sudo password. When your
+distribution's default Python is too old (for example Ubuntu 22.04's 3.10), it installs a
+newer one the distribution offers (such as `python3.11`). It notes which packages it added,
+so the uninstaller can remove them again. The game itself never needs root.
 
-##  Windows (WSL)
+## 🪟 Windows (WSL)
 
 Let's Linux runs on Windows inside **WSL** (Windows Subsystem for Linux), which gives you a
 real Linux system in a window — handy, because you can practise what you learn there too.
@@ -114,12 +117,13 @@ window. Removing WSL itself is a separate, optional step (Windows *Settings → 
 > been developed and tested on Linux; WSL runs a standard Ubuntu, but has not yet been
 > tested by us. Native Windows (without WSL) is not supported.
 
-##  Playing
+## 🎮 Playing
 
 | Command | What it does |
 |---|---|
 | `lets-linux` | Start the game (full-screen; falls back to plain mode on simple terminals) |
-| `lets-linux --plain` | Plain line mode — also the best choice with a screen reader |
+| `lets-linux --plain` | Plain line mode |
+| `lets-linux --screen-reader` | Plain, linear text for screen readers: no colours, block letters or boxes |
 | `lets-linux sandbox` | A free-play shell on a persistent simulated machine |
 | `lets-linux report` | Your progress as text |
 | `lets-linux --help` | All options |
@@ -138,7 +142,7 @@ Inside the game:
 
 The simulated `sudo` password is `letslinux`.
 
-##  What gets installed where
+## 📁 What gets installed where
 
 Everything is installed for your user only:
 
@@ -152,7 +156,7 @@ Everything is installed for your user only:
 
 Once installed, the game does not need this folder any more — you can delete it.
 
-##  Updating to a new release
+## 🔄 Updating to a new release
 
 You do **not** need to uninstall first, and your progress and settings are kept.
 
@@ -182,17 +186,20 @@ may start that mission fresh instead.
 
 > Do not use `lets-linux-uninstall --purge` to update: `--purge` deletes your progress.
 
-##  Uninstall
+## 🗑️ Uninstall
 
 ```sh
-lets-linux-uninstall              # asks first; keeps your progress unless you say otherwise
-lets-linux-uninstall --purge      # also delete progress and settings
+lets-linux-uninstall                  # asks first; keeps your progress unless you say otherwise
+lets-linux-uninstall --purge          # also delete progress and settings
+lets-linux-uninstall --keep-packages  # leave the Python the installer added
 ```
 
 (or `./uninstall.sh` from this folder). It removes exactly what the installer created — your
-shell startup files are restored byte for byte.
+shell startup files are restored byte for byte. If the installer had to install Python, the
+uninstaller removes those packages too — but only the ones the installer added, and only when
+your package manager confirms that nothing else on the system still needs them.
 
-##  Troubleshooting
+## 🛠️ Troubleshooting
 
 - **`lets-linux: command not found`** — open a new terminal (or run `exec $SHELL -l`) so your
   shell picks up the new `PATH`. You can always start it directly with `~/.local/bin/lets-linux`.
@@ -202,18 +209,22 @@ shell startup files are restored byte for byte.
   (usually from Git for Windows). Get the release again inside Ubuntu, or run
   `sed -i 's/\r$//' install.sh uninstall.sh` and try again.
 - **Windows: `Permission denied` running `./install.sh`** — run `bash install.sh` instead.
+- **"a file in wheels/ is damaged or was changed"** — the download is incomplete or was
+  altered. Download the release again (the installer checks every file against
+  `wheels/SHA256SUMS` and installs nothing until they all match).
 - **Garbled block letters or boxes** — your terminal is not using UTF-8. Switch it to UTF-8,
   or play with `lets-linux --plain`, which falls back to plain ASCII.
 
-##  Privacy & safety
+## 🔒 Privacy & safety
 
 - No account, no network access, no telemetry — the game works completely offline.
+- Your progress and settings are readable by your account only.
 - Your commands run only inside the simulator: it never executes them on your computer and
   cannot read or change your real files.
 - The simulator models a documented subset of Linux and Bash. It teaches transferable
   skills, but it is not a real machine — practise on a real (virtual) Linux system too.
 
-##  License
+## 📄 License
 
 MIT — see [LICENSE](LICENSE).
 
