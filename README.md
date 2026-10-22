@@ -51,7 +51,7 @@ approach counts.
   reduced-motion mode, high-contrast theme and a plain line mode for screen readers.
 - **Debian, Ubuntu, Fedora and Arch flavours** — learn how distributions differ.
 
-## 🚀 Quick start
+##  Quick start
 
 ```sh
 ./install.sh
