@@ -1,3 +1,5 @@
+V1 should be going live tomorrow. need to run a few more tests as well as do a security audit. V1.0 package will be uploaded to virustotal with links to results as well as file hash of zip release
+
 ```
 ██╗     ███████╗████████╗██╗███████╗   ██╗     ██╗███╗   ██╗██╗   ██╗██╗  ██╗
 ██║     ██╔════╝╚══██╔══╝╚█║██╔════╝   ██║     ██║████╗  ██║██║   ██║╚██╗██╔╝
@@ -26,7 +28,7 @@ approach counts.
 
 ---
 
-## ✨ Features
+##  Features
 
 - **A coherent simulated Linux machine** — files, permissions, users and sudo, processes and
   signals, systemd services, packages, networking (routes, DNS, firewalls, TLS, SSH), disks,
@@ -66,7 +68,7 @@ That's it. The installer needs no internet connection — everything the game ne
 
 On **Windows**? See [Windows (WSL)](#-windows-wsl) below.
 
-## 📋 Requirements
+##  Requirements
 
 - Linux — or Windows 10/11 through WSL (see [below](#-windows-wsl))
 - Python 3.11 or newer, with its `venv` module — installed for you if it is missing
@@ -78,7 +80,7 @@ distribution's default Python is too old (for example Ubuntu 22.04's 3.10), it i
 newer one the distribution offers (such as `python3.11`). It notes which packages it added,
 so the uninstaller can remove them again. The game itself never needs root.
 
-## 🪟 Windows (WSL)
+##  Windows (WSL)
 
 Let's Linux runs on Windows inside **WSL** (Windows Subsystem for Linux), which gives you a
 real Linux system in a window — handy, because you can practise what you learn there too.
@@ -117,7 +119,7 @@ window. Removing WSL itself is a separate, optional step (Windows *Settings → 
 > been developed and tested on Linux; WSL runs a standard Ubuntu, but has not yet been
 > tested by us. Native Windows (without WSL) is not supported.
 
-## 🎮 Playing
+##  Playing
 
 | Command | What it does |
 |---|---|
@@ -142,7 +144,7 @@ Inside the game:
 
 The simulated `sudo` password is `letslinux`.
 
-## 📁 What gets installed where
+##  What gets installed where
 
 Everything is installed for your user only:
 
@@ -156,7 +158,7 @@ Everything is installed for your user only:
 
 Once installed, the game does not need this folder any more — you can delete it.
 
-## 🔄 Updating to a new release
+##  Updating to a new release
 
 You do **not** need to uninstall first, and your progress and settings are kept.
 
@@ -186,7 +188,7 @@ may start that mission fresh instead.
 
 > Do not use `lets-linux-uninstall --purge` to update: `--purge` deletes your progress.
 
-## 🗑️ Uninstall
+##  Uninstall
 
 ```sh
 lets-linux-uninstall                  # asks first; keeps your progress unless you say otherwise
@@ -199,7 +201,7 @@ shell startup files are restored byte for byte. If the installer had to install 
 uninstaller removes those packages too — but only the ones the installer added, and only when
 your package manager confirms that nothing else on the system still needs them.
 
-## 🛠️ Troubleshooting
+##  Troubleshooting
 
 - **`lets-linux: command not found`** — open a new terminal (or run `exec $SHELL -l`) so your
   shell picks up the new `PATH`. You can always start it directly with `~/.local/bin/lets-linux`.
@@ -215,7 +217,7 @@ your package manager confirms that nothing else on the system still needs them.
 - **Garbled block letters or boxes** — your terminal is not using UTF-8. Switch it to UTF-8,
   or play with `lets-linux --plain`, which falls back to plain ASCII.
 
-## 🔒 Privacy & safety
+##  Privacy & safety
 
 - No account, no network access, no telemetry — the game works completely offline.
 - Your progress and settings are readable by your account only.
@@ -224,7 +226,7 @@ your package manager confirms that nothing else on the system still needs them.
 - The simulator models a documented subset of Linux and Bash. It teaches transferable
   skills, but it is not a real machine — practise on a real (virtual) Linux system too.
 
-## 📄 License
+##  License
 
 MIT — see [LICENSE](LICENSE).
 
