@@ -23,6 +23,9 @@ exact command you typed, so any valid approach counts.
 
 > Nothing you type in the game ever runs on your real computer.
 
+[Download the latest release](https://github.com/saintmicha3l/Lets-Linux/releases/latest)
+V1.1 in development. See: [Issues](https://github.com/saintmicha3l/Lets-Linux/issues)
+
 ## Security & File Integrity
 
 The official release of Let's Linux includes a VirusTotal scan report and SHA-256 checksum for transparency and download verification.
