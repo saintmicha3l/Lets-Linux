@@ -28,6 +28,9 @@ from lets_linux.shell.lexer import (
 )
 
 NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# bash (not in POSIX mode) accepts any unquoted word as a function name except ones with
+# expansions, quotes, "=" or "/": ":" (the fork bomb), "f.x", "a-b", "do-it!"
+FUNC_NAME_RE = re.compile(r"^[^\s$`'\"\\=/]+$")
 #: builtins whose NAME=(...) arguments are array assignments
 DECLARATION_BUILTINS = frozenset({"declare", "typeset", "local", "readonly", "export"})
 ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
@@ -483,7 +486,7 @@ class Parser:
             )
         if target.kind != "WORD":
             raise self._unexpected(target)
-        redirect = ast.Redirect(op, target.value, fd)
+        redirect = ast.Redirect(op, target.value, fd, line=target.line)
         if op in ("<<", "<<-"):
             raw = target.value
             redirect.heredoc_expand = not any(c in raw for c in "'\"\\")
@@ -531,7 +534,11 @@ class Parser:
                     self._unget_to(tok.pos)
                     continue
                 self.advance()
-                if self._is_op(self.peek(), "(") and NAME_RE.match(name.replace("-", "_")):
+                if (
+                    self._is_op(self.peek(), "(")
+                    and FUNC_NAME_RE.match(name)
+                    and not name.isdigit()
+                ):
                     after = self.peek()
                     self.advance()
                     if not self._is_op(self.peek(), ")"):

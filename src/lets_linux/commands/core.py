@@ -20,6 +20,7 @@ from lets_linux.filesystem import FsError
 from lets_linux.filesystem.paths import basename as path_basename
 from lets_linux.filesystem.paths import dirname as path_dirname
 from lets_linux.filesystem.paths import normalize
+from lets_linux.systems.clock import localtime
 from lets_linux.textproc.printf import format_printf, process_escapes
 from lets_linux.textproc.regex import RegexError, compile_bre
 
@@ -605,7 +606,11 @@ def date(ctx: CommandContext) -> int:
         except FsError as exc:
             ctx.error(f"{a.get('reference')}: {exc.message}")
             return 1
-    stamp = dt.datetime.fromtimestamp(when, tz=dt.UTC)
+    # The system clock runs in UTC; the configured zone (or TZ, or -u) decides how it is shown.
+    zone = "Etc/UTC" if a.flag("utc") else (ctx.env.get("TZ") or ctx.machine.timezone())
+    stamp = localtime(when, zone)
+    off = stamp.strftime("%z")  # e.g. +0000, +0200
+    off_colon = off[:3] + ":" + off[3:]
     fmt_ops = [o for o in a.operands if o.startswith("+")]
     if len(a.operands) > len(fmt_ops):
         extra = next(o for o in a.operands if not o.startswith("+"))
@@ -614,20 +619,20 @@ def date(ctx: CommandContext) -> int:
     if fmt_ops:
         ctx.outln(strftime_gnu(stamp, fmt_ops[0][1:]))
     elif a.flag("rfc_email"):
-        ctx.outln(stamp.strftime("%a, %d %b %Y %H:%M:%S +0000"))
+        ctx.outln(stamp.strftime(f"%a, %d %b %Y %H:%M:%S {off}"))
     elif "iso_8601" in a.values:
         kind = a.get("iso_8601") or "date"
         if kind.startswith("s"):
-            ctx.outln(stamp.strftime("%Y-%m-%dT%H:%M:%S+00:00"))
+            ctx.outln(stamp.strftime(f"%Y-%m-%dT%H:%M:%S{off_colon}"))
         elif kind.startswith("m"):
-            ctx.outln(stamp.strftime("%Y-%m-%dT%H:%M+00:00"))
+            ctx.outln(stamp.strftime(f"%Y-%m-%dT%H:%M{off_colon}"))
         elif kind.startswith("h"):
-            ctx.outln(stamp.strftime("%Y-%m-%dT%H+00:00"))
+            ctx.outln(stamp.strftime(f"%Y-%m-%dT%H{off_colon}"))
         else:
             ctx.outln(stamp.strftime("%Y-%m-%d"))
     else:
         day = str(stamp.day).rjust(2)
-        ctx.outln(stamp.strftime(f"%a %b {day} %H:%M:%S UTC %Y"))
+        ctx.outln(stamp.strftime(f"%a %b {day} %H:%M:%S %Z %Y"))
     return 0
 
 

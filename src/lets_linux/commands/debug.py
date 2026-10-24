@@ -402,8 +402,12 @@ class Gdb:
         self.breakpoints.append(name)
         n = len(self.breakpoints)
         if self.debug and name in code:
+            from lets_linux.toolchain.cruntime import first_line
+
+            # after the prologue: the first statement's line, where the program will stop
+            line = first_line(code[name]["body"]) or code[name]["line"]
             self.out(
-                f"Breakpoint {n} at 0x{0x1149 + n * 0x20:x}: file {code[name]['file']}, line {code[name]['line']}.\n"
+                f"Breakpoint {n} at 0x{0x1149 + n * 0x20:x}: file {code[name]['file']}, line {line}.\n"
             )
         else:
             self.out(f"Breakpoint {n} at 0x{0x1149 + n * 0x20:x}\n")

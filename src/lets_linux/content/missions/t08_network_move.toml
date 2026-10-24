@@ -1,0 +1,280 @@
+schema = 1
+
+[mission]
+id = "t08-network-move"
+title = "Capstone: The Network Move"
+chapter = "T"
+kind = "capstone"
+order = 8
+difficulty = 6
+requires = ["i06-file-transfer", "i07-firewall", "i02-names", "h03-your-own-service"]
+skills = ["t.network-move", "i.file-transfer", "i.firewalls", "i.dns-resolution", "h.enable-disable"]
+review_for = ["i.file-transfer", "i.firewalls", "i.dns-resolution"]
+xp = 460
+estimated_minutes = 60
+sequential = false
+
+[briefing]
+context = """
+The {{shop}} website runs on an old, dying host — web1 (10.0.2.55), reachable as deploy@web1,
+password letslinux. The name shop.example.lan points at it. This machine (10.0.2.15) is its
+replacement. Move the site here: copy its files over with rsync, serve them with nginx, open the
+firewall for HTTP, then — once this host genuinely serves the site — cut the name shop.example.lan
+over to this address so visitors arrive here. Do it in that order: a name that points at a host
+which is not yet serving is an outage. (sudo password: letslinux)
+
+Specification:
+  1. Copy the site content from web1:/var/www/shop to /var/www/shop on this host.
+  2. Serve /var/www/shop with nginx on port 80 — running now and enabled at boot.
+  3. Open port 80 in the firewall so other hosts can reach it.
+  4. Repoint shop.example.lan to this host (10.0.2.15) so the name now resolves here.
+"""
+concept = """
+A service move is a sequence with a safe order. Copy the data first (rsync -a over SSH copies
+only what changed and keeps permissions). Stand the service up on the new host and test it
+locally (curl http://localhost/) before anyone depends on it. Open the firewall for the port
+(ufw allow 80/tcp) — a service nobody can reach is as good as down. Only when the new host truly
+serves the site do you cut the name over: change where shop.example.lan resolves. Here, with no
+editable authoritative DNS server, the cut-over is pinned in /etc/hosts (which the resolver
+consults before DNS — exactly how nsswitch works); in production it is a DNS A-record change.
+Then verify the path to the name (getent hosts, curl by name, traceroute/mtr) leads to the new
+host — and only then retire the old one.
+"""
+objectives = ["Copy a service's data to a new host over SSH", "Serve it with nginx", "Open the firewall for it", "Cut a name over to a new address", "Verify before retiring the old host"]
+
+[environment]
+profile = "debian"
+packages = ["nginx", "ufw", "rsync", "curl", "traceroute"]
+
+[environment.vars]
+shop = { choices = ["Harbor Books", "Maple Grocery", "Yarn and Thread"] }
+
+[[environment.setup]]
+action = "peer"
+name = "web1"
+addresses = ["10.0.2.55"]
+mac = "52:54:00:0a:17:55"
+host = { profile = "debian", user = "deploy", password = "letslinux" }
+services = { 22 = { kind = "ssh", banner = "SSH-2.0-OpenSSH_9.6" } }
+
+[[environment.setup]]
+action = "dns"
+name = "web1.example.lan"
+value = "10.0.2.55"
+
+[[environment.setup]]
+action = "dns"
+name = "shop.example.lan"
+value = "10.0.2.55"
+
+[[environment.setup]]
+action = "remote"
+host = "web1"
+steps = [
+    { action = "file", path = "/var/www/shop/index.html", content = "<html><head><title>{{shop}}</title></head><body><h1>{{shop}}</h1><p>Open daily 8-18.</p></body></html>\n" },
+    { action = "file", path = "/var/www/shop/css/style.css", content = "body { font-family: sans-serif; color: #234; }\n" },
+    { action = "file", path = "/var/www/shop/robots.txt", content = "User-agent: *\nAllow: /\n" },
+    { action = "run", command = "chown -R deploy:deploy /var/www/shop" },
+]
+
+[[task]]
+id = "before"
+title = "Where does the name point now?"
+kind = "troubleshooting"
+instructions = "Before you change anything: where does shop.example.lan resolve today? Ask DNS directly (dig/host) and look at the path (traceroute/mtr)."
+skills = { "t.network-move" = 1.0, "i.dns-resolution" = 1.0 }
+question = { prompt = "Which address does shop.example.lan resolve to right now? (e.g. 10.0.2.x)", type = "regex", accept = ["\\s*10\\.0\\.2\\.55\\s*"] }
+hints = [
+    "dig +short shop.example.lan asks the DNS server directly.",
+    "traceroute shop.example.lan shows the path to that address.",
+    "It points at the old host web1, 10.0.2.55.",
+]
+explanation = "shop.example.lan is a DNS record pointing at web1 (10.0.2.55). Until you change it, every visitor goes to the old host — so the new host must be fully ready before you touch the name."
+
+[[task]]
+id = "copy"
+title = "Copy the site over"
+kind = "independent"
+instructions = "Copy the site content from web1:/var/www/shop to /var/www/shop on this host (deploy@web1, password letslinux)."
+skills = { "t.network-move" = 1.0, "i.file-transfer" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "cat /var/www/shop/index.html", stdout_contains = "{{shop}}" },
+    { type = "path_exists", path = "/var/www/shop/css/style.css" },
+]
+persistent = true
+hints = [
+    "rsync -a copies over SSH and keeps permissions; a trailing slash on the source copies its contents. Pull it to your home first (no sudo needed over SSH), then place it with sudo.",
+    "rsync -a deploy@web1:/var/www/shop/ ~/shop/ — answer yes to the host key, then the password letslinux.",
+    "Then put it in place: sudo mkdir -p /var/www/shop; sudo rsync -a ~/shop/ /var/www/shop/ (or sudo cp -a ~/shop/. /var/www/shop/).",
+]
+explanation = "rsync pulled the whole site over SSH. Copying the data first means the new host has everything it needs before you start the service."
+
+[[task]]
+id = "serve"
+title = "Serve it with nginx"
+kind = "independent"
+instructions = "Make nginx serve /var/www/shop on port 80 — running now and enabled at boot — so that curl http://localhost/ returns the site."
+skills = { "t.network-move" = 1.0, "h.enable-disable" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "curl -s http://localhost/", stdout_contains = "{{shop}}" },
+    { type = "unit_enabled", unit = "nginx.service" },
+    { type = "after_reboot", checks = [{ type = "command_result", user = "root", command = "curl -s http://localhost/", stdout_contains = "{{shop}}" }] },
+]
+persistent = true
+hints = [
+    "Point a server block's root at /var/www/shop and enable it, removing the default site so it does not take port 80.",
+    "Write /etc/nginx/sites-available/shop (root /var/www/shop; index index.html), link it into sites-enabled, rm the default link, then enable and start nginx.",
+    "sudo rm -f /etc/nginx/sites-enabled/default; sudo ln -s /etc/nginx/sites-available/shop /etc/nginx/sites-enabled/ (after writing it); sudo systemctl enable --now nginx; sudo systemctl reload nginx",
+]
+explanation = "nginx serves the copied site on this host. Testing it with curl on localhost — before the name points here — is how you know the new host works without any visitor seeing a half-finished move."
+
+[[task]]
+id = "firewall"
+title = "Open the firewall"
+kind = "independent"
+instructions = "Open port 80 in the firewall so other hosts can reach the site. Keep SSH open too."
+skills = { "t.network-move" = 1.0, "i.firewalls" = 1.0 }
+checks = [
+    { type = "port_open_from", from = "web1", port = 80 },
+    { type = "command_result", user = "root", command = "ufw status", stdout_contains = ["Status: active", "80"] },
+]
+persistent = true
+hints = [
+    "ufw allow 80/tcp opens HTTP; do not forget ufw allow OpenSSH (or 22/tcp) before you enable it, or you lock yourself out.",
+    "sudo ufw allow OpenSSH; sudo ufw allow 80/tcp; sudo ufw --force enable",
+    "Check with sudo ufw status — it should be active and list 80.",
+]
+explanation = "The firewall now lets other hosts reach port 80. A service that is running but firewalled off is still an outage from the outside."
+
+[[task]]
+id = "cutover"
+title = "Cut the name over"
+kind = "independent"
+instructions = """
+Now that this host serves the site, repoint shop.example.lan to this address (10.0.2.15) so the
+name resolves here. (With no editable DNS server in the lab, pin it in /etc/hosts — the resolver
+consults it before DNS.)
+"""
+skills = { "t.network-move" = 1.0, "i.dns-resolution" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "getent hosts shop.example.lan", stdout_contains = "10.0.2.15" },
+    { type = "command_result", user = "root", command = "curl -s http://shop.example.lan/", stdout_contains = "{{shop}}" },
+]
+persistent = true
+hints = [
+    "/etc/hosts maps a name to an address and the resolver reads it before asking DNS.",
+    "Add a line: 10.0.2.15 shop.example.lan",
+    "echo '10.0.2.15 shop.example.lan' | sudo tee -a /etc/hosts — then getent hosts shop.example.lan shows 10.0.2.15.",
+]
+explanation = "The name now resolves to this host, and curl http://shop.example.lan/ reaches the new nginx. In production this is a DNS A-record change at the authoritative server; the order — serve first, cut the name over last — is the same."
+
+[[task]]
+id = "retire"
+title = "Why this order?"
+kind = "explanation"
+instructions = "A colleague wants to change the DNS first thing in the morning, then copy the files and set up nginx afterwards. Why is that the wrong order?"
+skills = { "t.network-move" = 1.0 }
+question = { prompt = "Why cut the name over last, not first?", type = "choice", choices = ["It makes no difference which order you use", "The moment the name points at a host that is not yet serving the site, every visitor gets an error — the move must be invisible: copy, serve and open the firewall first, verify the new host works, and only then cut the name over (and keep the old host until you have)", "DNS changes are irreversible", "nginx refuses to start if DNS already points at it"], answer = 1 }
+hints = ["What does a visitor see between 'name points here' and 'nginx is serving'?", "The name is the switch; throw it only when the destination is ready.", "Answer (b)."]
+explanation = "Cutting the name over is the cut-over: do it only when the new host is proven to serve the site, and keep the old host running until the change has propagated and you have verified it. Name last, verify always."
+
+[debrief]
+summary = """
+Move a service in a safe order: rsync the data over SSH, stand up and locally test the service
+(curl localhost), open the firewall (ufw allow 80/tcp), and only then cut the name over (a DNS
+A-record change — here pinned in /etc/hosts, which the resolver reads before DNS). Verify the
+path to the name (getent, curl by name, traceroute) before the old host is retired.
+"""
+alternatives = [
+    "A real DNS move: lower the record's TTL days ahead, change the A record at cut-over, watch both hosts' logs until traffic drains from the old one.",
+    "Run both hosts in parallel behind a load balancer and shift weight gradually (a blue-green or canary cut-over).",
+    "rsync --delete for an exact mirror, or a second pass at cut-over to catch last-minute changes.",
+]
+pitfalls = [
+    "Changing DNS before the new host serves the site — an immediate outage.",
+    "Enabling ufw without allowing SSH first and locking yourself out.",
+    "Forgetting to enable nginx, so it does not come back after a reboot.",
+    "Retiring the old host before the name change has propagated and been verified.",
+]
+next = "You have reached the end of the built curriculum."
+
+[[solution]]
+name = "rsync, nginx site, ufw, hosts"
+steps = [
+    "getent hosts shop.example.lan",
+    ":answer 10.0.2.55",
+    { input = ["yes", "letslinux", "letslinux"] },
+    "rsync -a deploy@web1:/var/www/shop/ ~/shop/",
+    "sudo mkdir -p /var/www/shop",
+    "sudo rsync -a /home/learner/shop/ /var/www/shop/",
+    { edit = '''server {
+    listen 80 default_server;
+    server_name shop.example.lan web2;
+    root /var/www/shop;
+    index index.html;
+}
+''' },
+    "sudo nano /etc/nginx/sites-available/shop",
+    "sudo rm -f /etc/nginx/sites-enabled/default",
+    "sudo ln -s /etc/nginx/sites-available/shop /etc/nginx/sites-enabled/shop",
+    "sudo systemctl enable --now nginx",
+    "sudo systemctl reload nginx",
+    "curl -s http://localhost/",
+    "sudo ufw allow OpenSSH",
+    "sudo ufw allow 80/tcp",
+    { input = ["y"] },
+    "sudo ufw enable",
+    "echo '10.0.2.15 shop.example.lan' | sudo tee -a /etc/hosts",
+    "curl -s http://shop.example.lan/",
+    ":answer 2",
+]
+
+[[solution]]
+name = "scp content, nginx config, open firewall, pin name"
+steps = [
+    "getent hosts shop.example.lan",
+    ":answer 10.0.2.55",
+    { input = ["yes", "letslinux", "letslinux"] },
+    "scp -r deploy@web1:/var/www/shop /home/learner/shop",
+    "sudo cp -a /home/learner/shop /var/www/shop",
+    "sudo sh -c 'printf \"server {\\n  listen 80 default_server;\\n  root /var/www/shop;\\n  index index.html;\\n}\\n\" > /etc/nginx/sites-available/shop'",
+    "sudo ln -sf /etc/nginx/sites-available/shop /etc/nginx/sites-enabled/shop",
+    "sudo unlink /etc/nginx/sites-enabled/default",
+    "sudo systemctl restart nginx",
+    "sudo systemctl enable nginx",
+    "sudo ufw allow 22/tcp",
+    "sudo ufw allow 80/tcp",
+    { input = ["y"] },
+    "sudo ufw enable",
+    "sudo sh -c 'echo \"10.0.2.15 shop.example.lan\" >> /etc/hosts'",
+    "curl -s http://shop.example.lan/",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "cut the name over before the site is served"
+steps = [
+    ":answer 10.0.2.55",
+    { input = ["letslinux"] },
+    "echo '10.0.2.15 shop.example.lan' | sudo tee -a /etc/hosts",
+    "sudo ufw allow 80/tcp",
+    { input = ["y"] },
+    "sudo ufw enable",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "served but firewall never opened"
+steps = [
+    ":answer 10.0.2.55",
+    { input = ["yes", "letslinux", "letslinux"] },
+    "rsync -a deploy@web1:/var/www/shop/ ~/shop/",
+    "sudo mkdir -p /var/www/shop",
+    "sudo rsync -a /home/learner/shop/ /var/www/shop/",
+    "sudo sh -c 'printf \"server {\\n  listen 80 default_server;\\n  root /var/www/shop;\\n  index index.html;\\n}\\n\" > /etc/nginx/sites-available/shop'",
+    "sudo ln -sf /etc/nginx/sites-available/shop /etc/nginx/sites-enabled/shop",
+    "sudo unlink /etc/nginx/sites-enabled/default",
+    "sudo systemctl enable --now nginx",
+    "echo '10.0.2.15 shop.example.lan' | sudo tee -a /etc/hosts",
+    ":answer 2",
+]

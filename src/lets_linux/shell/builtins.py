@@ -1628,6 +1628,8 @@ def b_ulimit(interp: Interpreter, state: ShellState, argv: list[str], fds: Fds) 
         else str(me.rlimit_core // 1024)
     )
     limits[0] = ("core file size", "blocks", "c", core)
+    nproc = "unlimited" if me is None or me.rlimit_nproc < 0 else str(me.rlimit_nproc)
+    limits[9] = ("max user processes", "", "u", nproc)
     if values:
         if flags.endswith("c") and me is not None:  # the core size limit is simulated
             value = values[0]
@@ -1635,6 +1637,15 @@ def b_ulimit(interp: Interpreter, state: ShellState, argv: list[str], fds: Fds) 
                 me.rlimit_core = -1
             elif value.isdigit():
                 me.rlimit_core = int(value) * 1024
+            else:
+                _err(interp, state, fds, "ulimit", f"{value}: invalid number")
+                return 1
+        elif flags.endswith("u") and me is not None:  # the process limit is simulated
+            value = values[0]
+            if value == "unlimited":
+                me.rlimit_nproc = -1
+            elif value.isdigit():
+                me.rlimit_nproc = int(value)
             else:
                 _err(interp, state, fds, "ulimit", f"{value}: invalid number")
                 return 1

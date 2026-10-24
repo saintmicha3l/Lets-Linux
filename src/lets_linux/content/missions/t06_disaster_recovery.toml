@@ -1,0 +1,312 @@
+schema = 1
+
+[mission]
+id = "t06-disaster-recovery"
+title = "Capstone: The Disaster Recovery"
+chapter = "T"
+kind = "capstone"
+order = 6
+difficulty = 6
+requires = ["j10-mirror-mirror", "j09-room-to-grow", "j11-locked-away", "h03-your-own-service"]
+skills = ["t.disaster-recovery", "j.raid-concepts", "j.backup-restore", "j.encryption-concepts", "h.enable-disable"]
+review_for = ["j.raid-concepts", "j.backup-restore", "j.block-devices"]
+xp = 460
+estimated_minutes = 60
+sequential = false
+
+[briefing]
+context = """
+The {{team}} team's share /srv/share sits on a storage stack you now know every layer of: a
+software RAID 1 mirror (/dev/md0 over /dev/sdb and /dev/sdc) carries an LVM volume group, and
+the logical volume datavg/share holds the files the {{svc}}.service serves. Two things went
+wrong at once. Monitoring mailed "DegradedArray event on /dev/md0" — a disk died in the night;
+the technician has already slotted a replacement (/dev/sdd). And earlier a botched cleanup
+deleted part of the dataset under /srv/share/records — and because RAID mirrors every write,
+the deletion was copied faithfully onto both disks. The service was stopped so nothing writes
+while you work. Bring it all back: full redundancy, the lost files, and the service — and prove
+the data is complete. The nightly off-site backup is on the encrypted USB disk /dev/sde (unlock
+it with the key file /root/backup.key); a checksum manifest of the known-good dataset is in
+/root/records.sha256. (sudo password: letslinux)
+
+Specification:
+  1. Find which disk failed, take it out of the mirror and rebuild onto the new one so the
+     array has full redundancy again — and stays that way after a reboot.
+  2. Restore the deleted files under /srv/share/records from the encrypted off-site backup, and
+     prove the restored dataset is complete and intact against /root/records.sha256.
+  3. Bring {{svc}}.service back up and enabled so it survives a reboot.
+"""
+concept = """
+A disaster is rarely one failure. RAID gives availability: the mirror kept serving on the
+surviving disk, so replace the failed member (mdadm /dev/md0 --remove OLD; --add NEW) and let
+md rebuild (cat /proc/mdstat: (F) failed, [U_] degraded, [UU] whole again). But RAID is not a
+backup — it mirrors a deletion as faithfully as a write, onto every disk at once. Recoverability
+comes from an independent copy kept off-line: here a LUKS-encrypted USB disk (cryptsetup open
+--key-file KEY /dev/sde NAME, mount /dev/mapper/NAME), from which you restore the lost files
+(rsync/cp). A restore is not finished when the copy runs — it is finished when you have proved
+it: sha256sum -c against a manifest of the known-good files checks every file is present and
+byte-for-byte correct. Then restart what the incident knocked over, and confirm the whole stack
+reassembles after a reboot (the ARRAY line in mdadm.conf, the fstab mount, the enabled unit).
+"""
+objectives = ["Diagnose and rebuild a degraded RAID mirror under LVM", "Unlock an encrypted off-site backup", "Restore lost files and prove the restore is complete", "Bring the service back and verify after a reboot", "Explain availability versus recoverability"]
+
+[environment]
+profile = "debian"
+packages = ["mdadm", "lvm2", "cryptsetup"]
+
+[environment.vars]
+team = { choices = ["Helios", "Vega", "Draco"] }
+svc = { choices = ["fileshare", "records-api", "docstore"] }
+
+# --- the storage stack: RAID 1 -> LVM -> ext4, mounted at /srv/share ---
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "5G"
+
+[[environment.setup]]
+action = "disk"
+name = "sdc"
+size = "5G"
+
+[[environment.setup]]
+action = "run"
+command = "mdadm --create /dev/md0 --run --level=1 --raid-devices=2 /dev/sdb /dev/sdc"
+
+[[environment.setup]]
+action = "clock"
+seconds = 600
+
+[[environment.setup]]
+action = "run"
+command = "pvcreate /dev/md0 && vgcreate datavg /dev/md0 && lvcreate -L 3G -n share datavg && mkfs.ext4 -q /dev/datavg/share && mkdir -p /srv/share && echo '/dev/mapper/datavg-share /srv/share ext4 defaults 0 2' >> /etc/fstab && mount /srv/share && mkdir -p /etc/mdadm && mdadm --detail --scan >> /etc/mdadm/mdadm.conf"
+
+# the dataset the service serves
+[[environment.setup]]
+action = "files"
+dir = "/srv/share/records"
+count = 30
+prefix = "customer-"
+size = 1024
+
+# a checksum manifest of the known-good dataset (absolute paths, so it verifies from anywhere)
+[[environment.setup]]
+action = "run"
+command = "sha256sum /srv/share/records/customer-* > /root/records.sha256"
+
+# --- the nightly off-site backup on an encrypted USB disk, unlocked by a key file ---
+[[environment.setup]]
+action = "disk"
+name = "sde"
+size = "2G"
+removable = true
+
+[[environment.setup]]
+action = "file"
+path = "/root/backup.key"
+mode = "0400"
+content = "bk-3d8f1a6c9e2b47f05c1a-offsite\n"
+
+[[environment.setup]]
+action = "run"
+command = "cryptsetup luksFormat -q --key-file /root/backup.key /dev/sde && cryptsetup open --key-file /root/backup.key /dev/sde backup && mkfs.ext4 -q /dev/mapper/backup && mkdir -p /mnt/backup && mount /dev/mapper/backup /mnt/backup && rsync -a /srv/share/ /mnt/backup/share/ && cp /root/records.sha256 /mnt/backup/records.sha256 && umount /mnt/backup && cryptsetup close backup"
+
+# --- the service the share feeds (enabled, then stopped by the incident) ---
+[[environment.setup]]
+action = "service"
+name = "{{svc}}.service"
+enable = true
+start = true
+content = """[Unit]
+Description={{team}} {{svc}}
+RequiresMountsFor=/srv/share
+
+[Service]
+ExecStart=/bin/sleep infinity
+WorkingDirectory=/srv/share
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+# --- the disaster: deleted records (mirrored onto both disks), then a dead disk ---
+[[environment.setup]]
+action = "run"
+command = "rm -f /srv/share/records/customer-2*"
+
+[[environment.setup]]
+action = "disk_fail"
+name = "sdc"
+ago_minutes = 180
+
+[[environment.setup]]
+action = "disk"
+name = "sdd"
+size = "5G"
+
+# the service was stopped so nothing writes to the share while it is being recovered
+[[environment.setup]]
+action = "run"
+command = "systemctl stop {{svc}}.service"
+
+[[task]]
+id = "failed"
+title = "Which disk died?"
+kind = "troubleshooting"
+instructions = "The mirror is degraded. Find which disk failed: `cat /proc/mdstat`, `sudo mdadm --detail /dev/md0`, and the kernel's messages."
+skills = { "t.disaster-recovery" = 1.0, "j.raid-concepts" = 1.0, "h.journalctl" = 0.5 }
+question = { prompt = "Which disk failed? (e.g. sdx)", type = "regex", accept = ["\\s*(/dev/)?sdc\\s*"] }
+hints = [
+    "In /proc/mdstat a failed member is marked (F), and the array shows [U_] — one slot up, one down.",
+    "mdadm --detail /dev/md0 lists it as 'faulty'; journalctl -k shows its I/O errors.",
+    "sdc failed; sdb is carrying the mirror alone.",
+]
+explanation = "[2/1] [U_]: two slots, one working. The kernel logged I/O errors on sdc and md disabled it — the LVM volume and the share kept running, degraded, on sdb alone."
+
+[[task]]
+id = "rebuild"
+title = "Rebuild the mirror"
+kind = "independent"
+instructions = """
+Take the failed disk out of /dev/md0 and add the new disk (/dev/sdd) in its place, so the array
+rebuilds to full redundancy. Make sure the mirror comes back complete — with /srv/share still
+mounted — after a reboot.
+"""
+skills = { "t.disaster-recovery" = 1.0, "j.raid-concepts" = 1.0, "j.block-devices" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "mdadm --detail /dev/md0", stdout_contains = "/dev/sdd", stdout_not_contains = "/dev/sdc" },
+    { type = "command_result", command = "grep -c '(F)' /proc/mdstat", stdout_equals = "0" },
+    { type = "command_result", command = "cat /proc/mdstat", stdout_contains = "[UU]" },
+    { type = "after_reboot", checks = [
+        { type = "command_result", command = "cat /proc/mdstat", stdout_regex = "md0 : active raid1 .*\\n.*\\[UU\\]" },
+        { type = "command_result", command = "findmnt -n -o SOURCE /srv/share", stdout_contains = "/dev/mapper/datavg-share" },
+    ] },
+]
+persistent = true
+hints = [
+    "A member can be removed once it is failed: mdadm /dev/md0 --remove /dev/sdc; the new disk joins with --add /dev/sdd.",
+    "lsblk confirms /dev/sdd is the new, empty 5 GB disk; sleep a minute and re-read /proc/mdstat to watch the recovery finish.",
+    "sudo mdadm /dev/md0 --remove /dev/sdc; sudo mdadm /dev/md0 --add /dev/sdd; sleep 90; cat /proc/mdstat",
+]
+explanation = "--remove took the dead disk out and --add put sdd into the empty slot; md copied the data from sdb onto it (recovery) until the array was [UU] again. mdadm.conf names the array by UUID, so it reassembles as md0 at boot whichever disks back it now."
+
+[[task]]
+id = "restore"
+title = "Restore from the off-site backup"
+kind = "independent"
+instructions = """
+Part of /srv/share/records was deleted and the mirror copied the deletion to both disks — RAID
+cannot bring it back. Unlock the encrypted off-site backup on /dev/sde (key file
+/root/backup.key), restore the missing files under /srv/share/records, and prove the restored
+dataset is complete and intact against the manifest in /root/records.sha256.
+"""
+skills = { "t.disaster-recovery" = 1.0, "j.backup-restore" = 1.0, "j.encryption-concepts" = 0.5 }
+checks = [
+    { type = "tree_count", path = "/srv/share/records", glob = "customer-*", min = 30 },
+    { type = "command_result", user = "root", command = "sha256sum -c --quiet /root/records.sha256", status = 0 },
+]
+persistent = true
+hints = [
+    "Open the encrypted disk with the key file, then mount it: cryptsetup open --key-file /root/backup.key /dev/sde backup; mount /dev/mapper/backup /mnt (mkdir the mount point first).",
+    "Copy the files back with a tool that preserves them — rsync -a or cp -a — from the backup's records directory into /srv/share/records.",
+    "sudo cryptsetup open --key-file /root/backup.key /dev/sde backup; sudo mkdir -p /mnt/backup; sudo mount /dev/mapper/backup /mnt/backup; sudo rsync -a /mnt/backup/share/records/ /srv/share/records/; sudo sha256sum -c /root/records.sha256",
+]
+explanation = "The off-site copy was kept off-line and encrypted, so the deletion never reached it. sha256sum -c against the manifest confirms every file is present and byte-for-byte correct — the restore is not done until it is proved."
+
+[[task]]
+id = "service"
+title = "Bring the service back"
+kind = "independent"
+instructions = "Start {{svc}}.service again and make sure it is enabled so it comes up at boot."
+skills = { "t.disaster-recovery" = 1.0, "h.enable-disable" = 1.0 }
+checks = [
+    { type = "unit_state", unit = "{{svc}}.service", active = "active" },
+    { type = "unit_enabled", unit = "{{svc}}.service" },
+    { type = "after_reboot", checks = [{ type = "unit_state", unit = "{{svc}}.service", active = "active" }] },
+]
+persistent = true
+hints = [
+    "It was stopped while you worked; start it again.",
+    "sudo systemctl start {{svc}}.service (it is already enabled; confirm with systemctl is-enabled).",
+    "Check with systemctl status {{svc}}.service — it should be active (running), on the restored share.",
+]
+explanation = "The service is running again and enabled, so it also comes back after a reboot — on a whole mirror, with the full dataset beneath it."
+
+[[task]]
+id = "why"
+title = "Availability is not recoverability"
+kind = "explanation"
+instructions = "Your manager asks: 'The data was on RAID — why did we even need the off-site backup?'"
+skills = { "t.disaster-recovery" = 1.0 }
+question = { prompt = "What is the right answer?", type = "choice", choices = ["RAID failed, so the backup was a lucky second copy", "RAID gives availability — it kept the service running through a disk failure — but it mirrors a deletion onto every disk instantly; only the independent, off-line backup could bring the deleted files back. You needed both", "The backup replaced the RAID", "RAID 1 would have recovered the files on its own after the rebuild"], answer = 1 }
+hints = ["What happened to the deleted files on the mirror?", "A mirror copies every write — including an rm — to both disks at once.", "Answer (b): availability (RAID) and recoverability (backup) solve different failures."]
+explanation = "RAID answers 'a disk died' — the service never stopped. Backup answers 'the data is gone' — a deletion, corruption or ransomware that RAID faithfully mirrors. A real recovery needed the rebuild and the restore, each proved."
+
+[debrief]
+summary = """
+Two failures at once: a dead mirror member (mdadm --remove/--add, rebuild to [UU], kept by
+mdadm.conf) and a deletion RAID copied to both disks. Availability came from the rebuild;
+recoverability came from an off-line, encrypted backup (cryptsetup open --key-file) restored and
+then proved with sha256sum -c against a manifest. Restart the service and confirm the whole
+stack — array, fstab mount and enabled unit — reassembles after a reboot.
+"""
+alternatives = [
+    "mdadm --manage /dev/md0 --replace /dev/sdc --with /dev/sdd replaces a member while the old disk still works; a hot spare (--add to a healthy array) takes over automatically.",
+    "A header backup (cryptsetup luksHeaderBackup) and more than one key slot protect the encrypted backup itself.",
+    "Automated verification: a timer that runs sha256sum -c (or restic/borg check) turns 'we have backups' into 'we have restores that pass'.",
+]
+pitfalls = [
+    "Removing the healthy disk, or rebooting the array before the rebuild finishes.",
+    "Declaring victory after the rebuild while the deleted files are still gone — RAID is not a backup.",
+    "Calling the restore done when the copy runs, without verifying it against a manifest.",
+    "Leaving the service the incident stopped still down.",
+]
+next = "You have reached the end of the built curriculum."
+
+[[solution]]
+name = "remove/add, unlock and restore, start"
+steps = [
+    "cat /proc/mdstat",
+    ":answer sdc",
+    { input = ["letslinux"] },
+    "sudo mdadm /dev/md0 --remove /dev/sdc",
+    "sudo mdadm /dev/md0 --add /dev/sdd",
+    "sudo cryptsetup open --key-file /root/backup.key /dev/sde backup",
+    "sudo mkdir -p /mnt/backup",
+    "sudo mount /dev/mapper/backup /mnt/backup",
+    "sudo rsync -a /mnt/backup/share/records/ /srv/share/records/",
+    "sudo sha256sum -c /root/records.sha256",
+    "sleep 150",
+    "cat /proc/mdstat",
+    "sudo systemctl start {{svc}}.service",
+    ":answer 2",
+]
+
+[[solution]]
+name = "fail+remove in one go, cp restore, enable --now"
+steps = [
+    "sudo mdadm --detail /dev/md0",
+    ":answer /dev/sdc",
+    { input = ["letslinux"] },
+    "sudo mdadm --manage /dev/md0 --fail /dev/sdc --remove /dev/sdc",
+    "sudo mdadm --manage /dev/md0 --add /dev/sdd",
+    "sudo cryptsetup open --key-file /root/backup.key /dev/sde recover",
+    "sudo mkdir -p /mnt/restore",
+    "sudo mount /dev/mapper/recover /mnt/restore",
+    "sudo cp -a /mnt/restore/share/records/. /srv/share/records/",
+    "sudo sha256sum -c --quiet /root/records.sha256",
+    "sleep 180",
+    "sudo systemctl enable --now {{svc}}.service",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "rebuilt the array but never restored the data"
+steps = [
+    ":answer sdc",
+    { input = ["letslinux"] },
+    "sudo mdadm /dev/md0 --remove /dev/sdc",
+    "sudo mdadm /dev/md0 --add /dev/sdd",
+    "sleep 150",
+    "sudo systemctl start {{svc}}.service",
+    ":answer 2",
+]

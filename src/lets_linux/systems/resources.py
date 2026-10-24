@@ -145,6 +145,21 @@ DISK_KBS = 400_000.0
 DISK_IOPS = 6_000.0
 
 
+def queue_stats(kbs: float, iops: float) -> tuple[float, float, float]:
+    """(%util, await in ms, aqu-sz) of a disk doing KBS kB/s in IOPS requests per second.
+
+    Each request costs 1/DISK_IOPS plus its size / DISK_KBS, so the busy fraction per
+    request is the mean service time; queueing (M/M/1) stretches it to the await, and by
+    Little's law the queue (aqu-sz = IOPS x await) is util/(1-util), as on a real disk.
+    iostat -x and sar -d both use this, so they agree."""
+    if kbs <= 0 or iops <= 0:
+        return 0.0, 0.0, 0.0
+    util = min(99.9, kbs / DISK_KBS * 100 + iops / DISK_IOPS * 100)
+    service = util / 100 / iops * 1000
+    await_ms = round(service / max(0.02, 1 - util / 100), 2)
+    return util, await_ms, iops * await_ms / 1000
+
+
 def disk_io(machine: Machine) -> list[DiskIo]:
     """Per-disk activity, from the processes doing I/O (approximation)."""
     disks = [d.name for d in machine.storage.disks] or ["sda"]
@@ -155,9 +170,7 @@ def disk_io(machine: Machine) -> list[DiskIo]:
         rk = sum(p.io_read_kbs for p in procs)
         wk = sum(p.io_write_kbs for p in procs)
         rio, wio = rk / 64.0, wk / 128.0  # typical request sizes
-        util = min(99.9, max(rk + wk, 0.0) / DISK_KBS * 100 + (rio + wio) / DISK_IOPS * 100)
-        service = 0.35
-        await_ms = round(service / max(0.02, 1 - util / 100), 2) if rk + wk else 0.0
+        util, await_ms, _aqu = queue_stats(rk + wk, rio + wio)
         out.append(
             DiskIo(
                 name,

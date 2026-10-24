@@ -17,6 +17,7 @@ class Redirect:
     fd: int | None = None
     heredoc_body: str | None = None
     heredoc_expand: bool = True
+    line: int = 0  # where it is written: bash reports a compound command's failure there
 
 
 @dataclass(slots=True)

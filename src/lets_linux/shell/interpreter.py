@@ -248,6 +248,9 @@ class Interpreter:
         self.builtins = BUILTINS
         self.commands_run = 0
         self.depth = 0
+        #: current nesting of background "forks"; capped by RLIMIT_NPROC (ulimit -u), which is
+        #: how real Linux stops a fork bomb
+        self.fork_depth = 0
         self.last_subst_status: int | None = None
         self.last_spawned_pid: int | None = None
         #: the first process this interpreter created (a service's main process)
@@ -501,6 +504,16 @@ class Interpreter:
         return status
 
     def run_background(self, node: ast.AndOr, state: ShellState, fds: Fds) -> int:
+        # RLIMIT_NPROC (ulimit -u): fork() fails once the user is at the process limit. This is
+        # how real Linux stops a fork bomb; the nesting of backgrounded jobs is our process count.
+        shell = self.machine.procs.get(state.pid)
+        limit = shell.rlimit_nproc if shell is not None else -1
+        if 0 <= limit <= self.fork_depth:
+            fd_out(fds, 2).write(
+                f"{self.error_prefix(state)}fork: retry: Resource temporarily unavailable\n"
+            )
+            state.last_status = 1
+            return 1
         sub = state.subshell()
         sub.background = True
         self.last_spawned_pid = None
@@ -508,12 +521,15 @@ class Interpreter:
         if not fds.get(0) or getattr(fds.get(0), "is_tty", lambda: False)():
             bg_fds[0] = BytesInput(b"")
         self.blocked_job_pid = None
+        self.fork_depth += 1
         try:
             self.run_and_or(node, sub, bg_fds)
         except ShellExit:
             pass
         except ProcessBlocked:  # a background script waits (sleep): it is the job's process
             pass
+        finally:
+            self.fork_depth -= 1
         pid = self.blocked_job_pid or self.last_spawned_pid
         if pid is None:
             pid = self.machine.procs.allocate_pid()
@@ -522,7 +538,7 @@ class Interpreter:
         if self.machine.procs.get(pid) is None:
             job.state = "Done"
         state.last_bg_pid = pid
-        if state.interactive:
+        if state.interactive and not state.is_subshell:  # no job control in a subshell
             fd_out(fds, 2).write(f"[{job.number}] {pid}\n")
         state.last_status = 0
         return 0
@@ -537,6 +553,8 @@ class Interpreter:
         redirects = node.redirects
         handles: list[Any] = []
         if redirects:
+            if redirects[0].line:  # bash 5.2: "line 4" for `done > /bad` on line 4
+                state.lineno = redirects[0].line
             try:
                 fds = self.apply_redirects(redirects, state, fds, handles)
             except _RedirectFailure as exc:
@@ -1160,6 +1178,9 @@ class Interpreter:
         if self.depth >= self.limits.max_depth:
             fd_out(fds, 2).write(f"bash: {name}: maximum nesting level exceeded\n")
             return 126
+        # bash -c / sh SCRIPT run in the shell program's own process: strace already
+        # showed that process's execve and shows its exit once (_lineage consumes the flag)
+        same_process = self._exec_caller is not None
         proc = self.machine.procs.spawn(
             **self._lineage(parent_pid), uid=creds.real_uid, gid=creds.real_gid, euid=creds.uid,
             argv=["/bin/sh" if dialect == "sh" else "/bin/bash", name, *args], now=self.machine.now(), cwd=cwd, env=dict(env),
@@ -1185,7 +1206,7 @@ class Interpreter:
         previous_pid = self.machine.vfs.current_pid
         self.machine.vfs.current_pid = proc.pid  # the script's own system calls are its own
         tracer = self.machine.vfs.tracer
-        if tracer is not None and tracer.is_traced(proc.pid):
+        if tracer is not None and tracer.is_traced(proc.pid) and not same_process:
             tracer.exec(name, [argv0 or name, *args], len(env), self.machine.profile.family)
         else:
             tracer = None

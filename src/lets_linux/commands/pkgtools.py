@@ -288,13 +288,16 @@ def _apt_install(ctx: CommandContext, names: list[str], flags: set[str]) -> int:
             ctx.outln(
                 f"{pm.native(pkg)} is already the newest version ({_installed_version(pm, pkg)})."
             )
-    for new, old in plan.conflicts:
-        ctx.stderr.write(
-            f"E: {pm.native(new)} conflicts with the installed package {pm.native(old)}.\n"
-        )
-        return 100
+    # apt resolves a conflict by removing the installed package (and what depends on it),
+    # listing it under "will be REMOVED" and asking; an essential one is refused
+    for _new, old in plan.conflicts:
+        for name in sorted(pm.reverse_dependencies({old.name})):
+            gone = pm.catalog.get(name)
+            if gone is None or gone in plan.remove:
+                continue
+            (plan.essential if gone.essential else plan.remove).append(gone)
     # apt asks only when it does more than exactly what was requested
-    ask = bool(plan.auto)
+    ask = bool(plan.auto) or bool(plan.remove)
     return _apt_run_plan(
         ctx, pm, plan, assume_yes=bool(flags & {"-y", "--yes", "--assume-yes"}), ask=ask
     )
@@ -560,8 +563,8 @@ def _deb_show(ctx: CommandContext, pkg: PackageDef, pm: PackageManager, *, statu
     lines = [f"Package: {pm.native(pkg)}"]
     if status:
         state = (
-            "install ok installed"
-            if entry and entry.state == "installed"
+            f"install ok {entry.state}"
+            if entry and entry.state in ("installed", "unpacked", "half-configured")
             else "deinstall ok config-files"
         )
         lines.append(f"Status: {state}")
@@ -724,6 +727,10 @@ def _apt_like(ctx: CommandContext, tool: str) -> int:
         return 100
     if verb == "update":
         return _apt_update(ctx)
+    if ctx.machine.pkgdb.interrupted():  # apt (debsystem.cc) refuses until dpkg is repaired
+        ctx.stderr.write("E: dpkg was interrupted, you must manually run 'dpkg --configure -a' "
+                         "to correct the problem. \n")  # fmt: skip
+        return 100
     if verb == "install":
         if not names:
             _apt_header(ctx)
@@ -874,7 +881,69 @@ def verify_package(
     return problems
 
 
-@_cmd("dpkg", "Package manager for Debian (low level).", usage="dpkg -l|-L|-S|-s|-r|-P|--get-selections ...",
+def _dpkg_configure(ctx: CommandContext, pm: PackageManager, rest: list[str]) -> int:
+    """dpkg --configure -a|--pending|PACKAGE...: finish what an interrupted run unpacked."""
+    if ctx.creds.uid != 0:
+        ctx.stderr.write("dpkg: error: requested operation requires superuser privilege\n")
+        return 2
+    db = ctx.machine.pkgdb
+    if not rest:
+        ctx.stderr.write("dpkg: error: --configure needs at least one package name argument\n\n"
+                         "Type dpkg --help for help about installing and deinstalling packages [*];\n")  # fmt: skip
+        return 2
+    if rest[0] in ("-a", "--pending"):
+        entries = db.interrupted()
+    else:
+        entries = []
+        for name in rest:
+            pkg = pm.find(name)
+            entry = db.get(pkg.name) if pkg is not None else None
+            if entry is None:
+                ctx.stderr.write(f"dpkg: error processing package {name} (--configure):\n"
+                                 f" package {name} is not installed and no information is available\n")  # fmt: skip
+                return 1
+            if entry.state == "installed":
+                ctx.stderr.write(f"dpkg: error processing package {name} (--configure):\n"
+                                 f" package {name} is already installed and configured\n")  # fmt: skip
+                return 1
+            entries.append(entry)
+    for entry in entries:
+        pkg = pm.catalog.get(entry.name)
+        if pkg is None:
+            continue
+        ctx.outln(f"Setting up {pm.native(pkg)} ({entry.version}) ...")
+        for line in pm.configure(pkg):
+            ctx.outln(line)
+    return 0
+
+
+def _dpkg_audit(ctx: CommandContext, pm: PackageManager) -> int:
+    """dpkg -C / --audit: packages an interrupted run left behind (dpkg 1.21 wording)."""
+    groups = {
+        "unpacked": "The following packages have been unpacked but not yet configured.\n"
+                    "They must be configured using dpkg --configure or the configure\n"
+                    "menu option in dselect for them to work:",
+        "half-configured": "The following packages are only half configured, probably due to problems\n"
+                           "configuring them the first time.  The configuration should be retried using\n"
+                           "dpkg --configure <package> or the configure menu option in dselect:",
+    }  # fmt: skip
+    found = False
+    for state, text in groups.items():
+        entries = [e for e in ctx.machine.pkgdb.interrupted() if e.state == state]
+        if not entries:
+            continue
+        if found:
+            ctx.outln("")
+        found = True
+        ctx.outln(text)
+        for e in entries:
+            pkg = pm.catalog.get(e.name)
+            name = pm.native(pkg) if pkg is not None else e.name
+            ctx.outln(f" {name:<16} {pkg.summary if pkg is not None else ''}".rstrip())
+    return 0
+
+
+@_cmd("dpkg", "Package manager for Debian (low level).", usage="dpkg -l|-L|-S|-s|-r|-P|--configure|-C|--get-selections ...",
       auto_parse=False, category="packages", learn=("f.apt-basics", "f.file-ownership"))  # fmt: skip
 def dpkg(ctx: CommandContext) -> int:
     pkg: PackageDef | None
@@ -899,7 +968,8 @@ def dpkg(ctx: CommandContext) -> int:
             name = pm.native(pkg)
             if rest and not any(fnmatch.fnmatchcase(name, p) for p in rest):
                 continue
-            flag = ("hi" if entry.held else "ii") if entry.state == "installed" else "rc"
+            flag = {"installed": "hi" if entry.held else "ii", "unpacked": "iU",
+                    "half-configured": "iF"}.get(entry.state, "rc")  # fmt: skip
             rows.append((flag, name, entry.version, _deb_arch(pkg), pkg.summary))
         if not rows:
             ctx.stderr.write(f"dpkg-query: no packages found matching {' '.join(rest)}\n")
@@ -914,6 +984,10 @@ def dpkg(ctx: CommandContext) -> int:
         for flag, name, ver, arch, desc in rows:
             ctx.outln(f"{flag}  {name:<{wn}} {ver:<{wv}} {arch:<12} {desc}")
         return 0
+    if action in ("--configure",):
+        return _dpkg_configure(ctx, pm, rest)
+    if action in ("-C", "--audit"):
+        return _dpkg_audit(ctx, pm)
     if action in ("-L", "--listfiles"):
         status = 0
         for name in rest:

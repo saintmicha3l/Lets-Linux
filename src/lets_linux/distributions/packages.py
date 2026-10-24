@@ -262,8 +262,11 @@ class PackageManager:
             created.append(name)
         return created
 
-    def install(self, pkg: PackageDef, *, auto: bool = False) -> list[str]:
-        """Install (or reinstall/upgrade) ``pkg``; returns messages for the front-end."""
+    def install(self, pkg: PackageDef, *, auto: bool = False, configure: bool = True) -> list[str]:
+        """Install (or reinstall/upgrade) ``pkg``; returns messages for the front-end.
+
+        ``configure=False`` stops after unpacking, as an interrupted dpkg run does: the files
+        are in place but the package is "half-configured" until :meth:`configure` runs."""
         ops = self.machine.root_ops
         previous = self.machine.pkgdb.get(pkg.name)
         messages: list[str] = []
@@ -289,19 +292,31 @@ class PackageManager:
             raise PackageError(f"{exc.path or ''}: {exc.message}") from None
         for path in keep:
             messages.append(f"keeping modified configuration file {path}")
-        from lets_linux.distributions.postinst import post_install
-
-        if pkg.raw.get("library"):  # the libc trigger: ldconfig refreshes the loader's cache
-            from lets_linux.systems import dynlink
-
-            dynlink.ldconfig(ops, self.family)
-            messages.append(f"Processing triggers for {self.catalog_native('libc-bin')} ...")
-        messages.extend(post_install(self.machine, pkg.name))
         record = package_record(pkg, self.family, self.candidate(pkg), paths, installed_at=self.machine.now(),
                                 auto=auto if previous is None or previous.state != "installed" else previous.auto)  # fmt: skip
         if previous is not None:
             record.held = previous.held
+        if not configure:
+            record.state = "half-configured"
+            self.machine.pkgdb.record(record)
+            return messages
         self.machine.pkgdb.record(record)
+        return messages + self.configure(pkg)
+
+    def configure(self, pkg: PackageDef) -> list[str]:
+        """dpkg's configure step: maintainer scripts, triggers, services; then "installed"."""
+        from lets_linux.distributions.postinst import post_install
+
+        messages: list[str] = []
+        if pkg.raw.get("library"):  # the libc trigger: ldconfig refreshes the loader's cache
+            from lets_linux.systems import dynlink
+
+            dynlink.ldconfig(self.machine.root_ops, self.family)
+            messages.append(f"Processing triggers for {self.catalog_native('libc-bin')} ...")
+        messages.extend(post_install(self.machine, pkg.name))
+        entry = self.machine.pkgdb.get(pkg.name)
+        if entry is not None:
+            entry.state = "installed"
         messages += self._services_after_install(pkg)
         return messages
 

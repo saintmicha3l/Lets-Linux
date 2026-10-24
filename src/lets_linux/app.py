@@ -13,8 +13,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from lets_linux.assessment import review
-from lets_linux.assessment.mastery import LEVEL_NAMES, SkillMastery, assess
+from lets_linux.assessment import drills, review
+from lets_linux.assessment.drills import Drill
+from lets_linux.assessment.mastery import LEVEL_NAMES, Evidence, SkillMastery, assess
 from lets_linux.assessment.scoring import evidence_from_attempt
 from lets_linux.config import data_dir
 from lets_linux.curriculum.loader import load_curriculum
@@ -307,7 +308,9 @@ class MissionSession(_BaseSession):
             parts += ["You will practise:"] + [f"  • {o}" for o in m.briefing.objectives] + [""]
         profile = get_profile(env.profile)
         parts.append(
-            f"Machine: a fresh simulated {profile.pretty_name} system. Changes stay inside this mission."
+            f"Machine: a fresh simulated {profile.pretty_name} system, the distribution this "
+            "mission is written for (your player's distribution only sets your sandbox). "
+            "Changes stay inside this mission."
         )
         parts.append("Your password for sudo is: letslinux    Type :help for game commands.")
         return "\n".join(parts)
@@ -813,6 +816,40 @@ class GameService:
                 if statuses.get(m.id) == "completed"
             ]
         return candidates[0] if candidates else None
+
+    def drill_queue(self, profile: Profile, limit: int = 10) -> list[Drill]:
+        """Quick single-question drills for the skills that are due, most urgent first."""
+        due = self.review_queue(profile)
+        allowed = frozenset(s.mission.id for s in self.statuses(profile) if s.status != "locked")
+        return drills.build_queue(self.curriculum, [i.skill_id for i in due], allowed, limit)
+
+    def record_drill(
+        self, profile: Profile, drill: Drill, correct: bool, *, wrong_answers: int = 0
+    ) -> SkillMastery:
+        """Record a drill's outcome: prediction-kind evidence plus a spaced-review update.
+
+        Prediction evidence refreshes the review box and the score but cannot, on its own,
+        raise a skill past Practising — reaching Proficient/Mastered needs independent-class
+        evidence — so a drill alone never proves mastery (docs/MASTERY_ASSESSMENT.md)."""
+        now = self.clock()
+        evidence = Evidence(
+            skill_id=drill.skill_id,
+            kind="prediction",
+            outcome=1.0 if correct else 0.0,
+            recorded_at=now,
+            wrong_answers=wrong_answers,
+            difficulty=1,
+            weight=1.0,
+            mission_id=drill.mission_id,
+            task_id=drill.task_id,
+        )
+        self.db.add_evidence(profile.id, [evidence])
+        states = self.db.review_states(profile.id)
+        new_state = review.update(
+            states.get(drill.skill_id), drill.skill_id, evidence.effective, now
+        )
+        self.db.save_review_states(profile.id, [new_state])
+        return assess(drill.skill_id, self.db.evidence(profile.id, drill.skill_id), now)
 
     # ------------------------------------------------------------ progress summary
     def chapter_progress(self, profile: Profile) -> list[ChapterProgress]:

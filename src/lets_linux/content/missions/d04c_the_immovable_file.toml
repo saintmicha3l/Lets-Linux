@@ -1,0 +1,160 @@
+schema = 1
+
+[mission]
+id = "d04c-the-immovable-file"
+title = "The Immovable File"
+chapter = "D"
+kind = "troubleshooting"
+order = 6
+difficulty = 3
+requires = ["d04b-ownership-and-special-bits", "c08-the-method"]
+skills = ["d.file-attributes"]
+review_for = ["d.file-attributes"]
+xp = 100
+estimated_minutes = 15
+sequential = true
+
+[briefing]
+context = """
+You need to update /etc/{{svc}}/{{file}}.conf, but every attempt fails with "Operation not
+permitted" — even with sudo, even though root owns the file and the mode is 0644. rm refuses
+too. Nothing about the owner or the permission bits explains it. Something else is protecting
+this file. Follow the method: the error is telling the truth, so find what it is really about.
+(sudo password: letslinux)
+"""
+concept = """
+Beyond owner and mode, ext2/3/4 files carry attributes that the permission bits do not show.
+Two matter here: immutable (i) — the file cannot be changed, renamed, deleted or linked by
+anyone, not even root — and append-only (a) — it can only be added to. They override the
+normal permission check entirely, which is exactly why a root-owned 0644 file can still be
+untouchable. lsattr shows the attributes; chattr changes them (setting i or a needs root,
+CAP_LINUX_IMMUTABLE). The fix is never to force the write — it is to clear the attribute first.
+"""
+objectives = ["Recognise a failure the permission bits do not explain", "Read file attributes with lsattr", "Clear the immutable attribute with chattr", "Understand why it blocked even root"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+svc = { choices = ["billing", "ingest", "gateway", "scheduler"] }
+file = { word = true }
+
+[[environment.setup]]
+action = "dir"
+path = "/etc/{{svc}}"
+owner = "root"
+group = "root"
+mode = "0755"
+
+[[environment.setup]]
+action = "file"
+path = "/etc/{{svc}}/{{file}}.conf"
+owner = "root"
+group = "root"
+mode = "0644"
+content = "mode = production\nretries = 3\n"
+
+[[environment.setup]]
+action = "run"
+command = "chattr +i /etc/{{svc}}/{{file}}.conf"
+
+[[task]]
+id = "diagnose"
+title = "Read the attributes"
+kind = "guided"
+instructions = "ls -l shows a normal root-owned 0644 file, yet writes fail. The permission bits are not the whole story. Read the file's ext attributes:  lsattr /etc/{{svc}}/{{file}}.conf   Which single attribute letter is set?"
+skills = { "d.file-attributes" = 1.0 }
+question = { prompt = "Which attribute letter does lsattr show set on the file?", type = "exact", accept = ["i", "immutable"] }
+hints = ["lsattr prints a row of flags before the filename; a letter means that attribute is set.", "The flag in the 'immutable' position is 'i'.", "Run lsattr /etc/{{svc}}/{{file}}.conf — the answer is i."]
+explanation = "The file is immutable (i). That attribute blocks every change — write, rename, delete, chmod, chown — for everyone, which is why neither the mode nor sudo helped."
+
+[[task]]
+id = "why"
+title = "Why even root?"
+kind = "prediction"
+instructions = "Think about where the immutable check happens."
+skills = { "d.file-attributes" = 0.5 }
+question = { prompt = "Why did the write fail even with sudo, when root owns the file and it is mode 0644?", type = "choice", choices = ["root needs the file to be 0666 to write it", "The immutable attribute blocks all changes until it is cleared, regardless of owner or mode", "sudo does not grant write permission", "The file is on a read-only filesystem"], answer = 1 }
+hints = ["The owner and mode are fine — something else refuses the write.", "Immutable is checked before the ordinary permission check and applies to root too.", "The answer is (b)."]
+explanation = "Immutable is enforced in the filesystem itself, above the discretionary owner/mode check. Root can clear it (CAP_LINUX_IMMUTABLE) but cannot write through it."
+
+[[task]]
+id = "unlock"
+title = "Clear it and make the change"
+kind = "troubleshooting"
+instructions = "Make the file changeable, then record the update by adding the line  reviewed = yes  to /etc/{{svc}}/{{file}}.conf. Do not simply recreate the file — clear the attribute properly."
+skills = { "d.file-attributes" = 1.0 }
+checks = [
+    { type = "file_contains", path = "/etc/{{svc}}/{{file}}.conf", text = "reviewed = yes" },
+    { type = "file_contains", path = "/etc/{{svc}}/{{file}}.conf", text = "mode = production" },
+    { type = "command_used", command = ["chattr"], args_contain = ["-i"], as_root = true, scope = "history" },
+]
+persistent = true
+hints = ["Clearing immutable needs root: sudo chattr -i FILE.", "After that the file writes normally; append the line with sudo (the file is root-owned).", "sudo chattr -i /etc/{{svc}}/{{file}}.conf   then   echo 'reviewed = yes' | sudo tee -a /etc/{{svc}}/{{file}}.conf"]
+explanation = "chattr -i removes the immutable attribute; the normal 0644 permissions then apply and root can write. The original contents are intact because you never recreated the file."
+
+[[task]]
+id = "reprotect"
+title = "Protect it again"
+kind = "troubleshooting"
+instructions = "This file is edited rarely and must not change by accident. Set it immutable again so that even a careless script (or root) cannot overwrite it until someone deliberately clears the attribute."
+skills = { "d.file-attributes" = 1.0 }
+checks = [
+    { type = "command_used", command = ["chattr"], args_contain = ["+i"], as_root = true, scope = "history" },
+    { type = "command_result", user = "root", command = "echo scribble >> /etc/{{svc}}/{{file}}.conf", status_not = 0 },
+]
+persistent = true
+hints = ["sudo chattr +i FILE sets the immutable attribute.", "Confirm with lsattr: the i should be back.", "Run sudo chattr +i /etc/{{svc}}/{{file}}.conf — a later write will fail with 'Operation not permitted'."]
+explanation = "Immutable is a deliberate guard for files that should almost never change (resolv.conf, a pinned config). It is honest protection: the only way past it is to clear it on purpose."
+
+[debrief]
+summary = """
+A root-owned, 0644 file that still refuses every write is the classic sign of an ext attribute.
+lsattr showed the immutable flag (i); chattr -i cleared it so you could make the change; chattr
++i put the guard back. Attributes sit above the owner/mode check, which is why they stop even
+root — and why the fix is to clear the attribute, never to force the write.
+"""
+alternatives = ["lsattr -l prints the attribute's full name (Immutable) instead of the letter", "chattr accepts =i to set exactly the immutable flag and clear others", "The append-only attribute (a) is the related guard for log files: only appends are allowed"]
+pitfalls = ["Trying chmod/chown or sudo to force the write — the attribute ignores all of them", "Deleting and recreating the file to get around it (loses history, and rm fails anyway)", "Forgetting that setting i or a needs root, not just file ownership"]
+next = "Next: putting permissions, ownership and groups together on a shared project."
+
+[[guard]]
+type = "path_exists"
+path = "/etc/{{svc}}/{{file}}.conf"
+message = "The config file is gone — the task was to edit it in place, not remove it. Use :reset to start over."
+
+[[solution]]
+name = "tee the line in"
+steps = [
+    { input = ["letslinux"] },
+    "ls -l /etc/{{svc}}/{{file}}.conf",
+    "lsattr /etc/{{svc}}/{{file}}.conf",
+    ":answer i",
+    ":answer b",
+    "sudo chattr -i /etc/{{svc}}/{{file}}.conf",
+    "echo 'reviewed = yes' | sudo tee -a /etc/{{svc}}/{{file}}.conf",
+    "sudo chattr +i /etc/{{svc}}/{{file}}.conf",
+    "lsattr /etc/{{svc}}/{{file}}.conf",
+]
+
+[[solution]]
+name = "edit with sed, long-form answer"
+steps = [
+    { input = ["letslinux"] },
+    "lsattr /etc/{{svc}}/{{file}}.conf",
+    ":answer immutable",
+    ":answer b",
+    "sudo chattr -i /etc/{{svc}}/{{file}}.conf",
+    "sudo sh -c 'echo \"reviewed = yes\" >> /etc/{{svc}}/{{file}}.conf'",
+    "sudo chattr +i /etc/{{svc}}/{{file}}.conf",
+]
+
+[[counterexample]]
+name = "forces it without clearing"
+steps = [
+    { input = ["letslinux"] },
+    "lsattr /etc/{{svc}}/{{file}}.conf",
+    ":answer i",
+    ":answer b",
+    "sudo chmod 666 /etc/{{svc}}/{{file}}.conf",
+    "echo 'reviewed = yes' | sudo tee -a /etc/{{svc}}/{{file}}.conf",
+]

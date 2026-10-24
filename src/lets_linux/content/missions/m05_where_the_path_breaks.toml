@@ -1,0 +1,188 @@
+schema = 1
+
+[mission]
+id = "m05-where-the-path-breaks"
+title = "Where the Path Breaks"
+chapter = "M"
+kind = "troubleshooting"
+order = 6
+difficulty = 6
+requires = ["m03-unreachable", "i03-no-connection", "c08-the-method"]
+skills = ["m.network-rca", "m.hypothesis-method", "m.verification", "i.net-troubleshooting", "i.routing-gateways"]
+review_for = ["i.routing-gateways", "i.net-troubleshooting", "i.ping-reachability"]
+xp = 230
+estimated_minutes = 30
+sequential = false
+
+[briefing]
+context = """
+This server reaches the intranet (http://intranet/) but nothing on the Internet: a mirror
+sync failed overnight. ping and curl only tell you *that* it fails. traceroute and mtr tell
+you *where*: they send probes with a growing time-to-live, so each router on the way answers
+one line. Trace the path, read where it dies, and fix the one thing that is wrong. (sudo
+password: letslinux)
+"""
+concept = """
+traceroute prints one line per hop. A hop that answers shows its address and the round-trip
+times; a hop with no reply shows `* * *` — either an un-modelled router that does not send
+ICMP time-exceeded, or packets being dropped from there on. An explicit rejection is marked:
+`!X` administratively prohibited (a firewall reject), `!H` host unreachable, `!N` network
+unreachable. The first hop is always your own default gateway — so if the first hop is not
+the router you expect, the default route is wrong. mtr is traceroute and ping combined:
+`mtr -r` sends several cycles and reports Loss% per hop, which separates a steady break from
+one flaky router.
+"""
+objectives = ["Trace a path to see where it stops", "Recognise the first hop as the default gateway", "Read `* * *` and `!X`/`!H` correctly", "Fix the routing fault", "Verify the path end to end"]
+
+[environment]
+profile = "debian"
+packages = ["traceroute", "mtr-tiny", "curl"]
+
+[[environment.setup]]
+action = "net"
+del_route = "default"
+
+[[environment.setup]]
+action = "net"
+add_route = "default"
+via = "10.0.2.3"
+
+[[task]]
+id = "reproduce"
+title = "That versus where"
+kind = "troubleshooting"
+instructions = "Confirm the symptom: http://intranet/ works, http://example.com/ does not. Which layer does that split point to?"
+skills = { "m.network-rca" = 1.0, "i.net-troubleshooting" = 0.5 }
+question = { prompt = "The local network works but the Internet does not. Where is the fault most likely?", type = "choice", choices = ["Name resolution — no DNS server answered", "Routing or forwarding — packets to off-LAN destinations leave but never get through, while on-LAN traffic is fine", "The web server on example.com refused the connection", "The network card is down"], answer = 1 }
+hints = ["On-LAN hosts are reached directly; off-LAN hosts go through the default gateway.", "If only off-LAN traffic fails, suspect the default route or the gateway, not DNS or the card.", "The answer is (b)."]
+explanation = "A split where local works but remote does not points at the path off the LAN: the default route or the gateway it names. traceroute will show exactly where."
+
+[[task]]
+id = "trace"
+title = "Trace it"
+kind = "troubleshooting"
+instructions = "Run traceroute (or mtr) to example.com and watch the first hop. The first line is your default gateway."
+skills = { "i.net-troubleshooting" = 1.0, "m.network-rca" = 0.5 }
+checks = [{ type = "output_contains", text = "10.0.2.3", command = ["traceroute", "mtr"], scope = "history" }]
+hints = ["traceroute -n example.com — the -n keeps it from pausing on name lookups.", "Look at hop 1: is it the router you expect?", "Hop 1 shows 10.0.2.3, then `* * *` all the way down."]
+explanation = "Hop 1 answers from 10.0.2.3 and the path dies right after it — so the packets are being handed to 10.0.2.3, which is not forwarding them onward."
+
+[[task]]
+id = "interpret"
+title = "Read the first hop"
+kind = "prediction"
+instructions = "The real gateway on this network is 10.0.2.2. What is 10.0.2.3 doing in hop 1?"
+skills = { "i.routing-gateways" = 1.0, "m.hypothesis-method" = 1.0 }
+question = { prompt = "traceroute's first hop is 10.0.2.3, not 10.0.2.2, and every hop after it is `* * *`. What does that tell you?", type = "choice", choices = ["The Internet is down", "The default route points at the wrong box: packets go to 10.0.2.3 (a host that answers but does not route) instead of the gateway 10.0.2.2", "A firewall on example.com is rejecting the probes", "DNS is misconfigured"], answer = 1 }
+hints = ["The first hop is always whatever your default route points to.", "10.0.2.3 answers (so it is up), but nothing past it does — it is not forwarding.", "Wrong default gateway: it should be 10.0.2.2."]
+explanation = "The first hop is your default gateway by definition. Seeing 10.0.2.3 there, when the router is 10.0.2.2, is the whole diagnosis: `ip route` will confirm the default points at 10.0.2.3."
+
+[[task]]
+id = "loss"
+title = "mtr confirms"
+kind = "prediction"
+instructions = "Run mtr -r example.com and read the Loss% column."
+skills = { "m.hypothesis-method" = 1.0, "m.verification" = 0.5 }
+question = { prompt = "In `mtr -r`, hop 1 (10.0.2.3) shows 0.0% loss but every later hop shows 100.0%. What does that mean?", type = "choice", choices = ["mtr is unreliable and should be ignored", "Packets reach 10.0.2.3 but nothing beyond it ever answers — the path ends at the first hop, exactly what a wrong default gateway looks like", "The destination is merely slow", "Only the last hop matters; ignore the rest"], answer = 1 }
+hints = ["Loss% is per hop: where does it jump to 100%?", "0% at hop 1, 100% everywhere after it, means the break is right after hop 1.", "The break is immediately past 10.0.2.3 — the gateway is wrong."]
+explanation = "mtr turns a single traceroute into statistics: a clean 0% up to one hop and 100% after it is a hard break there, not a flaky router (which would show partial loss)."
+
+[[task]]
+id = "fix"
+title = "Point it at the real gateway"
+kind = "independent"
+instructions = "Make the default route use the real gateway, 10.0.2.2, and prove the Internet is reachable again."
+skills = { "i.routing-gateways" = 1.0, "m.network-rca" = 1.0 }
+checks = [
+    { type = "default_route", via = "10.0.2.2" },
+    { type = "can_reach", host = "example.com", port = 80 },
+]
+hints = ["ip route shows the default via 10.0.2.3.", "Replace it: sudo ip route replace default via 10.0.2.2", "Then test: curl -sI http://example.com/ or traceroute -n example.com."]
+explanation = "With the default route pointing at the real router, off-LAN traffic flows again. (A runtime `ip route` change is lost at reboot — the lasting fix belongs in the distribution's network configuration.)"
+
+[[task]]
+id = "verify"
+title = "Trace it again"
+kind = "troubleshooting"
+instructions = "Trace the path once more. It should now leave through 10.0.2.2 and reach example.com (93.184.215.14)."
+skills = { "m.verification" = 1.0, "i.net-troubleshooting" = 0.5 }
+checks = [{ type = "output_contains", text = "93.184.215.14", command = ["traceroute", "mtr"], scope = "history" }]
+hints = ["traceroute -n example.com", "Hop 1 should now be 10.0.2.2.", "The last line shows the destination, 93.184.215.14."]
+explanation = "The trace now starts at 10.0.2.2 and ends at the destination: the fix is verified by the same tool that found the fault."
+
+[[task]]
+id = "method"
+title = "Stars and marks"
+kind = "explanation"
+instructions = "One last thing about reading the output."
+skills = { "m.hypothesis-method" = 1.0 }
+question = { prompt = "In traceroute, what does a line of `* * *` mean?", type = "choice", choices = ["That router is definitely blocking you on purpose", "No reply came back for that hop — maybe a router that does not answer probes, maybe packets dropped from there on; an explicit block shows as `!X`, and `!H`/`!N` mark unreachable", "The destination has been reached", "The command failed to start"], answer = 1 }
+hints = ["Does `* * *` distinguish 'silent router' from 'dropped here'?", "Only an explicit rejection is labelled — `!X`, `!H`, `!N`.", "`* * *` is just 'no answer'; the `!` marks are the explicit ones."]
+explanation = "`* * *` is ambiguous on its own — a polite router that stays quiet looks the same as a silent drop. The `!X` (prohibited), `!H` (host) and `!N` (network) marks are the unambiguous ones."
+
+[debrief]
+summary = """
+traceroute and mtr answer *where*, not just *whether*. The first hop is your default
+gateway: a wrong address there is a wrong default route. `* * *` is 'no reply' (silent
+router or drop); `!X`/`!H`/`!N` are explicit rejections. mtr's Loss% separates a hard break
+from a flaky hop. Fix, then re-trace to verify.
+"""
+alternatives = [
+    "ip route get 93.184.215.14 shows which gateway a destination would use, without sending anything",
+    "mtr example.com (interactive) instead of mtr -r for a live view",
+    "traceroute -I uses ICMP probes; traceroute -T uses TCP to a port a firewall allows",
+]
+pitfalls = [
+    "Reading `* * *` as 'this router blocks me' — it usually just means no reply.",
+    "Fixing the route only at runtime: ip route changes vanish at reboot.",
+    "Trusting a test from the server's loopback instead of tracing the real path.",
+]
+next = "Next: several faults at once."
+
+[[solution]]
+name = "traceroute then ip route replace"
+steps = [
+    "curl -sI http://intranet/",
+    "curl -sI http://example.com/",
+    ":answer b",
+    "traceroute -n example.com",
+    ":answer b",
+    "mtr -r -n -c 3 example.com",
+    ":answer b",
+    { input = ["letslinux"] },
+    "ip route",
+    "sudo ip route replace default via 10.0.2.2",
+    "curl -sI http://example.com/",
+    "traceroute -n example.com",
+    ":answer b",
+]
+
+[[solution]]
+name = "mtr to find it, then fix and re-trace"
+steps = [
+    "ping -c1 intranet",
+    "ping -c1 example.com",
+    ":answer b",
+    "mtr -r -n -c 3 example.com",
+    ":answer b",
+    ":answer b",
+    { input = ["letslinux"] },
+    "sudo ip route replace default via 10.0.2.2",
+    "traceroute -n example.com",
+    "mtr -r -n -c 3 example.com",
+    ":answer b",
+]
+
+[[counterexample]]
+name = "wrong gateway again"
+steps = [
+    ":answer b",
+    "traceroute -n example.com",
+    ":answer b",
+    "mtr -r -n -c 3 example.com",
+    ":answer b",
+    { input = ["letslinux"] },
+    "sudo ip route replace default via 10.0.2.4",
+    "traceroute -n example.com",
+    ":answer b",
+]

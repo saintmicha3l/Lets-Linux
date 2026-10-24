@@ -1,0 +1,171 @@
+schema = 1
+
+[mission]
+id = "f04b-picking-up-the-pieces"
+title = "Picking Up the Pieces"
+chapter = "F"
+kind = "troubleshooting"
+order = 6
+difficulty = 3
+requires = ["f02b-when-installs-go-wrong", "c08-the-method"]
+skills = ["f.conflicts-broken"]
+review_for = ["f.conflicts-broken"]
+xp = 110
+estimated_minutes = 20
+sequential = true
+
+[briefing]
+context = """
+Last night the server lost power in the middle of  apt full-upgrade . This morning every apt
+command stops with the same error before it does anything. Nothing is installed or removed —
+the package database is simply mid-change and dpkg will not move until someone tells it to
+finish. Read the error, finish the interrupted work, then get back to the task that was
+abandoned. (sudo password: letslinux)
+"""
+concept = """
+dpkg unpacks a package first, then configures it. If it is interrupted between the two steps a
+package is left "half-configured" (dpkg -l shows iF; dpkg --audit lists them). apt refuses to
+touch anything until that is resolved, and it tells you exactly how:  dpkg --configure -a
+retries the configure step for every pending package. Only then will apt install, remove or
+upgrade again. Follow the method: read the error, confirm the state with dpkg, apply the one
+documented fix, and verify apt works before moving on.
+"""
+objectives = ["Read what apt is actually complaining about", "Confirm the broken state with dpkg", "Finish the interrupted configuration", "Verify apt works again before continuing"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+want = { choices = ["tree", "net-tools", "strace"] }
+
+[[environment.setup]]
+action = "dpkg_interrupted"
+packages = ["rsyslog", "cron"]
+state = "half-configured"
+
+[[task]]
+id = "symptom"
+title = "What is apt waiting for?"
+kind = "explanation"
+instructions = "Try to install {{want}}:  sudo apt install {{want}}  . It refuses. Read the error line carefully: which single command does it tell you to run to correct the problem?"
+skills = { "f.conflicts-broken" = 0.5 }
+question = { prompt = "Which command does apt say you must run manually to correct the problem?", type = "exact", accept = ["dpkg --configure -a", "sudo dpkg --configure -a", "dpkg --configure --pending", "sudo dpkg --configure --pending"] }
+hints = ["apt does not guess; the fix is printed in the error itself.", "The message ends with: run 'dpkg --configure -a' to correct the problem.", "The answer is: dpkg --configure -a"]
+explanation = "apt tells you the fix in the error. The database was left mid-change; apt will not act until dpkg finishes what it started."
+
+[[task]]
+id = "confirm"
+title = "Confirm the state"
+kind = "troubleshooting"
+instructions = "Before changing anything, confirm which packages are in a bad state. List the packages dpkg considers only half configured."
+skills = { "f.conflicts-broken" = 0.5 }
+question = { prompt = "How many packages are left half-configured?", type = "number", accept = ["2"] }
+hints = ["dpkg --audit reports packages that are installed but not fully configured.", "dpkg -l shows a two-letter status; iF means half-configured.", "Run  dpkg --audit  (or  dpkg -l | grep '^iF' ) — there are 2."]
+explanation = "dpkg --audit names the packages whose configuration never finished. Knowing which they are tells you the blast radius before you act."
+
+[[task]]
+id = "recover"
+title = "Finish the interrupted work"
+kind = "troubleshooting"
+instructions = "Run the fix apt told you about, so that every pending package is configured and apt works again."
+skills = { "f.conflicts-broken" = 1.0 }
+checks = [
+    { type = "package_state", name = "rsyslog", state = "installed" },
+    { type = "package_state", name = "cron", state = "installed" },
+    { type = "command_used", command = ["dpkg"], args_contain = ["--configure"], as_root = true },
+    { type = "command_result", user = "root", command = "apt-get install -y tree", status = 0 },
+]
+persistent = true
+hints = ["This is the command from the first task, run with sudo.", "dpkg --configure -a retries every half-configured package.", "Run:  sudo dpkg --configure -a"]
+explanation = "dpkg --configure -a configures rsyslog and cron. With nothing left pending, apt will install, remove and upgrade normally again."
+
+[[task]]
+id = "finish"
+title = "Finish the abandoned job"
+kind = "troubleshooting"
+instructions = "The upgrade was interrupted while you were installing {{want}}. Now that apt works, complete that install."
+skills = { "f.conflicts-broken" = 0.5, "f.apt-basics" = 0.5 }
+checks = [{ type = "package_state", name = "{{want}}", state = "installed" }]
+persistent = true
+hints = ["apt works now; install it the normal way.", "Answer Y when apt asks, or pass -y.", "Run:  sudo apt install -y {{want}}"]
+explanation = "With the database healthy the install is routine again — the whole incident was the half-configured state blocking apt, not anything wrong with {{want}}."
+
+[[task]]
+id = "redherring"
+title = "A tempting shortcut"
+kind = "prediction"
+instructions = "A colleague messages: 'logging looked flaky, just run  sudo apt install syslog-ng  and it'll sort itself out.' Think about what apt would do before you run it."
+skills = { "f.conflicts-broken" = 1.0 }
+question = { prompt = "rsyslog is installed. What does  apt install syslog-ng  propose to do to rsyslog?", type = "choice", choices = ["Install syslog-ng alongside rsyslog", "Remove rsyslog (the two conflict)", "Upgrade rsyslog to syslog-ng's version", "Nothing — it only adds syslog-ng"], answer = 1 }
+hints = ["Two programs that both want to be the system logger cannot both own /var/log/syslog.", "apt lists syslog-ng under NEW and rsyslog under REMOVED, because they declare a conflict.", "The answer is (b): it would remove rsyslog."]
+explanation = "syslog-ng and rsyslog Conflict: installing one removes the other. That may be a deliberate choice, but it is never an accidental 'fix' — read apt's REMOVED list before confirming."
+
+[[task]]
+id = "intact"
+title = "Logging still intact"
+kind = "troubleshooting"
+instructions = "Confirm you did not switch loggers by accident: rsyslog must still be installed and running, and syslog-ng must not be installed."
+skills = { "f.conflicts-broken" = 0.5 }
+checks = [
+    { type = "package_state", name = "rsyslog", state = "installed" },
+    { type = "package_state", name = "syslog-ng", state = "absent" },
+    { type = "unit_state", unit = "rsyslog.service", active = "active" },
+]
+persistent = true
+hints = ["dpkg -l rsyslog syslog-ng shows their states.", "systemctl is-active rsyslog confirms the daemon is up.", "If you installed syslog-ng, put rsyslog back:  sudo apt install rsyslog  (it removes syslog-ng again)."]
+explanation = "The system is where it should be: the interrupted work is finished, {{want}} is installed, and the logger was never swapped out behind your back."
+
+[debrief]
+summary = """
+A half-configured package blocks all of apt. apt prints the exact fix —  dpkg --configure -a  —
+and once dpkg finishes, normal package work resumes. You confirmed the state with dpkg --audit
+before acting, applied the one documented fix, verified apt worked, finished the abandoned
+install, and resisted a 'fix' that would have quietly removed the system logger.
+"""
+alternatives = ["dpkg --configure PACKAGE configures one named package instead of all of them", "dpkg -l | grep '^iF' finds half-configured packages like dpkg --audit does", "apt-get -f install resolves broken dependencies (a related recovery for a different cause)"]
+pitfalls = ["Reinstalling or deleting packages to 'force' apt, when dpkg only needed to finish configuring them", "Running a suggested command (apt install syslog-ng) without reading its REMOVED list", "Assuming the named packages were damaged — they were only mid-configuration"]
+next = "Next: repository trust and signatures — what apt checks before it installs anything at all."
+
+[[guard]]
+type = "path_exists"
+path = "/usr/sbin/rsyslogd"
+message = "You removed rsyslog's binary — the system has no logger. This was never the problem; use :reset to start over."
+
+[[solution]]
+name = "audit then configure"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt install {{want}}",
+    ":answer dpkg --configure -a",
+    "dpkg --audit",
+    ":answer 2",
+    "sudo dpkg --configure -a",
+    "sudo apt install -y {{want}}",
+    ":answer b",
+    "dpkg -l rsyslog syslog-ng",
+]
+
+[[solution]]
+name = "grep the status, configure pending"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt install -y {{want}}",
+    ":answer sudo dpkg --configure -a",
+    "dpkg -l | grep '^iF'",
+    ":answer 2",
+    "sudo dpkg --configure --pending",
+    "sudo apt-get install -y {{want}}",
+    ":answer 2",
+    "systemctl is-active rsyslog",
+]
+
+[[counterexample]]
+name = "swaps the logger out"
+steps = [
+    { input = ["letslinux", "y"] },
+    ":answer dpkg --configure -a",
+    ":answer 2",
+    "sudo dpkg --configure -a",
+    "sudo apt install syslog-ng",
+    "sudo apt install -y {{want}}",
+    ":answer b",
+]

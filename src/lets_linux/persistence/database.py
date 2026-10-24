@@ -435,6 +435,28 @@ class Database:
                     (pid, xp, "mission", mission_id, now),
                 )
 
+    def add_evidence(self, pid: int, evidence: list[Evidence]) -> None:
+        """Record evidence not tied to a mission attempt (e.g. a quick review drill)."""
+        with self.transaction() as c:
+            for e in evidence:
+                c.execute(
+                    "INSERT INTO evidence (profile_id, skill_id, kind, outcome, weight, hint_tier, wrong_answers, "
+                    "difficulty, recorded_at, mission_id, task_id, attempt_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+                    (
+                        pid,
+                        e.skill_id,
+                        e.kind,
+                        e.outcome,
+                        e.weight,
+                        e.hint_tier,
+                        e.wrong_answers,
+                        e.difficulty,
+                        e.recorded_at,
+                        e.mission_id,
+                        e.task_id,
+                    ),
+                )
+
     def attempts(self, pid: int, mission_id: str | None = None) -> list[sqlite3.Row]:
         if mission_id is None:
             return self.conn.execute(

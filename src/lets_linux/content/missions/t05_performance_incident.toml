@@ -1,0 +1,251 @@
+schema = 1
+
+[mission]
+id = "t05-performance-incident"
+title = "Capstone: The Performance Incident"
+chapter = "T"
+kind = "capstone"
+order = 5
+difficulty = 6
+requires = ["p01b-control-groups", "g04-slow-server", "h02-reading-the-journal", "h03-your-own-service", "c08-the-method"]
+skills = ["t.performance-incident", "g.resource-monitoring", "h.journalctl", "p.cgroups", "h.enable-disable"]
+review_for = ["p.cgroups", "g.resource-monitoring", "h.journalctl"]
+xp = 440
+estimated_minutes = 55
+sequential = false
+
+[briefing]
+context = """
+Overnight the "{{team}}" application server fell over. The on-call engineer reported it was
+"out of memory and thrashing", stopped the {{api}}.service to free some, and went back to bed —
+the service is still down this morning. The background {{job}}.service has a memory leak: one of
+its workers grew without bound until the kernel's out-of-memory killer stepped in. Read what the
+kernel logged, contain the leaky service so it can never again take the whole machine down with
+it, and bring the stopped service back — all so it survives a reboot. (sudo password: letslinux)
+
+Specification:
+  1. Find, in the kernel log, which process the OOM killer killed and which service it belonged
+     to.
+  2. Put a memory limit on {{job}}.service so a future leak is confined to its own cgroup (the
+     kernel kills inside it, not a victim elsewhere) — persistently.
+  3. Bring {{api}}.service back up and enabled.
+"""
+concept = """
+When memory runs out the kernel's OOM killer picks a victim — by default the single biggest
+process anywhere, which may be your database, not the program that actually leaked. The journal
+records it: "<comm> invoked oom-killer", "oom-kill:...task_memcg=<cgroup>,task=<comm>", and "Out
+of memory: Killed process <pid> (<comm>)". The containment is a per-service limit: MemoryMax= on
+the service's cgroup means the kernel reclaims and then OOM-kills *inside that one cgroup*, so a
+leaking service kills only itself (and, with Restart=, restarts) instead of taking a neighbour
+down. Set it live and persistently with systemctl set-property UNIT MemoryMax=…; read it back in
+/sys/fs/cgroup/system.slice/UNIT/memory.max. Measure before and after with free, top/ps and
+systemd-cgtop; then restore what the incident knocked over.
+"""
+objectives = ["Read the OOM killer's record in the journal", "Identify the leaking service", "Contain it with a persistent per-service memory limit", "Restore the stopped service", "Verify, including after a reboot"]
+
+[environment]
+profile = "debian"
+
+[environment.vars]
+team = { choices = ["Aurora", "Beacon", "Cobalt"] }
+api = { choices = ["orders-api", "billing-api", "ledger-api"] }
+job = { choices = ["reindex", "thumbnailer", "transcoder"] }
+
+[[environment.setup]]
+action = "memory"
+total = "2G"
+
+[[environment.setup]]
+action = "service"
+name = "{{api}}.service"
+enable = true
+start = true
+content = """[Unit]
+Description={{team}} {{api}}
+
+[Service]
+ExecStart=/bin/sleep infinity
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "service"
+name = "{{job}}.service"
+enable = true
+start = true
+content = """[Unit]
+Description={{team}} background {{job}}
+
+[Service]
+ExecStart=/bin/sleep infinity
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+# a worker of the background job with a memory leak, in the job's cgroup
+[[environment.setup]]
+action = "process"
+comm = "{{job}}-worker"
+argv = ["/usr/local/bin/{{job}}-worker", "--queue", "main"]
+unit = "{{job}}.service"
+user = "root"
+state = "R"
+cpu = 12.0
+rss_kb = 1400000
+rss_growth_kbs = 4000.0
+age_minutes = 480
+
+# let time run: the leak grows until the kernel OOM-kills the worker (a real journal record)
+[[environment.setup]]
+action = "clock"
+seconds = 900
+run = true
+
+# the on-call engineer stopped the API service overnight to free memory, and it never came back
+[[environment.setup]]
+action = "run"
+command = "systemctl stop {{api}}.service"
+
+[[task]]
+id = "victim"
+title = "What did the kernel kill?"
+kind = "troubleshooting"
+instructions = "Something was killed overnight for memory. Read the kernel log and find out what."
+skills = { "t.performance-incident" = 1.0, "g.resource-monitoring" = 1.0, "h.journalctl" = 0.5 }
+question = { prompt = "Which process (its comm name) did the OOM killer kill?", type = "exact", accept = ["{{job}}-worker"] }
+hints = [
+    "The out-of-memory killer logs to the kernel ring buffer: journalctl -k (or dmesg).",
+    "Filter it: journalctl -k | grep -iE 'oom|killed process'.",
+    "The line reads 'Out of memory: Killed process PID ({{job}}-worker)'.",
+]
+explanation = "The kernel killed {{job}}-worker — the leaking worker of the background job — once it had exhausted RAM and swap."
+
+[[task]]
+id = "service"
+title = "Whose process was it?"
+kind = "troubleshooting"
+instructions = "Find which systemd service that process belonged to — the OOM record names its cgroup."
+skills = { "t.performance-incident" = 1.0, "h.journalctl" = 1.0 }
+question = { prompt = "Which service did the killed process belong to?", type = "exact", accept = ["{{job}}.service", "{{job}}", "system.slice/{{job}}.service", "/system.slice/{{job}}.service"] }
+hints = [
+    "The oom-kill line has task_memcg=<cgroup>.",
+    "task_memcg=/system.slice/{{job}}.service — services live under system.slice.",
+    "{{job}}.service is the leaking service.",
+]
+explanation = "task_memcg in the OOM record names the victim's cgroup, which is the service's: /system.slice/{{job}}.service."
+
+[[task]]
+id = "contain"
+title = "Cap the leak"
+kind = "independent"
+instructions = """
+Put a memory limit on {{job}}.service so that if it leaks again the kernel kills a process
+inside its own cgroup — not a victim elsewhere on the machine. Make the limit persistent (it
+must survive a reboot). Choose a reasonable ceiling (for example 512M or 1G).
+"""
+skills = { "t.performance-incident" = 1.0, "p.cgroups" = 1.0 }
+checks = [
+    { type = "command_result", command = "cat /sys/fs/cgroup/system.slice/{{job}}.service/memory.max", stdout_regex = "^[0-9]{6,}" },
+    { type = "command_result", command = "systemctl show -p MemoryMax --value {{job}}.service", stdout_regex = "^[0-9]{6,}" },
+    { type = "after_reboot", checks = [{ type = "command_result", command = "systemctl show -p MemoryMax --value {{job}}.service", stdout_regex = "^[0-9]{6,}" }] },
+]
+persistent = true
+hints = [
+    "systemctl set-property applies a cgroup property to a running unit and keeps it.",
+    "sudo systemctl set-property {{job}}.service MemoryMax=512M (without --runtime, so it persists).",
+    "Check the kernel's view: cat /sys/fs/cgroup/system.slice/{{job}}.service/memory.max.",
+]
+explanation = "With MemoryMax set, the memory-cgroup OOM killer confines a future leak to {{job}}.service itself — it can kill its own worker, but not the {{api}} service or anything else."
+
+[[task]]
+id = "restore"
+title = "Bring the service back"
+kind = "independent"
+instructions = "Start {{api}}.service again and make sure it is enabled so it comes up at boot."
+skills = { "t.performance-incident" = 1.0, "h.enable-disable" = 1.0 }
+checks = [
+    { type = "unit_state", unit = "{{api}}.service", active = "active" },
+    { type = "unit_enabled", unit = "{{api}}.service" },
+    { type = "after_reboot", checks = [{ type = "unit_state", unit = "{{api}}.service", active = "active" }] },
+]
+persistent = true
+hints = [
+    "It was stopped by hand overnight; start it again.",
+    "sudo systemctl start {{api}}.service (it is already enabled; confirm with systemctl is-enabled).",
+    "Check with systemctl status {{api}}.service — it should be active (running).",
+]
+explanation = "The service is running again and enabled, so this time it also comes back after a reboot."
+
+[[task]]
+id = "why"
+title = "Why a per-service cap?"
+kind = "explanation"
+instructions = "Explain to the on-call engineer why a MemoryMax on the leaky service is better than what they did."
+skills = { "t.performance-incident" = 1.0 }
+question = { prompt = "Why is a per-service MemoryMax the right containment?", type = "choice", choices = ["It makes the leak stop leaking", "It confines the OOM kill to the leaking service's own cgroup, so a future leak kills its own worker instead of the kernel picking a victim (maybe a database) machine-wide", "It gives the machine more RAM", "It is the same as stopping the other service by hand"], answer = 1 }
+hints = ["What does the limit change about who the OOM killer targets?", "The global OOM killer picks the biggest process anywhere; a cgroup limit scopes the kill.", "Answer (b)."]
+explanation = "A per-service limit scopes the damage: the leaking service kills (and restarts) itself instead of taking down a neighbour. Stopping an unrelated service by hand only buys time and leaves it down."
+
+[debrief]
+summary = """
+Read the OOM record (journalctl -k: invoked oom-killer, task_memcg, Killed process), identify
+the leaking service, contain it with a persistent MemoryMax so the kernel kills inside its own
+cgroup, then restore whatever the incident (or the panic) knocked over — and verify after a
+reboot.
+"""
+alternatives = [
+    "A drop-in: /etc/systemd/system/{{job}}.service.d/limit.conf with [Service] MemoryMax=512M, then daemon-reload.",
+    "MemoryHigh= to throttle before the hard MemoryMax= kill; systemd-cgtop to watch memory per service.",
+    "oom_score_adj or OOMScoreAdjust= to steer which process the global killer prefers — a blunter tool than a cgroup cap.",
+]
+pitfalls = [
+    "Reading free/top and blaming the biggest process instead of the one that grew.",
+    "set-property --runtime, which is forgotten at the next reboot.",
+    "Raising the limit or adding RAM instead of containing the leak.",
+    "Fixing the leak but leaving the service the engineer stopped still down.",
+]
+next = "You have reached the end of the built curriculum."
+
+[[solution]]
+name = "journal, set-property, restart"
+steps = [
+    "journalctl -k | grep -iE 'oom|killed process'",
+    ":answer {{job}}-worker",
+    ":answer /system.slice/{{job}}.service",
+    { input = ["letslinux"] },
+    "sudo systemctl set-property {{job}}.service MemoryMax=512M",
+    "cat /sys/fs/cgroup/system.slice/{{job}}.service/memory.max",
+    "sudo systemctl start {{api}}.service",
+    "systemctl is-enabled {{api}}.service",
+    ":answer 2",
+]
+
+[[solution]]
+name = "dmesg, drop-in, enable --now"
+steps = [
+    "dmesg | grep -i oom",
+    ":answer {{job}}-worker",
+    ":answer {{job}}.service",
+    { input = ["letslinux"] },
+    "sudo mkdir -p /etc/systemd/system/{{job}}.service.d",
+    "printf '[Service]\\nMemoryMax=1G\\n' | sudo tee /etc/systemd/system/{{job}}.service.d/limit.conf",
+    "sudo systemctl daemon-reload",
+    "sudo systemctl set-property {{job}}.service MemoryMax=1G",
+    "sudo systemctl enable --now {{api}}.service",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "restart without containing"
+steps = [
+    ":answer {{job}}-worker",
+    ":answer {{job}}.service",
+    { input = ["letslinux"] },
+    "sudo systemctl restart {{job}}.service",
+    "sudo systemctl start {{api}}.service",
+    ":answer 2",
+]

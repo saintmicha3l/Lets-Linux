@@ -13,13 +13,20 @@ section = "admin"
 essential = true
 versions = { debian = "252.31-1~deb12u1", ubuntu = "255.4-1ubuntu8.4", fedora = "256.7-1.fc41", arch = "256.7-1", generic = "256.7" }
 bin = [
-    "journalctl", "systemctl", "hostnamectl", "systemd-analyze", "systemd-cgls", "systemd-cgtop", "systemd-run", "systemd-detect-virt",
+    "journalctl", "systemctl", "hostnamectl", "timedatectl", "localectl", "loginctl", "systemd-analyze", "systemd-cgls", "systemd-cgtop", "systemd-run", "systemd-detect-virt",
     "networkctl",
     "/usr/lib/systemd/systemd-networkd=systemd-networkd",
+    "/usr/lib/systemd/systemd-timesyncd=systemd-timesyncd",
     "/usr/lib/systemd/systemd-journald=systemd-journald",
     "/usr/lib/systemd/systemd-udevd=systemd-udevd",
     "/usr/lib/systemd/systemd-logind=systemd-logind",
+    "/usr/lib/systemd/systemd=systemd",
 ]
+
+[[package.file]]
+path = "/usr/sbin/init"   # Arch's /usr/sbin is a link to bin: there it is /usr/bin/init
+kind = "symlink"
+target = "../lib/systemd/systemd"
 
 [[package.file]]
 path = "/usr/lib/systemd/system/systemd-networkd.service"
@@ -62,6 +69,32 @@ Type=notify
 ExecStart=/usr/lib/systemd/systemd-journald
 Restart=always
 RestartSec=0
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/systemd-timesyncd.service"
+content = """#  SPDX-License-Identifier: LGPL-2.1-or-later
+#
+#  This file is part of systemd.
+
+[Unit]
+Description=Network Time Synchronization
+Documentation=man:systemd-timesyncd.service(8)
+ConditionCapability=CAP_SYS_TIME
+DefaultDependencies=no
+After=systemd-sysusers.service
+Before=time-set.target sysinit.target shutdown.target
+Conflicts=shutdown.target
+Wants=time-set.target time-sync.target
+
+[Service]
+Type=notify
+ExecStart=/usr/lib/systemd/systemd-timesyncd
+Restart=always
+RestartSec=0
+
+[Install]
+WantedBy=sysinit.target
 """
 
 [[package.file]]
@@ -257,6 +290,8 @@ section = "admin"
 families = ["debian"]
 versions = { debian = "8.2302.0-1+deb12u1", ubuntu = "8.2312.0-3ubuntu9" }
 depends = ["systemd"]
+conflicts = ["syslog-ng"]
+provides = ["system-log-daemon"]
 sbin = ["rsyslogd"]
 services = ["rsyslog.service"]
 
@@ -311,6 +346,65 @@ Restart=on-failure
 # Increase the default a bit in order to allow many simultaneous
 # files to be monitored, we might need a lot of fds.
 LimitNOFILE=16384
+
+[Install]
+WantedBy=multi-user.target
+Alias=syslog.service
+"""
+
+[[package]]
+name = "syslog-ng"
+summary = "Next generation logging daemon"
+section = "admin"
+families = ["debian"]
+versions = { debian = "3.38.1-5.1", ubuntu = "4.6.0-1" }
+depends = ["systemd"]
+conflicts = ["rsyslog"]
+provides = ["system-log-daemon"]
+sbin = ["syslog-ng"]
+services = ["syslog-ng.service"]
+
+[[package.file]]
+path = "/etc/syslog-ng/syslog-ng.conf"
+content = """@version: 3.38
+@include "scl.conf"
+
+# Default configuration shipped with the package. See syslog-ng.conf(5).
+options {
+	chain_hostnames(off);
+	flush_lines(0);
+	use_dns(no);
+	use_fqdn(no);
+	owner("root");
+	group("adm");
+	perm(0640);
+	stats_freq(0);
+	bad_hostname("^gconfd$");
+};
+
+source s_src {
+	system();
+	internal();
+};
+
+destination d_syslog { file("/var/log/syslog"); };
+destination d_auth { file("/var/log/auth.log"); };
+
+log { source(s_src); destination(d_syslog); };
+"""
+
+[[package.file]]
+path = "/usr/lib/systemd/system/syslog-ng.service"
+content = """[Unit]
+Description=System Logger Daemon
+Documentation=man:syslog-ng(8)
+After=network.target
+
+[Service]
+Type=notify
+ExecStart=/usr/sbin/syslog-ng -F $SYSLOGNG_OPTS
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
@@ -789,4 +883,54 @@ content = """# Configuration file for NetworkManager.
 # See "man 5 NetworkManager.conf" for details.
 [main]
 plugins=keyfile
+"""
+
+[[package]]
+name = "auditd"
+summary = "User space tools for security auditing"
+section = "admin"
+names = { fedora = "audit", arch = "audit" }
+versions = { debian = "1:3.0.9-1", ubuntu = "1:3.1.2-2.1build1", fedora = "4.0.2-1.fc41", arch = "4.0.2-1", generic = "4.0.2" }
+sbin = ["auditctl"]
+bin = ["ausearch", "aureport"]
+
+[[package]]
+name = "fail2ban"
+summary = "ban hosts that cause multiple authentication errors"
+section = "admin"
+versions = { debian = "1.0.2-3", ubuntu = "1.0.2-3", fedora = "1.1.0-1.fc41", arch = "1.1.0-1", generic = "1.0.2" }
+depends = ["python3"]
+bin = ["fail2ban-client", "fail2ban-server"]
+services = ["fail2ban.service"]
+
+[[package.file]]
+path = "/usr/lib/systemd/system/fail2ban.service"
+content = """[Unit]
+Description=Fail2Ban Service
+Documentation=man:fail2ban(1)
+After=network.target iptables.service firewalld.service ip6tables.service ipset.service nftables.service
+PartOf=firewalld.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/fail2ban-server -xf start
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[package.file]]
+path = "/etc/fail2ban/jail.conf"
+content = """# Fail2Ban jail specifications (shipped defaults; override in jail.local).
+[DEFAULT]
+bantime  = 10m
+findtime = 10m
+maxretry = 5
+backend  = systemd
+
+[sshd]
+enabled = true
+port    = ssh
+backend = systemd
 """

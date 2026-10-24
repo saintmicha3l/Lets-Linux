@@ -1,0 +1,157 @@
+schema = 1
+
+[mission]
+id = "r02b-same-change-everywhere"
+title = "Same Change, Everywhere"
+chapter = "R"
+kind = "challenge"
+order = 3
+difficulty = 5
+requires = ["r01-three-families", "r02-one-policy"]
+skills = ["r.package-translation", "r.admin-groups", "r.distro-families"]
+review_for = ["r.package-translation", "r.admin-groups"]
+xp = 180
+estimated_minutes = 25
+sequential = false
+
+[briefing]
+context = """
+A change request landed: roll out the same two changes to the whole fleet — your Debian box
+and the two servers 'fed' (10.0.2.61, Fedora) and 'arch' (10.0.2.62, Arch). No walkthrough this
+time. You know the families differ; apply the change the way each one expects. Log in with
+ssh admin@fed and ssh admin@arch (password letslinux; admin may sudo). sudo password here is
+letslinux.
+"""
+concept = """
+Nothing new to learn — this is the translation you already know, applied without prompts:
+package managers (apt / dnf / pacman), and which group grants sudo (sudo on Debian, wheel on
+Fedora and Arch). The point is to do it on all three without being told the per-family details.
+"""
+objectives = ["Install the same tool on three families", "Create an administrator the way each family expects", "Apply one change across a mixed fleet unaided"]
+
+[environment]
+profile = "debian"
+[environment.vars]
+tool = { choices = ["tcpdump", "tree", "net-tools"] }
+admin = { choices = ["ops", "sre", "oncall", "fleet"] }
+
+[[environment.setup]]
+action = "peer"
+name = "fed"
+addresses = ["10.0.2.61"]
+
+[[environment.setup]]
+action = "dns"
+name = "fed.example.lan"
+value = "10.0.2.61"
+
+[[environment.setup]]
+action = "remote"
+host = "fed"
+profile = "fedora"
+
+[[environment.setup]]
+action = "peer"
+name = "arch"
+addresses = ["10.0.2.62"]
+
+[[environment.setup]]
+action = "dns"
+name = "arch.example.lan"
+value = "10.0.2.62"
+
+[[environment.setup]]
+action = "remote"
+host = "arch"
+profile = "arch"
+
+[[task]]
+id = "tool"
+title = "Install {{tool}} on every server"
+kind = "independent"
+instructions = "Install the {{tool}} package on this machine and on both fed and arch. The package name happens to be the same on all three — the command to install it is not."
+skills = { "r.package-translation" = 1.0, "r.distro-families" = 0.5 }
+checks = [
+    { type = "package_state", name = "{{tool}}", state = "installed" },
+    { type = "on_host", host = "fed", checks = [{ type = "package_state", name = "{{tool}}", state = "installed" }] },
+    { type = "on_host", host = "arch", checks = [{ type = "package_state", name = "{{tool}}", state = "installed" }] },
+]
+persistent = true
+hints = ["Three package managers: apt here, dnf on fed, pacman on arch.", "Each needs its own non-interactive flag: apt -y, dnf -y, pacman --noconfirm.", "sudo apt install -y {{tool}}; ssh admin@fed 'sudo dnf install -y {{tool}}'; ssh admin@arch 'sudo pacman -S --noconfirm {{tool}}'"]
+explanation = "The package name matched this time, but the installer did not. A fleet change means repeating the same intent through each family's tools."
+
+[[task]]
+id = "admin"
+title = "An administrator named {{admin}}"
+kind = "independent"
+instructions = "Create the user {{admin}} on all three machines and make it an administrator (able to use sudo) by group membership — the way each family intends, without editing sudoers."
+skills = { "r.admin-groups" = 1.0, "d.user-management" = 0.5 }
+checks = [
+    { type = "in_group", user = "{{admin}}", group = "sudo" },
+    { type = "command_result", user = "root", command = "sudo -l -U {{admin}}", stdout_contains = ["(ALL"] },
+    { type = "on_host", host = "fed", checks = [{ type = "in_group", user = "{{admin}}", group = "wheel" }, { type = "command_result", user = "root", command = "sudo -l -U {{admin}}", stdout_contains = ["(ALL"] }] },
+    { type = "on_host", host = "arch", checks = [{ type = "in_group", user = "{{admin}}", group = "wheel" }, { type = "command_result", user = "root", command = "sudo -l -U {{admin}}", stdout_contains = ["(ALL"] }] },
+]
+persistent = true
+hints = ["Which group does /etc/sudoers grant to? grep '^%' /etc/sudoers on each.", "Debian: the group 'sudo'. Fedora and Arch: the group 'wheel'.", "sudo useradd -m -G sudo {{admin}} here; ssh admin@fed 'sudo useradd -m -G wheel {{admin}}'; the same on arch."]
+explanation = "Same outcome — an administrator — reached through the group each family uses. Group-based admin leaves sudoers untouched, so revoking rights is one group change."
+
+[[task]]
+id = "group-recall"
+title = "Which group?"
+kind = "explanation"
+instructions = "State the rule you just applied."
+skills = { "r.admin-groups" = 0.5 }
+question = { prompt = "Which group grants sudo on Fedora and Arch (the one Debian calls 'sudo')?", type = "exact", accept = ["wheel", "the wheel group"] }
+hints = ["It is the traditional BSD/RHEL name for the administrators' group.", "grep wheel /etc/sudoers on fed shows %wheel ALL=(ALL) ALL.", "The answer is: wheel."]
+explanation = "Debian grants sudo through the group 'sudo'; Fedora, RHEL and Arch use 'wheel'. Knowing this one difference saves a lot of 'why can't I sudo' confusion."
+
+[debrief]
+summary = """
+You applied one change request across three families without a walkthrough: installed {{tool}}
+with apt, dnf and pacman, and made {{admin}} an administrator through the 'sudo' group on Debian
+and the 'wheel' group on Fedora and Arch. Same intent, translated three ways.
+"""
+alternatives = ["A loop over hosts with ssh runs the family-correct command on each in one go", "usermod -aG GROUP USER adds the group to an existing account instead of useradd -G", "Configuration management (Ansible) exists precisely to express one change for many families"]
+pitfalls = ["Using apt syntax on fed or arch", "Adding {{admin}} to 'sudo' on Fedora/Arch (no such group) instead of 'wheel'", "Editing /etc/sudoers by hand when group membership is enough"]
+next = "You have reached the end of chapter R. Next: the specialist paths and the capstones."
+
+[[solution]]
+name = "one host at a time"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt install -y {{tool}}",
+    "sudo useradd -m -G sudo {{admin}}",
+    { input = ["yes", "letslinux", "letslinux"] },
+    "ssh -t admin@fed 'sudo dnf install -y {{tool}} && sudo useradd -m -G wheel {{admin}}'",
+    { input = ["yes", "letslinux", "letslinux"] },
+    "ssh -t admin@arch 'sudo pacman -S --noconfirm {{tool}} && sudo useradd -m -G wheel {{admin}}'",
+    ":answer wheel",
+]
+
+[[solution]]
+name = "usermod for the groups"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt-get install -y {{tool}}",
+    "sudo useradd -m {{admin}}",
+    "sudo usermod -aG sudo {{admin}}",
+    { input = ["yes", "letslinux", "letslinux"] },
+    "ssh -t admin@fed 'sudo dnf -y install {{tool}} && sudo useradd -m {{admin}} && sudo usermod -aG wheel {{admin}}'",
+    { input = ["yes", "letslinux", "letslinux"] },
+    "ssh -t admin@arch 'sudo pacman -S --noconfirm {{tool}} && sudo useradd -m {{admin}} && sudo gpasswd -a {{admin}} wheel'",
+    ":answer the wheel group",
+]
+
+[[counterexample]]
+name = "debian group everywhere"
+steps = [
+    { input = ["letslinux"] },
+    "sudo apt install -y {{tool}}",
+    "sudo useradd -m -G sudo {{admin}}",
+    { input = ["yes", "letslinux", "letslinux"] },
+    "ssh -t admin@fed 'sudo dnf install -y {{tool}} && sudo useradd -m -G sudo {{admin}}'",
+    { input = ["yes", "letslinux", "letslinux"] },
+    "ssh -t admin@arch 'sudo pacman -S --noconfirm {{tool}} && sudo useradd -m -G sudo {{admin}}'",
+    ":answer wheel",
+]

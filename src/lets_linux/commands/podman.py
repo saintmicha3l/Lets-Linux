@@ -18,6 +18,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import re
 import shlex
 from functools import partial
 from typing import Any
@@ -986,23 +987,108 @@ def _iso(ts: float) -> str:
     return dt.datetime.fromtimestamp(ts, tz=dt.UTC).isoformat()
 
 
+_ACTION = re.compile(r"\{\{(-\s)?\s*(.*?)\s*(\s-)?\}\}", re.DOTALL)
+_RANGE = re.compile(r"range\s+(?:(\$\w+)\s*(?:,\s*(\$\w+))?\s*:=\s*)?(.+)", re.DOTALL)
+
+
 def _template(fmt: str, data: dict[str, Any]) -> str:
-    """Go-template subset: {{.Path.To.Field}} (and {{json .X}})."""
-    import re
+    """Go text/template subset: {{.Path.To.Field}}, {{.}}, {{json .X}}, {{"literal"}},
+    variables, {{range .List}}...{{end}} and {{range $k, $v := .Map}}...{{end}} (maps in
+    sorted key order, as Go does), and {{- -}} whitespace trimming."""
+    nodes, rest = _template_parse(_template_tokens(fmt), top=True)
+    del rest
+    out: list[str] = []
+    _template_render(nodes, data, {"$": data}, out)
+    return "".join(out)
 
-    def value(expr: str) -> str:
-        as_json = expr.startswith("json ")
-        path = expr.removeprefix("json ").strip().lstrip(".")
-        cur: Any = data
-        for part in [p for p in path.split(".") if p]:
-            cur = cur.get(part, "") if isinstance(cur, dict) else ""
-        if as_json or isinstance(cur, (dict, list)):
-            return json.dumps(cur)
-        if isinstance(cur, bool):
-            return str(cur).lower()
-        return str(cur)
 
-    return re.sub(r"\{\{\s*(.*?)\s*\}\}", lambda m: value(m.group(1)), fmt)
+def _template_tokens(fmt: str) -> list[tuple[str, str]]:
+    tokens: list[tuple[str, str]] = []
+    pos, trim_next = 0, False
+    for m in _ACTION.finditer(fmt):
+        text = fmt[pos : m.start()]
+        if trim_next:
+            text = text.lstrip()
+        if m.group(1):
+            text = text.rstrip()
+        tokens.append(("text", text))
+        tokens.append(("act", m.group(2)))
+        pos, trim_next = m.end(), bool(m.group(3))
+    tail = fmt[pos:]
+    tokens.append(("text", tail.lstrip() if trim_next else tail))
+    return tokens
+
+
+def _template_parse(
+    tokens: list[tuple[str, str]], *, top: bool = False
+) -> tuple[list[Any], list[tuple[str, str]]]:
+    nodes: list[Any] = []
+    while tokens:
+        kind, value = tokens.pop(0)
+        if kind == "text":
+            nodes.append(("text", value))
+        elif value == "end":
+            if top:
+                raise PodmanError("Error: template: inspect:1: unexpected {{end}}")
+            return nodes, tokens
+        elif value.startswith("range ") or value == "range":
+            m = _RANGE.fullmatch(value)
+            if m is None:
+                raise PodmanError("Error: template: inspect:1: missing value for range")
+            body, tokens = _template_parse(tokens)
+            nodes.append(("range", m.group(1), m.group(2), m.group(3).strip(), body))
+        else:
+            nodes.append(("expr", value))
+    if not top:
+        raise PodmanError("Error: template: inspect:1: unexpected EOF")
+    return nodes, tokens
+
+
+def _template_value(expr: str, dot: Any, variables: dict[str, Any]) -> Any:
+    expr = expr.strip()
+    if expr.startswith('"') and expr.endswith('"') and len(expr) >= 2:
+        return json.loads(expr)  # Go string literals use the same escapes (\n, \t, \")
+    if expr.startswith("$"):
+        name, _, path = expr.partition(".")
+        cur = variables.get(name, "")
+    else:
+        cur, path = dot, expr.lstrip(".")
+    for part in [p for p in path.split(".") if p]:
+        cur = cur.get(part, "") if isinstance(cur, dict) else ""
+    return cur
+
+
+def _template_text(value: Any, as_json: bool = False) -> str:
+    if as_json or isinstance(value, (dict, list)):
+        return json.dumps(value)
+    if isinstance(value, bool):
+        return str(value).lower()
+    return str(value)
+
+
+def _template_render(nodes: list[Any], dot: Any, variables: dict[str, Any], out: list[str]) -> None:
+    for node in nodes:
+        if node[0] == "text":
+            out.append(node[1])
+        elif node[0] == "expr":
+            as_json = node[1].startswith("json ")
+            out.append(
+                _template_text(
+                    _template_value(node[1].removeprefix("json "), dot, variables), as_json
+                )
+            )
+        else:
+            _kind, first, second, source, body = node
+            items = _template_value(source, dot, variables)
+            pairs = (sorted(items.items()) if isinstance(items, dict)
+                     else list(enumerate(items)) if isinstance(items, list) else [])  # fmt: skip
+            for key, item in pairs:
+                scope = dict(variables)
+                if first and second:
+                    scope[first], scope[second] = key, item
+                elif first:
+                    scope[first] = item
+                _template_render(body, item, scope, out)
 
 
 def _volume(e: Engine, args: list[str]) -> int:

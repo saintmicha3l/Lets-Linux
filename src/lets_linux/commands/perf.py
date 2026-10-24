@@ -400,6 +400,7 @@ def sar(ctx: CommandContext) -> int:
         i += 1
     delay, count = _interval_args(rest)
     m = ctx.machine
+    started = m.now()
     if delay is not None:  # live sampling
         samples = []
         for n in range(max(1, min(count or 1, 60))):
@@ -436,7 +437,9 @@ def sar(ctx: CommandContext) -> int:
     )
     if not samples:
         return 0
-    first = _sar_time(samples[0].time - 600)
+    # the header names the start of the first interval: when live sampling began, or for a
+    # data file (collected every 10 minutes) the collection before the first record
+    first = _sar_time(started if delay is not None else samples[0].time - 600)
     if mode == "u":
         ctx.outln(f"{first}     CPU     %user     %nice   %system   %iowait    %steal     %idle")
         rows = [(s.us, s.ni, s.sy, s.wa, s.st, s.id) for s in samples]
@@ -471,10 +474,10 @@ def sar(ctx: CommandContext) -> int:
             f"{first}       DEV       tps     rkB/s     wkB/s   areq-sz    aqu-sz     await     %util"
         )
         for s in samples:
-            util = min(99.9, (s.rkbs + s.wkbs) / resources.DISK_KBS * 100)
+            util, await_ms, aqu = resources.queue_stats(s.rkbs + s.wkbs, s.tps)
             areq = (s.rkbs + s.wkbs) / s.tps if s.tps else 0.0
             ctx.outln(f"{_sar_time(s.time)} {dev:>9} {s.tps:>9.2f} {s.rkbs:>9.2f} {s.wkbs:>9.2f} {areq:>9.2f} "
-                      f"{s.tps * 0.0005:>9.2f} {0.35 / max(0.02, 1 - util / 100):>9.2f} {util:>9.2f}")  # fmt: skip
+                      f"{aqu:>9.2f} {await_ms:>9.2f} {util:>9.2f}")  # fmt: skip
     return 0
 
 

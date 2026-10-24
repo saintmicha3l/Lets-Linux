@@ -42,6 +42,8 @@ class Credentials:
     nnp: bool = False
     #: a systemd service's file-system view (ProtectSystem=, PrivateTmp= …)
     sandbox: Sandbox | None = None
+    #: a mandatory-access-control label ("selinux:DOMAIN" / "apparmor:PROFILE"); None: unconfined
+    mac_label: str | None = None
 
     @property
     def is_root(self) -> bool:

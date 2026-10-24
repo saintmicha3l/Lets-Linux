@@ -224,6 +224,27 @@ def file_owner(ctx: CheckContext, p: dict[str, Any]) -> bool:
 
 
 @check(
+    "selinux_context",
+    required=("path",),
+    one_of=("context_type", "mode"),
+    description="A path's SELinux file type equals CONTEXT_TYPE (and/or the mode is MODE).",
+)
+def selinux_context(ctx: CheckContext, p: dict[str, Any]) -> bool:
+    machine = ctx.machine
+    if "mode" in p and machine.selinux_mode().lower() != str(p["mode"]).lower():
+        return False
+    if "context_type" not in p:
+        return True
+    ops = _ops(ctx)
+    path = ctx.path(p["path"])
+    try:
+        real = ops.realpath(path)
+    except FsError:
+        real = path
+    return machine.mac.selinux.file_type(real) == str(p["context_type"])
+
+
+@check(
     "symlink_to",
     required=("path", "target"),
     description="A symbolic link points to TARGET (or resolves to it).",

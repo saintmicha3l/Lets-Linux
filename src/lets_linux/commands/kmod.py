@@ -26,7 +26,7 @@ def lsmod(ctx: CommandContext) -> int:
     return 0
 
 
-@_cmd("modinfo", "Show information about a Linux kernel module.", usage="modinfo [-F FIELD] MODULE...",
+@_cmd("modinfo", "Show information about a Linux kernel module.", usage="modinfo [-F FIELD | -n] MODULE...",
       auto_parse=False, category="system", learn=("n.kernel-modules",))  # fmt: skip
 def modinfo(ctx: CommandContext) -> int:
     args = ctx.argv[1:]
@@ -38,6 +38,13 @@ def modinfo(ctx: CommandContext) -> int:
             field_name = args[i + 1]
             i += 2
             continue
+        if args[i] in ("-n", "--filename"):  # kmod: the same as -F filename
+            field_name = "filename"
+            i += 1
+            continue
+        if args[i].startswith("-") and len(args[i]) > 1:
+            ctx.stderr.write(f"modinfo: unrecognized option '{args[i]}'\n")
+            return 1
         names.append(args[i])
         i += 1
     if not names:

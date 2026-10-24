@@ -567,7 +567,7 @@ def _run(
         for goal in goals:
             before = mk.ran_recipe
             rebuilt = mk.make(goal)
-            if not rebuilt and mk.ran_recipe == before and not mk.dry_run:
+            if not rebuilt and mk.ran_recipe == before:  # with -n too, as GNU make does
                 rule = mk.mf.rules.get(goal)
                 if (
                     goal in mk.mf.phony

@@ -90,6 +90,8 @@ class Inode:
     default_acl: list[AclEntry] | None = None
     #: extended attributes (only security.capability is used: setcap's text form)
     xattrs: dict[str, str] | None = None
+    #: chattr(1) file attributes, as their letter flags (e.g. "i" immutable, "a" append-only)
+    attrs: str = ""
 
     @property
     def size(self) -> int:
@@ -146,6 +148,8 @@ class Inode:
             out["dacl"] = [[a.tag, a.qualifier, a.perms] for a in self.default_acl]
         if self.xattrs:
             out["xattr"] = dict(self.xattrs)
+        if self.attrs:
+            out["attrs"] = self.attrs
         return out
 
     @classmethod
@@ -176,6 +180,7 @@ class Inode:
             node.default_acl = [AclEntry(t, q, p) for t, q, p in d["dacl"]]
         if d.get("xattr"):
             node.xattrs = dict(d["xattr"])
+        node.attrs = d.get("attrs", "")
         return node
 
 

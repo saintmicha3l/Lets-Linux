@@ -1,0 +1,246 @@
+schema = 1
+
+[mission]
+id = "t04-hardened-migration"
+title = "Capstone: The Hardened Migration"
+chapter = "T"
+kind = "capstone"
+order = 4
+difficulty = 6
+requires = ["l10-the-mislabeled-site", "i07-firewall", "h03-your-own-service", "d04-sudo-and-accounts", "f01-installing-software"]
+skills = ["t.hardened-migration", "f.package-concepts", "h.unit-files", "l.mac-concepts", "i.firewalls", "d.group-management"]
+review_for = ["l.mac-concepts", "i.firewalls", "h.unit-files"]
+xp = 440
+estimated_minutes = 55
+sequential = false
+
+[briefing]
+context = """
+The "{{site}}" team's website is moving off an old Debian box onto this fresh Fedora server,
+where SELinux is enforcing. The old server's web root was already pulled across into
+/var/www/html — but it came over with the archive's original labels, so the files carry a
+home-directory SELinux context, not a web one. Nothing else is set up yet. Bring the site up on
+Fedora, properly: the web server installed and running, the content readable by the web server's
+SELinux domain, the firewall opened for HTTP, and an operator account to run it — all surviving
+a reboot, and all without weakening SELinux. Remember this is Fedora, not Debian: the package
+manager, the firewall tool and the file contexts are not what you used on the old box.
+(sudo password: letslinux)
+
+Specification:
+  1. A group "{{site}}web" and a human operator "{{operator}}" who may use sudo and is a
+     member of that group.
+  2. The nginx web server installed, enabled at boot and listening on port 80.
+  3. The content in /var/www/html readable by the web server's domain (httpd_t), with SELinux
+     left enforcing.
+  4. The firewall allowing HTTP, persistently.
+"""
+concept = """
+Migrating a service across distributions is not just copying files: the tools and the security
+model change. On Fedora the package manager is dnf (not apt), the firewall front end is
+firewall-cmd/firewalld (not ufw), and — the part that most often breaks a "it worked on Debian"
+migration — SELinux is enforcing. Files that arrive from elsewhere keep their old context, and
+the web server's domain (httpd_t) may only read httpd_sys_content_t. The fix is to relabel to
+the policy's default for /var/www (restorecon), never to switch SELinux off. Build each piece so
+it persists: an enabled unit, a --permanent firewall rule, labels that are the policy default —
+then verify against the specification, including after a reboot.
+"""
+objectives = ["Create the operator group and account", "Install and enable the web server", "Relabel the content for httpd_t with SELinux enforcing", "Open the firewall for HTTP persistently", "Verify the migration, including after a reboot"]
+
+[environment]
+profile = "fedora"
+
+[[environment.setup]]
+action = "dir"
+path = "/var/www/html"
+owner = "root"
+group = "root"
+mode = "0755"
+
+[[environment.setup]]
+action = "file"
+path = "/var/www/html/index.html"
+owner = "root"
+group = "root"
+mode = "0644"
+content = "<h1>{{site}}</h1>\n<p>Welcome to the {{site}} team site.</p>\n"
+
+[[environment.setup]]
+action = "file"
+path = "/var/www/html/about/index.html"
+owner = "root"
+group = "root"
+mode = "0644"
+content = "<h1>About {{site}}</h1>\n"
+
+# The content arrived from the old Debian box carrying its original labels, so httpd_t cannot
+# read it until it is relabelled.
+[[environment.setup]]
+action = "run"
+command = "chcon -R -t admin_home_t /var/www/html"
+
+[environment.vars]
+site = { choices = ["aurora", "beacon", "cobalt"] }
+operator = { choices = ["mina", "raj", "lena"] }
+
+[[task]]
+id = "accounts"
+title = "The operator account"
+kind = "independent"
+instructions = """
+Create the group {{site}}web and a human operator {{operator}} — an ordinary account that
+may use sudo and is a member of that group. (On Fedora the sudo-granting group is wheel.)
+"""
+skills = { "t.hardened-migration" = 1.0, "d.group-management" = 1.0 }
+checks = [
+    { type = "group_exists", name = "{{site}}web" },
+    { type = "user_exists", name = "{{operator}}" },
+    { type = "in_group", user = "{{operator}}", group = "{{site}}web" },
+    { type = "command_result", user = "root", command = "id -u {{operator}} >/dev/null && groups {{operator}} | grep -Ewc 'wheel|sudo'", stdout_equals = "1" },
+]
+persistent = true
+hints = [
+    "sudo groupadd {{site}}web.",
+    "sudo useradd -m -G wheel,{{site}}web {{operator}} (wheel is the sudo group on Fedora).",
+    "Check with groups {{operator}} — it should list wheel and {{site}}web.",
+]
+explanation = "A normal account with sudo through the wheel group — Fedora's equivalent of Debian's sudo group — and membership of the site's own group."
+
+[[task]]
+id = "webserver"
+title = "The web server"
+kind = "independent"
+instructions = """
+Install the nginx web server with Fedora's package manager, then enable and start it so it
+listens on port 80 now and after a reboot.
+"""
+skills = { "t.hardened-migration" = 1.0, "f.package-concepts" = 1.0, "h.unit-files" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "rpm -q nginx >/dev/null && echo yes || echo no", stdout_equals = "yes" },
+    { type = "unit_state", unit = "nginx.service", active = "active" },
+    { type = "unit_enabled", unit = "nginx.service" },
+    { type = "port_listening", port = 80 },
+    { type = "after_reboot", checks = [{ type = "port_listening", port = 80 }] },
+]
+persistent = true
+hints = [
+    "On Fedora you install with dnf, not apt: sudo dnf install -y nginx.",
+    "sudo systemctl enable --now nginx — enable (for boot) and start (now) in one.",
+    "Confirm with systemctl status nginx and sudo ss -ltnp | grep ':80'.",
+]
+explanation = "dnf is Fedora's apt; enabling the unit (not just starting it) is what makes the server come back after a reboot."
+
+[[task]]
+id = "context"
+title = "Labels for the web root"
+kind = "troubleshooting"
+instructions = """
+The migrated files in /var/www/html carry the wrong SELinux context, so the web server's domain
+(httpd_t) is refused when it reads them. Relabel the whole web root to the policy's default so
+httpd_t can read it — and leave SELinux enforcing. Reproduce the denial first if you want to see
+it: runcon -t httpd_t cat /var/www/html/index.html.
+"""
+skills = { "t.hardened-migration" = 1.0, "l.mac-concepts" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "getenforce", stdout_equals = "Enforcing\n" },
+    { type = "selinux_context", path = "/var/www/html/index.html", context_type = "httpd_sys_content_t" },
+    { type = "selinux_context", path = "/var/www/html/about/index.html", context_type = "httpd_sys_content_t" },
+    { type = "command_result", user = "root", command = "runcon -t httpd_t cat /var/www/html/index.html", status = 0 },
+    { type = "after_reboot", checks = [{ type = "selinux_context", path = "/var/www/html/index.html", context_type = "httpd_sys_content_t" }] },
+]
+persistent = true
+hints = [
+    "ls -Z /var/www/html shows the files are admin_home_t, not httpd_sys_content_t.",
+    "sudo restorecon -Rv /var/www/html resets every file to the policy's default for /var/www.",
+    "Do not run setenforce 0 — getenforce must stay Enforcing; fix the labels, not the policy.",
+]
+explanation = "restorecon put the whole tree back to httpd_sys_content_t, so httpd_t can read it, with SELinux still enforcing. Disabling SELinux would have 'worked' but turned off protection for the entire server."
+
+[[task]]
+id = "firewall"
+title = "Open HTTP"
+kind = "independent"
+instructions = """
+Open the firewall for HTTP so the site is reachable from the network, and make the change
+permanent so it survives a reboot. Use Fedora's firewall tool.
+"""
+skills = { "t.hardened-migration" = 1.0, "i.firewalls" = 1.0 }
+checks = [
+    { type = "port_open_from", from = "intranet", to = "10.0.2.15", port = 80 },
+    { type = "after_reboot", checks = [{ type = "port_open_from", from = "intranet", to = "10.0.2.15", port = 80 }] },
+]
+persistent = true
+hints = [
+    "Fedora uses firewalld: sudo firewall-cmd --permanent --add-service=http (or --add-port=80/tcp).",
+    "--permanent only writes the config; apply it now with sudo firewall-cmd --reload.",
+    "Check with sudo firewall-cmd --list-services (http should be listed).",
+]
+explanation = "firewalld keeps a runtime and a permanent configuration like the nftables service does; --permanent plus --reload makes the rule both active and persistent."
+
+[[task]]
+id = "review"
+title = "What changed in the move?"
+kind = "explanation"
+instructions = "The handover note asks you to summarise what a team used to Debian has to do differently on this Fedora host."
+skills = { "t.hardened-migration" = 1.0 }
+question = { prompt = "Which set of differences is correct for this migration?", type = "choice", choices = ["Nothing changes between distributions; the same commands work everywhere", "Package manager dnf instead of apt; firewall-cmd/firewalld instead of ufw; and SELinux is enforcing, so web content must be labelled httpd_sys_content_t", "Only the package manager changes; firewall and security are identical", "SELinux replaces the need for a firewall, so no firewall rule is needed"], answer = 1 }
+hints = ["Think about the three tools you used that were different from Debian.", "Package manager, firewall front end, and the mandatory-access-control layer.", "Answer (b)."]
+explanation = "A cross-distribution migration changes the package manager (dnf), the firewall front end (firewalld) and adds SELinux — each a place where a straight copy of the Debian setup would fail. SELinux complements the firewall; it does not replace it."
+
+[debrief]
+summary = """
+Migrate to Fedora in order: account and group, install with dnf and enable the unit, relabel the
+web root with restorecon so httpd_t can read it (SELinux staying enforcing), open HTTP with
+firewall-cmd --permanent --reload — then verify the spec, including after a reboot.
+"""
+alternatives = [
+    "firewall-cmd --permanent --add-port=80/tcp instead of --add-service=http.",
+    "semanage fcontext to set a non-standard web directory's default before restorecon.",
+    "chcon -R -t httpd_sys_content_t /var/www/html relabels by hand, but restorecon (policy default) is preferred under /var/www.",
+]
+pitfalls = [
+    "Reaching for apt or ufw out of Debian habit.",
+    "Disabling SELinux to make the 403 go away instead of relabelling.",
+    "Opening the firewall with --add-service but no --permanent, so it is gone after a reboot.",
+    "Starting nginx without enabling it.",
+]
+next = "You have reached the end of the built curriculum."
+
+[[solution]]
+name = "dnf, restorecon, firewalld"
+steps = [
+    { input = ["letslinux"] },
+    "sudo groupadd {{site}}web",
+    "sudo useradd -m -G wheel,{{site}}web {{operator}}",
+    "sudo dnf install -y nginx",
+    "sudo systemctl enable --now nginx",
+    "sudo ss -ltnp | grep ':80'",
+    "ls -Z /var/www/html",
+    "runcon -t httpd_t cat /var/www/html/index.html",
+    "sudo restorecon -Rv /var/www/html",
+    "getenforce",
+    "sudo firewall-cmd --permanent --add-service=http",
+    "sudo firewall-cmd --reload",
+    ":answer 2",
+]
+
+[[solution]]
+name = "add-port and chcon"
+steps = [
+    { input = ["letslinux"] },
+    "sudo groupadd {{site}}web && sudo useradd -m -G wheel,{{site}}web {{operator}}",
+    "sudo dnf install -y nginx && sudo systemctl enable --now nginx",
+    "sudo chcon -R -t httpd_sys_content_t /var/www/html",
+    "sudo firewall-cmd --permanent --add-port=80/tcp && sudo firewall-cmd --reload",
+    ":answer Package manager dnf instead of apt; firewall-cmd/firewalld instead of ufw; and SELinux is enforcing, so web content must be labelled httpd_sys_content_t",
+]
+
+[[counterexample]]
+name = "disabled SELinux to fix it"
+steps = [
+    { input = ["letslinux"] },
+    "sudo groupadd {{site}}web && sudo useradd -m -G wheel,{{site}}web {{operator}}",
+    "sudo dnf install -y nginx && sudo systemctl enable --now nginx",
+    "sudo setenforce 0",
+    "sudo firewall-cmd --permanent --add-service=http && sudo firewall-cmd --reload",
+    ":answer 2",
+]

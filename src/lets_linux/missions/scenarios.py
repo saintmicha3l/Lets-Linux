@@ -609,6 +609,18 @@ def act_weblog(ctx: SetupContext, spec: dict[str, Any]) -> None:
     _finish(ctx, path, spec, uid, gid)
 
 
+@action(
+    "memory", required=("total",), description="Set the machine's total RAM (TOTAL, e.g. '2G')."
+)
+def act_memory(ctx: SetupContext, spec: dict[str, Any]) -> None:
+    from lets_linux.systems.cgroups import parse_bytes
+
+    nbytes = parse_bytes(str(spec["total"]))
+    if nbytes is None or nbytes <= 0:
+        raise SetupError(f"memory: invalid total {spec['total']!r}")
+    ctx.machine.mem_total_kb = nbytes // 1024
+
+
 @action("process", required=("comm",), description="Start a simulated long-running process.")
 def act_process(ctx: SetupContext, spec: dict[str, Any]) -> None:
     db = ctx.machine.users
@@ -627,6 +639,9 @@ def act_process(ctx: SetupContext, spec: dict[str, Any]) -> None:
     )  # fmt: skip
     proc.io_read_kbs = float(spec.get("io_read_kbs", 0.0))
     proc.io_write_kbs = float(spec.get("io_write_kbs", 0.0))
+    if "rss_growth_kbs" in spec:  # a leak: resident memory grows by this many kB per second
+        proc.rss_growth_kbs = float(spec["rss_growth_kbs"])
+        proc.rss_at = ctx.machine.now()
     proc.sys_share = float(spec.get("sys_share", proc.sys_share))
     proc.io_device = str(spec.get("io_device", ""))
     proc.threads = int(spec.get("threads", proc.threads))
@@ -1129,6 +1144,37 @@ def act_package_update(ctx: SetupContext, spec: dict[str, Any]) -> None:
     if pkg is None:
         raise SetupError(f"package_update: unknown package {spec['package']!r}")
     ctx.machine.scenario_values[f"repo-update:{pkg.name}"] = str(spec["version"])
+
+
+@action(
+    "dpkg_interrupted",
+    required=("packages",),
+    description="Leave PACKAGES as an interrupted dpkg run does (Debian/Ubuntu): unpacked but "
+    "not configured (state: half-configured, the default, or unpacked); apt refuses to work until "
+    "dpkg --configure -a.",
+)
+def act_dpkg_interrupted(ctx: SetupContext, spec: dict[str, Any]) -> None:
+    from lets_linux.distributions.packages import PackageManager
+
+    if ctx.machine.profile.family not in ("debian", "ubuntu"):
+        raise SetupError("dpkg_interrupted: only Debian and Ubuntu profiles use dpkg")
+    state = str(spec.get("state", "half-configured"))
+    if state not in ("half-configured", "unpacked"):
+        raise SetupError(
+            f"dpkg_interrupted: state must be half-configured or unpacked, not {state!r}"
+        )
+    pm = PackageManager(ctx.machine)
+    for name in list(spec["packages"]):
+        pkg = pm.find(str(name))
+        if pkg is None:
+            raise SetupError(f"dpkg_interrupted: unknown package {name!r}")
+        for dep in pm.plan_install([pm.native(pkg)]).install:  # its dependencies are fine
+            if dep is not pkg:
+                pm.install(dep, auto=True)
+        pm.install(pkg, configure=False)
+        entry = ctx.machine.pkgdb.get(pkg.name)
+        if entry is not None:
+            entry.state = state
 
 
 @action(

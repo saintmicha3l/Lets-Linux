@@ -25,6 +25,7 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from lets_linux.app import GameService, reflow
+from lets_linux.assessment.drills import check as drills_check
 from lets_linux.distributions.profiles import PROFILES
 from lets_linux.missions.engine import MissionError
 from lets_linux.persistence.database import DatabaseError, Profile
@@ -76,7 +77,11 @@ class ProfileScreen(Screen[None]):
                               justify="center"), id="tagline")  # fmt: skip
             yield Label("Who is playing?", classes="section")
             yield OptionList(id="profiles")
-            yield Label("New player", classes="section")
+            yield Label(
+                "New player — the distribution is for your free-play sandbox; "
+                "each mission runs on the one it is written for",
+                classes="section",
+            )
             with Horizontal(id="new-profile"):
                 yield Input(placeholder="name", id="new-name", max_length=40)
                 yield Select([(p.pretty_name, p.id) for p in PROFILES.values()], value="debian",
@@ -102,8 +107,10 @@ class ProfileScreen(Screen[None]):
         profiles = _service(self).profiles()
         for p in profiles:
             ol.add_option(
-                Option(
-                    f"{p.name}  ({PROFILES[p.distro].name if p.distro in PROFILES else p.distro})",
+                Option(  # Text: a player's name is not markup ("[x" would raise)
+                    Text(
+                        f"{p.name}  (sandbox: {PROFILES[p.distro].name if p.distro in PROFILES else p.distro})"
+                    ),
                     id=str(p.id),
                 )
             )
@@ -567,13 +574,22 @@ class SkillsScreen(Screen[None]):
 
 
 class ReviewScreen(Screen[None]):
-    BINDINGS = [Binding("escape", "app.pop_screen", "Back")]
+    BINDINGS = [
+        Binding("escape", "app.pop_screen", "Back"),
+        Binding("d", "drill", "Quick drill"),
+    ]
 
     def compose(self) -> ComposeResult:
         yield Label(" Review — spaced practice of skills you have learned", id="screen-title")
         yield OptionList(id="review-list")
         yield Static("", id="review-note")
         yield Footer()
+
+    def action_drill(self) -> None:
+        if _service(self).drill_queue(_profile(self)):
+            self.app.push_screen(DrillScreen())
+        else:
+            self.notify("No quick drills are available for the skills due right now.")
 
     def on_mount(self) -> None:
         self.populate()
@@ -591,12 +607,14 @@ class ReviewScreen(Screen[None]):
             skill = service.curriculum.skills.get(item.skill_id)
             ol.add_option(
                 Option(
-                    f"↻ {skill.title if skill else item.skill_id}  (overdue {item.overdue_days:.1f} days)",
+                    Text(
+                        f"↻ {skill.title if skill else item.skill_id}  (overdue {item.overdue_days:.1f} days)"
+                    ),
                     id=item.skill_id,
                 )
             )
         note = "Nothing is due. Spacing practice out is what makes it stick — come back later." if not due else (
-            "Choose a skill to practise with a fresh variant of a mission.")  # fmt: skip
+            "Enter a skill to replay its mission, or press d for a quick drill of what is due.")  # fmt: skip
         self.query_one("#review-note", Static).update(note)
         if due:
             ol.highlighted = 0
@@ -609,6 +627,82 @@ class ReviewScreen(Screen[None]):
             self.notify("No review exercise exists for this skill yet.", severity="warning")
             return
         self.app.open_mission(mission.id, review_mode=True)  # type: ignore[attr-defined]
+
+
+class DrillScreen(Screen[None]):
+    """A short run of answer-checked questions for the skills that are due."""
+
+    BINDINGS = [Binding("escape", "app.pop_screen", "Back")]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.queue: list[Any] = []
+        self.index = 0
+        self.right = 0
+        self.answered = False
+
+    def compose(self) -> ComposeResult:
+        yield Label(" Quick drill — refreshes review timing; a drill alone does not prove mastery",
+                    id="screen-title")  # fmt: skip
+        with VerticalScroll(id="drill-body"):
+            yield Static("", id="drill-progress")
+            yield Static("", id="drill-prompt")
+            yield Static("", id="drill-choices")
+            yield Static("", id="drill-feedback")
+        yield Input(
+            placeholder="Your answer (a/b/c… or the value), Enter to submit", id="drill-input"
+        )
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.queue = _service(self).drill_queue(_profile(self))
+        if not self.queue:
+            self.notify("No quick drills are available right now.")
+            self.app.pop_screen()
+            return
+        self._show()
+        self.query_one(Input).focus()
+
+    def _show(self) -> None:
+        drill = self.queue[self.index]
+        service = _service(self)
+        skill = service.curriculum.skills.get(drill.skill_id)
+        self.query_one("#drill-progress", Static).update(
+            f"[{self.index + 1}/{len(self.queue)}]  {skill.title if skill else drill.skill_id}"
+        )
+        self.query_one("#drill-prompt", Static).update(reflow(drill.prompt))
+        choices = "\n".join(f"  {chr(97 + i)}) {c}" for i, c in enumerate(drill.choices))
+        self.query_one("#drill-choices", Static).update(choices)
+        self.query_one("#drill-feedback", Static).update("")
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        drill = self.queue[self.index]
+        text = event.value.strip()
+        inp = self.query_one(Input)
+        if not self.answered:
+            if not text:
+                return
+            correct = drills_check(drill.question, text)
+            _service(self).record_drill(
+                _profile(self), drill, correct, wrong_answers=0 if correct else 1
+            )
+            self.right += int(correct)
+            verdict = "✓ Correct." if correct else "✗ Not quite."
+            tail = f"\n{drill.explanation}" if drill.explanation else ""
+            self.query_one("#drill-feedback", Static).update(reflow(verdict + tail))
+            self.answered = True
+            inp.value = ""
+            inp.placeholder = "Enter to continue"
+            return
+        # second Enter: advance
+        self.answered = False
+        inp.placeholder = "Your answer (a/b/c… or the value), Enter to submit"
+        self.index += 1
+        if self.index >= len(self.queue):
+            self.notify(f"Drill complete: {self.right}/{len(self.queue)} correct.")
+            self.app.pop_screen()
+            return
+        self._show()
 
 
 class AchievementsScreen(Screen[None]):
@@ -655,13 +749,15 @@ class ReferenceScreen(Screen[None]):
         for name, text in BUILTIN_HELP.items():
             self.entries.setdefault(name, f"{text}\n\n(shell builtin)")
         for name in sorted(self.entries):
-            ol.add_option(Option(name, id=name))
+            ol.add_option(Option(Text(name), id=name))
         ol.highlighted = 0
         ol.focus()
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        # Text, not a markup string: help texts are full of [OPTION]-style brackets, which
+        # markup would swallow (148 entries lost text) or reject ("dd" raised MarkupError)
         self.query_one("#reference-detail", Static).update(
-            self.entries.get(event.option.id or "", "")
+            Text(self.entries.get(event.option.id or "", ""))
         )
 
 
@@ -684,7 +780,11 @@ class SettingsScreen(Screen[None]):
                 with Horizontal(classes="setting-row"):
                     yield Switch(value=bool(getattr(settings, key)), id=f"set-{key}")
                     yield Label(label, classes="setting-label")
-            yield Label("Distribution for new sandbox machines")
+            yield Label(
+                "Distribution for your sandbox (used when a new sandbox machine is made: "
+                "type :reset in the sandbox to switch; missions always run on the "
+                "distribution they are written for)"
+            )
             yield Select([(p.pretty_name, p.id) for p in PROFILES.values()], value=_profile(self).distro,
                          allow_blank=False, id="distro")  # fmt: skip
             yield Static(Text("Saves: " + str(_service(self).directory), style="dim"))

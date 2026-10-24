@@ -103,6 +103,16 @@ def systemd_journald(ctx: CommandContext) -> int:
 
 
 @_cmd(
+    "systemd-timesyncd",
+    "Network time synchronization (started by systemd).",
+    auto_parse=False,
+    category="system",
+)
+def systemd_timesyncd(ctx: CommandContext) -> int:
+    return _system_component(ctx, "systemd-timesyncd", 2_600)
+
+
+@_cmd(
     "systemd-udevd",
     "Device event manager (started by systemd).",
     auto_parse=False,
@@ -115,6 +125,29 @@ def systemd_udevd(ctx: CommandContext) -> int:
 @_cmd("systemd-logind", "Login manager (started by systemd).", auto_parse=False, category="system")
 def systemd_logind(ctx: CommandContext) -> int:
     return _system_component(ctx, "systemd-logind", 7_600, "New seat seat0.")
+
+
+SYSTEMD_FEATURES = (
+    "+PAM +AUDIT +SELINUX +APPARMOR +IMA +SMACK +SECCOMP +GCRYPT -GNUTLS +OPENSSL +ACL "
+    "+BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +IPTC +KMOD +LIBCRYPTSETUP +LIBFDISK +PCRE2 "
+    "-PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD -BPF_FRAMEWORK "
+    "-XKBCOMMON +UTMP +SYSVINIT default-hierarchy=unified"
+)
+
+
+@_cmd("systemd", "The system and service manager (runs as PID 1).", usage="systemd --version",
+      auto_parse=False, category="system")  # fmt: skip
+def systemd(ctx: CommandContext) -> int:
+    if ctx.argv[1:] == ["--version"]:
+        entry = ctx.machine.pkgdb.get("systemd")
+        full = entry.version if entry is not None else "256"
+        ctx.outln(f"systemd {full.split('.')[0].split('-')[0]} ({full})")
+        ctx.outln(SYSTEMD_FEATURES)
+        return 0
+    # Simulated limitation: one system manager, PID 1, started at boot; a second instance
+    # (or a user instance) is not modelled.
+    ctx.error("systemd is already running as PID 1 (simulated: only --version is supported here).")
+    return 1
 
 
 SIGNAL_HANDLERS["systemd-journald"] = _ignore_hup
@@ -194,6 +227,69 @@ def _rsyslog_hup(machine: Machine, proc: Process, sig: Signal) -> bool:
 
 
 SIGNAL_HANDLERS["rsyslogd"] = _rsyslog_hup
+
+
+# ------------------------------------------------------------------ syslog-ng
+
+SYSLOG_NG_VERSION = "3.38.1"
+
+
+@_cmd(
+    "syslog-ng",
+    "Next generation system logging daemon.",
+    usage="syslog-ng [-F] [-s] [-f CONFIG] [-V]",
+    options=(
+        Opt("F", "foreground", help="run in the foreground (as systemd does)"),
+        Opt("s", "syntax-only", help="check the configuration and exit"),
+        Opt("f", "cfgfile", arg=True, metavar="CONFIG", help="use this configuration file"),
+        Opt("V", "version", help="print version information"),
+    ),
+    category="logs",
+    learn=("h.traditional-logs",),
+)  # fmt: skip
+def syslog_ng(ctx: CommandContext) -> int:
+    a = ctx.args
+    config = a.get("cfgfile") or "/etc/syslog-ng/syslog-ng.conf"
+    if a.flag("version"):
+        ctx.outln(f"syslog-ng 3 ({SYSLOG_NG_VERSION})")
+        ctx.outln("Config version: 3.38")
+        ctx.outln(f"Installer-Version: {SYSLOG_NG_VERSION}")
+        ctx.outln("Available-Modules: syslogformat,system-source,affile,afsocket,afuser")
+        ctx.outln("Enable-Debug: off")
+        return 0
+    ops = ctx.machine.ops(ctx.creds)
+    if not ops.exists(config):
+        ctx.error(
+            f"Error opening configuration file; filename='{config}', error='No such file or directory (2)'"
+        )
+        return 2
+    if a.flag("syntax_only"):  # -s is silent on success, like the real binary
+        return 0
+    if not ctx.creds.is_root:
+        ctx.error("Error creating control socket, aborting; "
+                  "control_socket='/run/syslog-ng/syslog-ng.ctl', error='Permission denied (13)'")  # fmt: skip
+        return 2
+    if any(p.program == "syslog-ng" for p in ctx.machine.procs.all() if p.pid != ctx.pid):
+        ctx.error("Another instance of syslog-ng is already running, exiting; "
+                  "pidfile='/run/syslog-ng.pid'")  # fmt: skip
+        return 2
+    ctx.machine.restart_syslog()
+    become_daemon(ctx, program="syslog-ng", title=["/usr/sbin/syslog-ng", "-F"], rss_kb=7_200)
+    ctx.machine.log("syslog-ng", f"syslog-ng starting up; version='{SYSLOG_NG_VERSION}'",
+                    pid=ctx.pid, facility="syslog", transport="syslog")  # fmt: skip
+    return 0
+
+
+def _syslog_ng_hup(machine: Machine, proc: Process, sig: Signal) -> bool:
+    if sig != Signal.SIGHUP:
+        return False
+    # syslog-ng re-reads its configuration on HUP
+    machine.log("syslog-ng", "Configuration reload request received, reloading configuration",
+                pid=proc.pid, facility="syslog", transport="syslog")  # fmt: skip
+    return True
+
+
+SIGNAL_HANDLERS["syslog-ng"] = _syslog_ng_hup
 
 
 @_cmd("acme-agent", "Acme monitoring agent (third-party package).", usage="acme-agent [--version] [--listen ADDR:PORT]",

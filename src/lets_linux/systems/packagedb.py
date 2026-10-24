@@ -20,7 +20,8 @@ class InstalledPackage:
     conffiles: dict[str, str] = field(default_factory=dict)
     #: installed only as a dependency of another package
     auto: bool = False
-    #: "installed", or "config-files" after a remove that kept configuration (Debian)
+    #: "installed", "config-files" after a remove that kept configuration (Debian), or
+    #: "unpacked" / "half-configured" when dpkg was interrupted (dpkg --configure -a)
     state: str = "installed"
     held: bool = False
     installed_at: float = 0.0
@@ -39,6 +40,11 @@ class PackageDB:
 
     def get(self, name: str) -> InstalledPackage | None:
         return self.packages.get(name)
+
+    def interrupted(self) -> list[InstalledPackage]:
+        """Packages an interrupted dpkg run left unpacked or half-configured."""
+        return [p for p in sorted(self.packages.values(), key=lambda p: p.name)
+                if p.state in ("unpacked", "half-configured")]  # fmt: skip
 
     def is_installed(self, name: str) -> bool:
         p = self.packages.get(name)

@@ -117,6 +117,22 @@ class Machine:
 
         #: the packet filter's runtime ruleset (empty after boot until a service loads it)
         self.firewall = Firewall()
+        from lets_linux.systems.audit import Audit
+
+        #: the kernel audit subsystem (auditctl rules + an audit log fed by fs events)
+        self.audit = Audit()
+        self.audit.now = self.clock.now
+        self.audit.name_for_uid = lambda uid: self.users.user_name(uid)
+        self.vfs.audit_observer = self.audit.on_fs_op
+        from lets_linux.systems.fail2ban import Fail2ban
+
+        #: fail2ban jails (log-watching bans applied through the firewall model)
+        self.fail2ban = Fail2ban()
+        from lets_linux.systems.mac import MAC
+
+        #: mandatory access control (SELinux / AppArmor enforcement)
+        self.mac = MAC()
+        self.vfs.mac_check = self._mac_check
         #: the network configuration the machine comes up with at boot (runtime
         #: changes made with ip are lost on reboot); None: keep the current one
         self.net_boot: dict[str, Any] | None = None
@@ -139,10 +155,57 @@ class Machine:
     def now(self) -> float:
         return self.clock.now()
 
+    def timezone(self) -> str:
+        """The configured time zone name (from the /etc/localtime symlink, else /etc/timezone).
+
+        Defaults to ``Etc/UTC``. The simulated clock itself always runs in UTC; the zone only
+        changes how local time is rendered (by ``date`` and ``timedatectl``)."""
+        try:
+            target = self.root_ops.readlink("/etc/localtime")
+            if "zoneinfo/" in target:
+                return target.split("zoneinfo/", 1)[1]
+        except FsError:
+            pass
+        try:
+            text = self.root_ops.read_text("/etc/timezone").strip()
+            if text:
+                return text
+        except FsError:
+            pass
+        return "Etc/UTC"
+
     def ops(
         self, creds: Credentials = ROOT, *, cwd: str = "/", umask: int = 0o022, root: str = "/"
     ) -> FileOps:
         return FileOps(self.vfs, creds, cwd=cwd, umask=umask, now=self.clock.now, root=root)
+
+    def selinux_mode(self) -> str:
+        """Enforcing / Permissive / Disabled: runtime override, else /etc/selinux/config."""
+        mode = self.scenario_values.get("selinux-mode")
+        if mode:
+            return mode
+        try:
+            for line in self.root_ops.read_text("/etc/selinux/config").splitlines():
+                if line.strip().startswith("SELINUX="):
+                    return line.split("=", 1)[1].strip().capitalize()
+        except FsError:
+            pass
+        return "Disabled"
+
+    def _mac_check(self, label: str, access: str, path: str) -> None:
+        """The MAC enforcement hook (vfs.mac_check): log any AVC/DENIED and block when enforced."""
+        if label.startswith("selinux:"):
+            self.mac.selinux.mode = self.selinux_mode()
+        decision = self.mac.check(label, access, path)
+        if decision.avc:
+            if decision.kind == "selinux":
+                self.log("kernel", decision.avc, facility="kern", transport="kernel")
+                self.audit.record("AVC", decision.avc)
+            else:  # apparmor: the kernel logs a type=1400 audit line
+                self.log("kernel", f"audit: type=1400 audit({self.now():.3f}:0): {decision.avc}",
+                         facility="kern", transport="kernel")  # fmt: skip
+        if not decision.allowed:
+            raise FsError(Errno.EACCES, path)
 
     def hostname_of(self, pid: int) -> str:
         """The host name a process sees (its UTS namespace)."""
@@ -434,6 +497,9 @@ class Machine:
             "storage": self.storage.to_dict(),
             "boot_state": self.boot_state,
             "firewall": self.firewall.to_dict(),
+            "audit": self.audit.to_dict(),
+            "fail2ban": self.fail2ban.to_dict(),
+            "mac": self.mac.to_dict(),
             "remotes": {
                 **self.remote_saved,
                 **{n: m.to_dict() for n, m in self.remote_machines.items()},
@@ -481,6 +547,12 @@ class Machine:
         m.storage.load(d.get("storage", {}))
         m.boot_state = d.get("boot_state", "running")
         m.firewall.load(d.get("firewall", []))
+        if "audit" in d:
+            m.audit.load(d["audit"])
+        if "fail2ban" in d:
+            m.fail2ban.load(d["fail2ban"])
+        if "mac" in d:
+            m.mac.load(d["mac"])
         m.remote_saved = dict(d.get("remotes", {}))
         m.net_boot = d.get("net_boot")
         if "world" in d:

@@ -114,6 +114,9 @@ class Process:
     cgroup: str = ""
     #: RLIMIT_CORE in bytes (ulimit -c; -1 = unlimited): whether a crash writes a core file
     rlimit_core: int = 0
+    #: RLIMIT_NPROC (ulimit -u; -1 = unlimited): max processes the real user may have. The
+    #: fork bomb hits this; children inherit it across fork().
+    rlimit_nproc: int = 31446
     rss_kb: int = 1024
     #: memory growth (kB per second of simulated time; a leak) and when rss_kb was last updated
     rss_growth_kbs: float = 0.0
@@ -210,7 +213,7 @@ class ProcessTable:
             proc.pgid = new_pid
         parent = self.procs.get(ppid)
         if parent is not None:  # fork(): root directory and namespaces are inherited
-            for attr in ("root", "uts", "pidns", "netns", "cgroup", "rlimit_core"):
+            for attr in ("root", "uts", "pidns", "netns", "cgroup", "rlimit_core", "rlimit_nproc"):
                 if attr not in kwargs:
                     setattr(proc, attr, getattr(parent, attr))
         if proc.pidns and not proc.ns_pid:

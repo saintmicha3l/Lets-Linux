@@ -225,7 +225,15 @@ class ProcFS:
                         if held[1].nlink <= 0
                         else self.m.current_name(path, *held)
                     )
-            return p.argv[0] if p.argv and p.argv[0].startswith("/") else f"/usr/bin/{p.comm}"
+            # the file that was executed, symlinks resolved as the kernel records it
+            # (/sbin/init -> /usr/lib/systemd/systemd)
+            path = p.argv[0] if p.argv and p.argv[0].startswith("/") else f"/usr/bin/{p.comm}"
+            try:
+                if self.m.root_ops.exists(path):
+                    return self.m.root_ops.realpath(path)
+            except FsError:
+                pass
+            return path
         if kind.startswith("fd"):
             num = int(kind[2:])
             for n, path in p.open_files:

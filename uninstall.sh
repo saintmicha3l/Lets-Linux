@@ -18,6 +18,11 @@
 remove_packages() {
     local manager=$1 assume_yes=$2 pkg removable=""
     shift 2
+    local tool=$manager
+    [ "$manager" = apt ] && tool=apt-get
+    if ! command -v "$tool" >/dev/null 2>&1; then   # a user's PATH may lack sbin (Alpine: /sbin/apk)
+        PATH="$PATH:/usr/sbin:/sbin"
+    fi
     still_installed() {
         case $manager in
             apt) dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'ok installed' ;;
@@ -39,10 +44,16 @@ remove_packages() {
         apk) would=$present ;;   # apk del only drops them from the world set; needed ones stay
         *) return 0 ;;
     esac
-    # removable when the dry run takes away nothing but our own packages
+    # removable when the dry run takes away nothing but our own packages (with apt, also
+    # packages apt installed automatically: they go because they depend on ours, and a
+    # package someone installed on purpose that needs them would show up here as well)
     local extra=""
     for pkg in $would; do
-        case " $present " in *" $pkg "*) ;; *) extra="$extra $pkg" ;; esac
+        case " $present " in *" $pkg "*) continue ;; esac
+        if [ "$manager" = apt ] && [ -n "$(apt-mark showauto "$pkg" 2>/dev/null)" ]; then
+            continue
+        fi
+        extra="$extra $pkg"
     done
     if [ -n "$extra" ]; then
         printf '\033[1;32m==>\033[0m Keeping the system packages the installer added (%s):\n' "${present# }"
@@ -57,6 +68,12 @@ remove_packages() {
         read -r -p "    Remove them (asks for your sudo password)? [Y/n] " answer || answer=n
         case $answer in [nN]*) printf '    Kept them.\n'; return 0 ;; esac
     fi
+    # apt leaves the dependencies it installed with ours behind as "no longer required";
+    # note the ones that already were, so that only those this removal frees go too
+    local orphans_before=""
+    if [ "$manager" = apt ]; then
+        orphans_before=$(apt-get -s autoremove 2>/dev/null | awk '/^Remv / {print $2}')
+    fi
     case $manager in
         apt) sudo apt-get remove -y $removable ;;
         dnf) sudo dnf remove -y $removable ;;
@@ -65,6 +82,19 @@ remove_packages() {
         apk) sudo apk del $removable ;;
     esac || { printf '    Could not remove them; they stay installed.\n'; return 0; }
     printf '\033[1;32m==>\033[0m Removed the system packages:%s\n' "$removable"
+    if [ "$manager" = apt ]; then
+        local freed=""
+        for pkg in $(apt-get -s autoremove 2>/dev/null | awk '/^Remv / {print $2}'); do
+            printf '%s\n' "$orphans_before" | grep -qx "$pkg" || freed="$freed $pkg"
+        done
+        if [ -n "$freed" ]; then
+            if sudo apt-get remove -y $freed; then
+                printf '\033[1;32m==>\033[0m Removed what apt had installed with them:%s\n' "$freed"
+            else
+                printf '    Could not remove what apt installed with them:%s\n' "$freed"
+            fi
+        fi
+    fi
 }
 
 main() {
@@ -79,6 +109,14 @@ main() {
             -h|--help) sed -n '2,14p' "$(readlink -f "$0")" | sed 's/^# \{0,1\}//'; return 0 ;;
             *) echo "uninstall.sh: unknown option: $arg (try --help)" >&2; return 2 ;;
         esac
+    done
+    local tool
+    for tool in awk sed grep; do   # checked before anything is changed
+        command -v "$tool" >/dev/null 2>&1 || {
+            printf 'uninstall.sh: the standard tool %s is missing; install it (for awk the package is\n' "$tool" >&2
+            printf "usually 'gawk'), then run lets-linux-uninstall again. Nothing was changed.\n" >&2
+            return 1
+        }
     done
 
     local data_home config_home app_dir bin_dir data_dir config_dir marker_begin marker_end

@@ -115,7 +115,7 @@ class LetsLinuxApp(App[None]):
                 self.profile, mission_id, self.host, review_mode=review_mode
             )
         except MissionError as exc:
-            self.notify(str(exc), severity="warning")
+            self.notify(str(exc), severity="warning", markup=False)
             return
         self.session = session
         title = session.render(session.mission.title)

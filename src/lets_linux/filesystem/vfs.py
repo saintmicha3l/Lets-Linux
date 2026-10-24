@@ -126,6 +126,12 @@ class VFS:
         #: Optional observer notified with (operation, canonical path) for
         #: simulated strace and mission evidence.
         self.observer: Callable[[str, str], None] | None = None
+        #: a persistent observer for the audit subsystem, called with
+        #: (operation, canonical path, acting uid); set by the machine.
+        self.audit_observer: Callable[[str, str, int], None] | None = None
+        #: mandatory-access-control hook, called (label, access, path) for a confined process;
+        #: raises FsError(EACCES) on an enforced denial. Dormant unless a process has a label.
+        self.mac_check: Callable[[str, str, str], None] | None = None
         #: an attached system call tracer (filesystem/trace.py), while strace runs
         self.tracer: Any = None
         #: bind mounts: covered directory -> the directory shown there (keys are (fs_id, ino))
@@ -431,6 +437,8 @@ class VFS:
         vfs.mounts = [Mount.from_dict(m) for m in d["mounts"]]
         vfs.devices = {}
         vfs.observer = None
+        vfs.audit_observer = None
+        vfs.mac_check = None
         vfs.tracer = None
         vfs.binds = {(b[0], b[1]): (b[2], b[3]) for b in d.get("binds", [])}
         vfs._reindex()

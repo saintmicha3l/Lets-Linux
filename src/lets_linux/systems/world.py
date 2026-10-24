@@ -163,6 +163,17 @@ class Path:
 
 
 @dataclass
+class Hop:
+    """One line of a traceroute: the router at distance TTL, or no reply (address None)."""
+
+    ttl: int
+    address: str | None = None
+    rtt_ms: float = 0.0
+    annotation: str = ""  # "" / "!X" (admin-prohibited) / "!H" (host) / "!N" (net unreachable)
+    final: bool = False  # this hop is the destination
+
+
+@dataclass
 class Connection:
     outcome: Outcome
     path: Path
@@ -449,6 +460,51 @@ class World:
         if not path.peer.icmp:
             return lost
         return path
+
+    def trace(
+        self, machine: Machine, ip: str, *, max_hops: int = 30, src: str | None = None
+    ) -> list[Hop]:
+        """The hops to IP, as traceroute sees them. The simulator models the first hop (the
+        gateway, or the destination when it is on-link) and the destination at its distance;
+        the un-modelled Internet routers in between appear as no-reply hops (``* * *``), exactly
+        as a real traceroute shows routers that do not send ICMP time-exceeded. A silent drop
+        gives ``* * *`` onwards; a reject is marked (``!X`` admin-prohibited, ``!H`` host,
+        ``!N`` net unreachable)."""
+        if machine.net.is_local(ip):
+            return [Hop(1, "127.0.0.1" if ip.startswith("127.") else ip, final=True)]
+        path = self.path(machine, ip, src)
+        if path.outcome is Outcome.NET_UNREACHABLE:
+            return []  # the command reports "Network is unreachable" and sends nothing
+        hops: list[Hop] = []
+        ttl = 1
+        # First hop: the default gateway, probed on its own (an output-chain drop hides it too).
+        if path.via is not None:
+            gw = self.ping(machine, path.via, src)
+            if gw.outcome is Outcome.OK:
+                hops.append(Hop(ttl, path.via, round(gw.rtt_ms, 3)))
+            else:
+                hops.append(Hop(ttl, None))
+            ttl += 1
+        distance = max(path.hops, ttl)
+        dest = self.ping(machine, ip, src)
+        if dest.outcome is Outcome.OK:
+            while ttl < distance and ttl <= max_hops:  # un-modelled intermediate routers
+                hops.append(Hop(ttl, None))
+                ttl += 1
+            if ttl <= max_hops:
+                hops.append(Hop(ttl, ip, round(dest.rtt_ms, 3), final=True))
+        elif dest.outcome in (Outcome.REFUSED, Outcome.HOST_UNREACHABLE):
+            mark = "!X" if dest.outcome is Outcome.REFUSED else "!H"
+            while ttl < distance and ttl <= max_hops:
+                hops.append(Hop(ttl, None))
+                ttl += 1
+            if ttl <= max_hops:
+                hops.append(Hop(ttl, ip, round(dest.rtt_ms, 3), annotation=mark, final=True))
+        else:  # TIMEOUT: silently dropped — no reply from here on
+            while ttl <= max_hops:
+                hops.append(Hop(ttl, None))
+                ttl += 1
+        return hops
 
     # ------------------------------------------------------------ serialisation
     def to_dict(self) -> dict[str, Any]:

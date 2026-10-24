@@ -199,3 +199,10 @@ KillMode=mixed
 WantedBy=multi-user.target
 Alias=dbus-org.fedoraproject.FirewallD1.service
 """
+
+[[package]]
+name = "iptables"
+summary = "Administration tools for packet filtering and NAT"
+section = "net"
+versions = { debian = "1.8.9-2", ubuntu = "1.8.10-3ubuntu2", fedora = "1.8.11-2.fc41", arch = "1:1.8.11-1", generic = "1.8.11" }
+sbin = ["iptables", "iptables-save", "iptables-restore", "ip6tables", "ip6tables-save", "ip6tables-restore"]

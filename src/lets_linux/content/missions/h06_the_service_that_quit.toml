@@ -1,0 +1,150 @@
+schema = 1
+
+[mission]
+id = "h06-the-service-that-quit"
+title = "The Service That Quit"
+chapter = "H"
+kind = "troubleshooting"
+order = 9
+difficulty = 3
+requires = ["c08-the-method", "h02-reading-the-journal", "h01-meet-the-services", "f01-installing-software"]
+skills = ["h.failed-services", "h.systemctl-control", "f.apt-basics"]
+review_for = ["h.failed-services", "h.journalctl", "h.enable-disable", "f.apt-basics"]
+xp = 150
+estimated_minutes = 25
+sequential = true
+
+[briefing]
+context = """
+The nightly report service, reportgen.service, is in the failed state and tonight's report
+never ran. It worked last week. Nobody changed the unit — but the machine was reinstalled from
+a slimmer base image. Use the method: read the failure, find the one missing piece, put it
+back, and make sure the service both runs now and comes up on its own next time. (sudo
+password: letslinux)
+"""
+concept = """
+A service that exits non-zero lands in 'failed'; systemctl status and journalctl -u NAME show
+the exit code and the process's own output — here, the command the unit runs cannot find a
+program it depends on. Installing the missing package fixes the ExecStart; then systemctl start
+runs it and systemctl enable makes it start at boot. 'active' now and 'enabled' for next time
+are two separate guarantees.
+"""
+objectives = [
+    "Read why reportgen.service failed",
+    "Install the missing dependency",
+    "Start the service and confirm it is active",
+    "Enable it so it survives a reboot",
+]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "file"
+path = "/usr/local/bin/reportgen"
+mode = "0755"
+content = """#!/bin/bash
+set -e
+mkdir -p /var/lib/reportgen
+echo '{"status":"ok","rows":128}' | jq -r .status > /var/lib/reportgen/last
+echo "reportgen: wrote /var/lib/reportgen/last"
+"""
+
+[[environment.setup]]
+action = "service"
+name = "reportgen.service"
+content = """[Unit]
+Description=Nightly report generator
+After=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/reportgen
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+[[environment.setup]]
+action = "run"
+command = "systemctl start reportgen.service 2>/dev/null || true"
+
+[[task]]
+id = "running"
+title = "Make it run"
+kind = "independent"
+instructions = """
+Find out why reportgen.service failed (systemctl status / journalctl -u reportgen), install
+the one missing piece, and start it. When it is fixed the service is active and it has written
+/var/lib/reportgen/last containing ok.
+"""
+skills = { "h.failed-services" = 1.0, "h.journalctl" = 0.5, "h.systemctl-control" = 0.5, "f.apt-basics" = 1.0 }
+checks = [
+    { type = "unit_state", unit = "reportgen.service", active = "active" },
+    { type = "file_contains", path = "/var/lib/reportgen/last", text = "ok" },
+]
+hints = [
+    "systemctl status reportgen.service names the ExecStart program; journalctl -u reportgen.service shows what it printed before it died.",
+    "The script pipes through a JSON tool that the slim image left out. Which package provides jq?",
+    "sudo apt-get install -y jq, then sudo systemctl start reportgen.service.",
+]
+explanation = "The unit was fine; its ExecStart just called jq, which the rebuilt image no longer had. Installing jq repairs the command, and starting the service lets the oneshot run to completion."
+
+[[task]]
+id = "persistent"
+title = "And next time"
+kind = "independent"
+instructions = "A started service is not an enabled one. Enable reportgen.service so it starts automatically at boot."
+skills = { "h.enable-disable" = 1.0 }
+checks = [
+    { type = "unit_enabled", unit = "reportgen.service" },
+]
+hints = [
+    "systemctl is-enabled reportgen.service tells you where it stands.",
+    "Enabling creates the WantedBy symlink so boot pulls the unit in.",
+    "sudo systemctl enable reportgen.service (or enable --now to start it at the same time).",
+]
+explanation = "enable wires the unit into multi-user.target so it runs on every boot; start only affects the current one. A reliable fix needs both."
+
+[debrief]
+summary = "Failed services announce their cause: status gives the exit code, journalctl -u gives the program's own words. Fix the ExecStart (here, a missing package), start for now, enable for next boot."
+alternatives = [
+    "systemctl enable --now reportgen.service to enable and start in one step",
+    "journalctl -xeu reportgen.service for the failure with explanatory help text",
+]
+pitfalls = [
+    "Starting the service but forgetting to enable it, so it is gone after a reboot.",
+    "Guessing at the unit file when the real fault was a missing dependency.",
+]
+next = "Diagnosis, package management and service control came together here — the everyday loop of keeping services alive."
+
+[[solution]]
+name = "status, install, start, enable"
+steps = [
+    { input = ["letslinux"] },
+    "systemctl status reportgen.service",
+    "journalctl -u reportgen.service --no-pager",
+    "sudo apt-get install -y jq",
+    "sudo systemctl start reportgen.service",
+    "sudo systemctl enable reportgen.service",
+    "systemctl is-active reportgen.service",
+]
+
+[[solution]]
+name = "journal first, then enable --now"
+steps = [
+    { input = ["letslinux"] },
+    "sudo journalctl -xeu reportgen.service --no-pager",
+    "sudo apt install jq",
+    "sudo systemctl enable --now reportgen.service",
+    "systemctl is-active reportgen.service",
+]
+
+[[counterexample]]
+name = "enabled but still broken"
+steps = [
+    { input = ["letslinux"] },
+    "sudo systemctl enable reportgen.service",
+    "sudo systemctl start reportgen.service",
+]

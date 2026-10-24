@@ -68,7 +68,9 @@ class PagerScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="pager-box"):
             yield Label(
-                f" {self.title_text or 'pager'}  —  arrows/PgUp/PgDn/space to scroll · q to quit",
+                Text(
+                    f" {self.title_text or 'pager'}  —  arrows/PgUp/PgDn/space to scroll · q to quit"
+                ),
                 id="pager-title",
             )
             with VerticalScroll(id="pager-scroll"):
@@ -110,7 +112,7 @@ class PromptScreen(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="prompt-box"):
             label = self.prompt.strip() or ("Input:" if not self.secret else "Password:")
-            yield Label(label, id="prompt-label")
+            yield Label(Text(label), id="prompt-label")  # the script's own text, not markup
             yield Input(password=self.secret, id="prompt-input")
             hint = "Enter to submit · Ctrl+D for end of input"
             if self.secret:
@@ -137,9 +139,10 @@ class MessageScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="message-box"):
-            yield Label(self.title_text, id="message-title")
+            yield Label(Text(self.title_text), id="message-title")
             with VerticalScroll(id="message-scroll"):
-                yield Static(self.body, id="message-body")
+                body = self.body if isinstance(self.body, Text) else Text(self.body)
+                yield Static(body, id="message-body")
             yield Button("Continue", id="message-ok", variant="primary")
 
     def on_mount(self) -> None:
@@ -165,7 +168,7 @@ class ConfirmScreen(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="confirm-box"):
-            yield Label(self.question, id="confirm-question")
+            yield Label(Text(self.question), id="confirm-question")
             with Horizontal(id="confirm-buttons"):
                 yield Button("Yes (y)", id="yes", variant="error")
                 yield Button("No (n)", id="no", variant="primary")

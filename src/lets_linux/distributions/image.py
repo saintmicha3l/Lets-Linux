@@ -720,6 +720,7 @@ class ImageBuilder:
             self._apt_sources(ops)
         elif p.family == "fedora":
             self._dnf_repos(ops)
+            self._selinux(machine)
         elif p.family == "arch":
             self._pacman_conf(ops)
         self._processes(machine)
@@ -1159,6 +1160,55 @@ class ImageBuilder:
             "/etc/dnf/dnf.conf",
             "# see `man dnf.conf` for defaults and possible options\n\n[main]\n",
         )
+
+    def _selinux(self, machine: Machine) -> None:
+        """Seed a bounded subset of the targeted policy: default web file contexts, the httpd_t
+        allow rules and a handful of common tunable booleans (see systems/mac.py, docs §10.8)."""
+        from lets_linux.systems.mac import TypeRule
+
+        se = machine.mac.selinux
+        se.fcontext = [
+            # base-system contexts (general first; a more specific glob later overrides it) so a
+            # confined domain can load libraries and run programs (see BASE_* in systems/mac.py).
+            ("/usr*", "usr_t"),
+            ("/usr/lib*", "lib_t"),
+            ("/usr/lib64*", "lib_t"),
+            ("/lib*", "lib_t"),
+            ("/lib64*", "lib_t"),
+            ("/usr/bin*", "bin_t"),
+            ("/usr/sbin*", "bin_t"),
+            ("/bin*", "bin_t"),
+            ("/sbin*", "bin_t"),
+            ("/etc*", "etc_t"),
+            ("/etc/ld.so.cache", "ld_so_cache_t"),
+            # web-server contexts the mislabel scenario turns on.
+            ("/var/www*", "httpd_sys_content_t"),
+            ("/var/www/cgi-bin*", "httpd_sys_script_exec_t"),
+            ("/var/log/httpd*", "httpd_log_t"),
+            ("/etc/httpd*", "httpd_config_t"),
+        ]
+        se.rules = [
+            TypeRule("httpd_t", "httpd_sys_content_t", frozenset({"read"})),
+            TypeRule("httpd_t", "httpd_sys_rw_content_t", frozenset({"read", "write"})),
+            TypeRule("httpd_t", "httpd_sys_script_exec_t", frozenset({"execute", "read"})),
+            TypeRule("httpd_t", "httpd_config_t", frozenset({"read"})),
+            TypeRule("httpd_t", "httpd_log_t", frozenset({"read", "write"})),
+            TypeRule(
+                "httpd_t", "user_home_t", frozenset({"read"}), boolean="httpd_enable_homedirs"
+            ),
+        ]
+        se.booleans = {
+            "httpd_can_network_connect": False,
+            "httpd_can_network_connect_db": False,
+            "httpd_enable_homedirs": False,
+            "httpd_unified": False,
+            "httpd_use_nfs": False,
+            "ftpd_anon_write": False,
+            "nfs_export_all_rw": True,
+            "samba_enable_home_dirs": False,
+            "ssh_sysadm_login": False,
+            "selinuxuser_execmod": True,
+        }
 
     def _pacman_conf(self, ops: FileOps) -> None:
         if not ops.exists("/etc/pacman.d"):

@@ -9,7 +9,7 @@
 
 **Learn Linux by doing, in a safe simulated Linux system that lives in your terminal.**
 
-![version](https://img.shields.io/badge/version-1.0.0-3ddc68)
+![version](https://img.shields.io/badge/version-1.1.0-3ddc68)
 ![platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20(WSL)-3ddc68)
 ![python](https://img.shields.io/badge/python-3.11%2B-3ddc68)
 ![offline](https://img.shields.io/badge/plays-offline-ffb000)
@@ -22,30 +22,6 @@ it with real commands, and the game checks what you actually changed on the mach
 exact command you typed, so any valid approach counts.
 
 > Nothing you type in the game ever runs on your real computer.
-
-[Download the latest release](https://github.com/saintmicha3l/Lets-Linux/releases/latest)
-V1.1 in development. This is actually going to be a large build release. Decided to add more content and features See: [Issues](https://github.com/saintmicha3l/Lets-Linux/issues)
-
-## Security & File Integrity
-
-The official release of Let's Linux includes a VirusTotal scan report and SHA-256 checksum for transparency and download verification.
-
-- **VirusTotal Scan:** [View Scan Results](https://www.virustotal.com/gui/file/dd2bf8609471b306165ed5215c6e2676915f0fec8df0e5f9d92123807665088b)
-- **SHA-256:** `dd2bf8609471b306165ed5215c6e2676915f0fec8df0e5f9d92123807665088b`
-
-### Verify Your Download
-
-**Linux:**
-```bash
-sha256sum lets-linux-v1.zip
-```
-
-**Windows (PowerShell):**
-```powershell
-Get-FileHash .\lets-linux-v1.zip -Algorithm SHA256
-```
-
-Compare the resulting SHA-256 hash against the published checksum above to verify that your downloaded file matches the official release.
 
 ## Contents
 
@@ -74,17 +50,22 @@ Compare the resulting SHA-256 hash against the published checksum above to verif
 
 First stable release: 157 missions in 20 chapters covering all 218 skills, 19 skill checks, mastery tracking with spaced review, 63 achievements, a simulated Linux system with 330 commands on four distribution flavours, a full-screen, plain and screen-reader interface, and a per-user installer and uninstaller.
 
-The full list of changes is in the project's CHANGELOG.
+
+**Version 1.1.0**, released 2026-10-23.
+
+Second release: The curriculum grows to 171 missions and 224 skills: chapter T is now complete with five more capstone scenarios — a hardened migration, a performance incident, a disaster recovery, an automation-to-specification build and a network move — joined by three mid-campaign cumulative scenarios that combine skills across chapters. The simulator gains SELinux and AppArmor mandatory-access-control enforcement, quick review drills from the Review screen, and many new commands: jq, iptables/ip6tables (with save/restore), fail2ban, auditd (auditctl/ausearch/aureport), loginctl, timedatectl/localectl, traceroute/mtr, chattr/lsattr, syslog-ng and namei. `ulimit -u` is now a real, enforced per-process limit that stops a fork bomb exactly as on real Linux. Each mission's briefing now names the distribution it runs on.
+
+
 
 ## The game at a glance
 
-- **157 missions in 20 chapters**, from orientation and files to security, the kernel,
-  containers, development tools and three capstone scenarios.
-- **218 skills** in a prerequisite map; every one is taught by a lesson and practised in
+- **171 missions in 20 chapters**, from orientation and files to security, the kernel,
+  containers, development tools and eight capstone scenarios.
+- **224 skills** in a prerequisite map; every one is taught by a lesson and practised in
   missions.
 - **19 skill checks** to test out of chapters you already know.
 - **Mastery tracking** based on what you solved on your own, with spaced review.
-- **A simulated Linux system** with 330 commands, a real shell, and Debian, Ubuntu,
+- **A simulated Linux system** with 363 commands, a real shell, and Debian, Ubuntu,
   Fedora and Arch flavours.
 - **63 achievements** for milestones, just for fun.
 - **Offline and private**: no account, no network, no telemetry; your progress stays on your
@@ -134,23 +115,23 @@ the missions it builds on are done (or tested out of).
 | A | Linux orientation and terminal fundamentals | 7 | yes |
 | B | Navigation, files, paths, and filesystem structure | 12 | yes |
 | C | Text processing, search, and command composition | 9 | yes |
-| D | Permissions, ownership, users, and groups | 9 | yes |
-| E | Shell behavior, pipelines, and scripting | 11 | yes |
-| F | Package management and software provenance | 9 | yes |
+| D | Permissions, ownership, users, and groups | 11 | yes |
+| E | Shell behavior, pipelines, and scripting | 12 | yes |
+| F | Package management and software provenance | 10 | yes |
 | G | Processes, signals, and resource management | 6 | yes |
-| H | systemd, services, boot, and logging | 7 | yes |
+| H | systemd, services, boot, and logging | 8 | yes |
 | I | Networking, DNS, routing, and SSH | 13 | yes |
-| J | Storage, mounts, filesystems, and backup | 13 | yes |
+| J | Storage, mounts, filesystems, and backup | 14 | yes |
 | K | Scheduling, automation, and operational workflows | 7 | yes |
-| L | Security, auditing, hardening, and incident response | 11 | yes |
-| M | Troubleshooting and root-cause analysis | 5 | yes |
+| L | Security, auditing, hardening, and incident response | 12 | yes |
+| M | Troubleshooting and root-cause analysis | 6 | yes |
 | N | Kernel, userspace, system calls, and device concepts | 5 | yes |
 | O | Performance, diagnostics, and observability | 3 | yes |
 | P | Containers, virtualization, and isolation | 7 | yes |
 | Q | Linux development, debugging, and build tooling | 10 | yes |
-| R | Distribution differences and advanced administration | 2 | yes |
+| R | Distribution differences and advanced administration | 3 | yes |
 | S | Specialist learning paths | 8 | yes |
-| T | Integrated capstone operations scenarios | 3 | - |
+| T | Integrated capstone operations scenarios | 8 | - |
 
 ## How your progress is measured
 
@@ -183,21 +164,31 @@ and later commands and checks see the consequences.
 - **Files and permissions**: paths, links, ownership, modes, setuid/setgid/sticky bits, ACLs,
   umask, capacity and inodes.
 - **Users and security**: accounts, groups, sudo, PAM, SSH keys and hardening, file
-  capabilities, AppArmor/SELinux basics, audit trails.
+  capabilities, AppArmor and SELinux (profiles, contexts and enforcement), audit trails,
+  intrusion blocking with fail2ban.
 - **Processes and services**: signals, priorities, `/proc`, systemd units, targets, timers,
   drop-ins, the journal, rsyslog, cron and logrotate.
 - **Packages**: apt/dpkg, dnf/rpm and pacman, with dependencies, holds and signed
   repositories.
 - **Networking**: interfaces, routes and policy routing, DNS, firewalls (nftables, ufw,
-  firewalld), NAT, TLS certificates, SSH to other machines, packet capture.
+  firewalld, iptables), NAT, TLS certificates, SSH to other machines, packet capture,
+  traceroute and path analysis.
 - **Storage**: partitions, filesystems, mounts and fstab, swap, LVM, RAID, LUKS, fsck and
   emergency boots.
 - **Advanced**: kernel modules and parameters, system calls with strace, performance tools
   (vmstat, iostat, sar), namespaces, cgroups and containers (podman), compilers, shared
-  libraries, make, gdb and git, nginx and SQLite.
+  libraries, make, gdb and git, nginx, SQLite and JSON processing with jq.
 - **Distributions**: Debian, Ubuntu, Fedora and Arch differ where they really differ: package
   tools, admin groups, firewall front-ends, configuration paths and logging.
 - **Sandbox**: a free-play machine of your own that persists between sessions.
+
+**Which distribution you are on.** Each mission runs on the distribution it was written for,
+whatever you chose when you created your player, because many missions teach one
+distribution's tools and file locations. Most are on Debian 12 ("bookworm"); some use Ubuntu,
+Fedora or Arch. The distribution you choose for your player (changeable under Settings) only
+sets your sandbox. A sandbox you already have keeps its distribution until you type `:reset`
+in it. `lets-linux sandbox` started from your shell has its own `--distro` option and uses
+Debian if you leave it out.
 
 ## Interfaces and accessibility
 
@@ -299,7 +290,7 @@ has not yet been tested by us. Native Windows (without WSL) is not supported.
 | `lets-linux` | Start the game (full screen; falls back to plain mode on simple terminals) |
 | `lets-linux --plain` | Plain line mode |
 | `lets-linux --screen-reader` | Plain, linear text for screen readers |
-| `lets-linux sandbox` | A free-play shell on a persistent simulated machine |
+| `lets-linux sandbox [--distro NAME]` | A free-play shell on a persistent simulated machine (`debian`, `ubuntu`, `fedora`, `arch` or `generic`; default `debian`) |
 | `lets-linux report` | Your progress as text |
 | `lets-linux --version` | The installed version |
 | `lets-linux --help` | All options |
@@ -406,9 +397,9 @@ repository) rather than in a public issue.
   but it is not a real machine: practise on a real (virtual) Linux system too.
 - Some command options and behaviours are not simulated; the game says so instead of
   pretending. Known differences are listed in the project's documentation.
-- Version 1.0.0 was tested on Linux with Python 3.13. Python 3.11, 3.12 and 3.14, and
-  Windows through WSL, are supported but have not been tested yet; native Windows is not
-  supported.
+- Version 1.1.0 was tested on Linux with Python 3.11, 3.12, 3.13 and 3.14 (the full test
+  suite on each; the installer end to end with 3.13). Windows through WSL is supported but
+  has not been tested yet; native Windows is not supported.
 
 ## Source code
 
@@ -441,4 +432,4 @@ exactly how a mission is set up and checked (and, if you want to, spoil its solu
 
 MIT. See [LICENSE](LICENSE).
 
-Let's Linux 1.0.0
+Let's Linux 1.1.0

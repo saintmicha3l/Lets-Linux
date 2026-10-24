@@ -1,0 +1,154 @@
+schema = 1
+
+[mission]
+id = "j12-the-backup-window"
+title = "The Backup Window"
+chapter = "J"
+kind = "troubleshooting"
+order = 14
+difficulty = 3
+requires = ["c08-the-method", "j02b-measuring-space", "i02-names", "h02-reading-the-journal"]
+skills = ["j.disk-full-incident", "j.capacity", "i.dns-resolution"]
+review_for = ["j.capacity", "i.dns-resolution"]
+xp = 160
+estimated_minutes = 25
+sequential = true
+
+[briefing]
+context = """
+The off-site backup job failed last night and left two errors in its log:
+"No space left on device" while writing to /var/backups, and "could not resolve host: backup".
+The backup server lives at 10.0.2.40 and used to resolve as backup. The reinstalled base image
+changed nothing on the server — only this machine. Clear the volume and restore the name so
+tonight's run succeeds. (sudo password: letslinux)
+"""
+concept = """
+Two independent faults, one failure. A full filesystem (df shows 100%, du finds what is eating
+it) stops any write; removing the stale archives on /var/backups frees it. A name that will not
+resolve (getent returns nothing) is usually a missing /etc/hosts entry on this host; adding the
+server's address restores it. Fix each, verify each — do not assume one caused the other.
+"""
+objectives = [
+    "Find what is filling /var/backups and free it",
+    "Restore name resolution for the backup server",
+]
+
+[environment]
+profile = "debian"
+
+[[environment.setup]]
+action = "disk"
+name = "sdb"
+size = "2G"
+partitions = [{ size = "rest", fs = "ext4", label = "backups", mount = "/var/backups", fstab = true }]
+
+[[environment.setup]]
+action = "dir"
+path = "/var/backups/archive"
+
+[[environment.setup]]
+action = "file"
+path = "/var/backups/archive/site-2026-02-20.tar.gz"
+size = 314572800
+age_days = 10
+
+[[environment.setup]]
+action = "file"
+path = "/var/backups/archive/site-2026-02-13.tar.gz"
+size = 304087040
+age_days = 17
+
+[[environment.setup]]
+action = "file"
+path = "/var/backups/archive/site-2026-02-06.tar.gz"
+size = 293601280
+age_days = 24
+
+[[environment.setup]]
+action = "fill"
+dir = "/var/backups/archive"
+count = 30
+prefix = "site-"
+suffix = ".tar.gz"
+age_from = 40
+age_to = 400
+
+[[task]]
+id = "space"
+title = "Clear the volume"
+kind = "independent"
+instructions = """
+/var/backups is full of old compressed backups under /var/backups/archive. Find what is using
+the space and remove the old archives until the /var/backups filesystem has at least 40% free.
+"""
+skills = { "j.capacity" = 1.0, "j.disk-full-incident" = 1.0 }
+checks = [
+    { type = "filesystem_free", mount = "/var/backups", min_percent = 40 },
+]
+hints = [
+    "df -h /var/backups shows how full it is; du -sh /var/backups/archive shows what is inside.",
+    "The archive directory holds the old *.tar.gz files — they are the ones to remove.",
+    "sudo rm -f /var/backups/archive/*.tar.gz, then df -h /var/backups to confirm.",
+]
+explanation = "df measures the filesystem, du measures the files; together they point at the archive directory. Deleting the stale backups returns the space immediately."
+
+[[task]]
+id = "name"
+title = "Restore the name"
+kind = "independent"
+instructions = """
+The backup server is at 10.0.2.40 and should resolve as the name backup, but getent hosts
+backup now returns nothing. Add it back on this machine so the name resolves to 10.0.2.40.
+"""
+skills = { "i.dns-resolution" = 1.0, "b.edit-files" = 0.3 }
+checks = [
+    { type = "name_resolves", name = "backup", address = "10.0.2.40" },
+    { type = "file_contains", path = "/etc/hosts", text = "localhost" },
+]
+hints = [
+    "Programs resolve names through /etc/hosts before DNS (hosts: files dns).",
+    "Add a line mapping the address to the name; edit the file as root or it will not save.",
+    "echo '10.0.2.40 backup' | sudo tee -a /etc/hosts, then getent hosts backup.",
+]
+explanation = "With '10.0.2.40 backup' in /etc/hosts, the resolver answers from files before it ever asks DNS, so the backup name works again on this host."
+
+[debrief]
+summary = "A single failure can have two causes. df/du localise a full filesystem to the directory eating it; a name that getent cannot resolve is usually a missing /etc/hosts line. Fix and verify each independently."
+alternatives = [
+    "find /var/backups/archive -name '*.tar.gz' -delete to clear the archives",
+    "Editing /etc/hosts in an editor instead of appending with tee",
+]
+pitfalls = [
+    "Freeing space but leaving the name broken (or the reverse) and declaring victory.",
+    "Appending to /etc/hosts without sudo, so the change is silently lost.",
+]
+next = "Storage and networking faults often arrive together; the method keeps them apart."
+
+[[solution]]
+name = "rm archives and tee into hosts"
+steps = [
+    { input = ["letslinux"] },
+    "df -h /var/backups",
+    "du -sh /var/backups/archive",
+    "sudo rm -f /var/backups/archive/*.tar.gz",
+    "df -h /var/backups",
+    "echo '10.0.2.40 backup' | sudo tee -a /etc/hosts",
+    "getent hosts backup",
+]
+
+[[solution]]
+name = "find -delete and a root append"
+steps = [
+    { input = ["letslinux"] },
+    "sudo du -xh --max-depth=1 /var/backups",
+    "sudo find /var/backups/archive -name '*.tar.gz' -delete",
+    "sudo bash -c \"echo '10.0.2.40 backup' >> /etc/hosts\"",
+    "getent hosts backup",
+]
+
+[[counterexample]]
+name = "space freed, name still broken"
+steps = [
+    { input = ["letslinux"] },
+    "sudo rm -f /var/backups/archive/*.tar.gz",
+]

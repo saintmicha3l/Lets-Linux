@@ -64,6 +64,24 @@ def format_timestamp(ts: float, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
     return _dt.datetime.fromtimestamp(ts, tz=_dt.UTC).strftime(fmt)
 
 
+def zoneinfo(zone: str) -> _dt.tzinfo:
+    """The tzinfo for a zone name, falling back to UTC when the zone is unknown or the host
+    has no tz database. ``Etc/UTC`` (the default) always resolves and reports the abbrev UTC."""
+    if zone in ("", "Etc/UTC", "UTC"):
+        return _dt.UTC
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(zone)
+    except Exception:  # unknown zone, or no tzdata on the host
+        return _dt.UTC
+
+
+def localtime(ts: float, zone: str = "Etc/UTC") -> _dt.datetime:
+    """``ts`` as an aware datetime in ``zone`` (the system clock itself stays UTC)."""
+    return _dt.datetime.fromtimestamp(ts, tz=zoneinfo(zone))
+
+
 _UNIT_SECONDS = {
     "us": 1e-6, "usec": 1e-6, "µs": 1e-6,
     "ms": 1e-3, "msec": 1e-3,

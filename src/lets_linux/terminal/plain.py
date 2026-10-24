@@ -22,6 +22,7 @@ from lets_linux.app import (
     SandboxSession,
     check_report,
 )
+from lets_linux.assessment import drills
 from lets_linux.assessment.mastery import LEVEL_NAMES
 from lets_linux.config import Settings, load_settings
 from lets_linux.missions.engine import MissionError
@@ -63,6 +64,17 @@ LABELS = {
 }
 
 
+def _quiet_getpass(prompt: str = "") -> str:
+    """Read a password line. On a real terminal use ``getpass`` (no echo); when stdin is
+    not a TTY (piped input — automation, or a redirected screen-reader session) ``getpass``
+    would fall back to an echoing read and emit a ``GetPassWarning`` naming a host path, so
+    read the line plainly instead. The game's "passwords" are not real secrets and nothing
+    about the host should leak into the simulated session."""
+    if not sys.stdin.isatty():
+        return input(prompt)
+    return getpass.getpass(prompt)
+
+
 class PlainHost:
     """InteractiveHost for line mode."""
 
@@ -70,7 +82,7 @@ class PlainHost:
         self,
         inp: Callable[[str], str] = input,
         out: Callable[[str], None] = print,
-        secret: Callable[[str], str] = getpass.getpass,
+        secret: Callable[[str], str] = _quiet_getpass,
         colour: bool = False,
     ) -> None:
         self.inp = inp
@@ -144,7 +156,7 @@ class PlainApp:
         *,
         inp: Callable[[str], str] = input,
         out: Callable[[str], None] = print,
-        secret: Callable[[str], str] = getpass.getpass,
+        secret: Callable[[str], str] = _quiet_getpass,
         colour: bool | None = None,
         settings: Settings | None = None,
     ) -> None:
@@ -216,7 +228,7 @@ class PlainApp:
         if profiles:
             self.out("Players:")
             for i, p in enumerate(profiles, 1):
-                self.out(f"  {i}. {p.name} ({p.distro})")
+                self.out(f"  {i}. {p.name} (sandbox: {p.distro})")
             self.out("  n. new player")
             self.out("  q. quit")
             while True:
@@ -475,13 +487,53 @@ class PlainApp:
             self.out(
                 f"  {i}. {skill.title if skill else item.skill_id} (overdue {item.overdue_days:.1f} days)"
             )
+        self.out("Enter a number to replay its mission, or 'd' for a quick drill of what is due.")
         choice = self.ask("Practise which? (Enter to go back): ")
-        if choice and choice.strip().isdigit() and 1 <= int(choice) <= min(10, len(due)):
-            mission = self.service.review_mission_for(profile, due[int(choice) - 1].skill_id)
+        if choice is None:
+            return
+        c = choice.strip().lower()
+        if c in ("d", "drill"):
+            self.drill_session(profile)
+        elif c.isdigit() and 1 <= int(c) <= min(10, len(due)):
+            mission = self.service.review_mission_for(profile, due[int(c) - 1].skill_id)
             if mission is None:
                 self.out("No review exercise is available for that skill yet.")
                 return
             self.play_mission(profile, mission.id, review_mode=True)
+
+    def drill_session(self, profile: Profile) -> None:
+        """Short answer-checked questions for the due skills — not a whole mission each."""
+        queue = self.service.drill_queue(profile)
+        if not queue:
+            self.out("No quick drills are available for the skills that are due right now.")
+            return
+        self.out("")
+        self.out(f"Quick drill: {len(queue)} question(s). Type 'q' to stop; drills refresh review"
+                 " timing but do not, by themselves, prove mastery.")  # fmt: skip
+        right = 0
+        for n, drill in enumerate(queue, 1):
+            skill = self.service.curriculum.skills.get(drill.skill_id)
+            self.out("")
+            self.out(f"[{n}/{len(queue)}] {skill.title if skill else drill.skill_id}")
+            self.show(drill.prompt)
+            for i, option in enumerate(drill.choices, 1):
+                self.out(f"   {chr(96 + i)}) {option}")
+            answer = self.ask("Answer (Enter to skip, q to stop): ")
+            if answer is None or answer.strip().lower() in ("q", "quit"):
+                break
+            if not answer.strip():
+                continue
+            correct = drills.check(drill.question, answer)
+            self.service.record_drill(profile, drill, correct, wrong_answers=0 if correct else 1)
+            if correct:
+                right += 1
+                self.out(self.paint("Correct.", "success") if self.colour else "Correct.")
+            else:
+                self.out(self.paint("Not quite.", "warning") if self.colour else "Not quite.")
+            if drill.explanation:
+                self.show(drill.explanation)
+        self.out("")
+        self.out(f"Drill complete: {right} correct. Review timing updated.")
 
     def show_achievements(self, profile: Profile) -> None:
         unlocked = self.service.db.achievements(profile.id)

@@ -1,0 +1,167 @@
+schema = 1
+
+[mission]
+id = "d02c-tracing-the-path"
+title = "Tracing the Path"
+chapter = "D"
+kind = "lesson"
+order = 3
+difficulty = 2
+requires = ["d02b-directory-access"]
+skills = ["d.directory-permissions"]
+review_for = ["d.directory-permissions"]
+xp = 70
+estimated_minutes = 12
+sequential = true
+
+[briefing]
+context = """
+A teammate says "I gave you read permission on the file, but you still can't open it." They are
+right about the file — and it still fails. To reach a file the kernel must walk every directory
+on the way to it, and it needs search (execute) permission on each one. A single locked
+directory halfway down the path denies the whole thing, no matter how open the file itself is.
+This lesson shows how to find that one directory in seconds. (sudo password: letslinux)
+"""
+concept = """
+Opening /a/b/c means: look up a in /, then b in a, then c in b. Each lookup needs the x
+("search") permission on that directory for you. r on a directory only lets you list its names;
+x is what lets you pass through it. So a file can be mode 644 (world-readable) and still be
+unreadable because a parent directory is 700.
+namei walks the path one component at a time and prints what it finds. With -l it shows the
+mode and owner of each component and stops at the first one you cannot pass, marking it
+"Permission denied" — that component, not the file, is the problem.
+"""
+objectives = ["See that a parent directory can block access to a readable file", "Read a path component by component with namei -l", "Identify the one directory that denies access", "Grant the minimal permission that fixes it"]
+
+[environment]
+profile = "debian"
+user = "learner"
+[environment.vars]
+proj = { choices = ["reports", "exports", "archive", "datasets"] }
+year = { choices = ["2024", "2025", "2026"] }
+secret = { word = true }
+
+[[environment.setup]]
+action = "dir"
+path = "/srv/{{proj}}"
+owner = "root"
+group = "root"
+mode = "0700"
+
+[[environment.setup]]
+action = "dir"
+path = "/srv/{{proj}}/{{year}}"
+owner = "root"
+group = "root"
+mode = "0755"
+
+[[environment.setup]]
+action = "file"
+path = "/srv/{{proj}}/{{year}}/{{secret}}.txt"
+owner = "root"
+group = "root"
+mode = "0644"
+content = "quarterly figures: all systems nominal\n"
+
+[[task]]
+id = "denied"
+title = "A readable file you cannot read"
+kind = "guided"
+instructions = "The file /srv/{{proj}}/{{year}}/{{secret}}.txt is mode 644 — readable by everyone. Try to read it:  cat /srv/{{proj}}/{{year}}/{{secret}}.txt"
+skills = { "d.directory-permissions" = 0.5 }
+checks = [{ type = "output_contains", command = ["cat", "less", "head", "more"], regex = "Permission denied", stream = "stderr" }]
+hints = ["Just run cat on the full path.", "It fails even though the file's own mode is 644.", "cat /srv/{{proj}}/{{year}}/{{secret}}.txt — note the 'Permission denied'."]
+explanation = "The file itself is readable. The denial comes from somewhere on the path to it — which is exactly what namei will show."
+
+[[task]]
+id = "trace"
+title = "Walk the path"
+kind = "guided"
+instructions = "Show the path component by component, with the mode and owner of each:  namei -l /srv/{{proj}}/{{year}}/{{secret}}.txt   Which directory does it stop at with 'Permission denied'?"
+skills = { "d.directory-permissions" = 1.0 }
+question = { prompt = "Which directory component denies access (its name only)?", type = "exact", accept = ["{{proj}}", "/srv/{{proj}}", "srv/{{proj}}"] }
+hints = ["namei -l prints one line per component, from / downwards.", "The line marked 'Permission denied' is the first directory you cannot search.", "It is /srv/{{proj}} — look at its mode: drwx------ (0700), owned by root. The answer is {{proj}}."]
+explanation = "namei stopped at {{proj}} because it is 0700: only root may search it. Everything below is irrelevant until that directory lets you through."
+
+[[task]]
+id = "why"
+title = "Which bit is missing?"
+kind = "prediction"
+instructions = "Think about what the kernel needs on a directory to walk through it."
+skills = { "d.directory-permissions" = 0.5 }
+question = { prompt = "To let you reach files inside /srv/{{proj}}, which permission must it grant you on that directory?", type = "choice", choices = ["read (r) — to list the names", "write (w) — to change the directory", "execute/search (x) — to traverse it", "no change — the file's own mode is enough"], answer = 2 }
+hints = ["Listing names and passing through are two different permissions on a directory.", "x on a directory is the 'search' bit: it lets you resolve a name inside it.", "The answer is (c): execute/search (x)."]
+explanation = "r lists names; x traverses. You need x on every directory on the path. Here /srv/{{proj}} gives neither to anyone but root."
+
+[[task]]
+id = "fix"
+title = "Open the one directory"
+kind = "independent"
+instructions = "Grant the minimal permission so that you — and anyone else — can traverse /srv/{{proj}} and reach the file, without exposing anything you don't have to. Then confirm you can read the file."
+skills = { "d.directory-permissions" = 1.0 }
+checks = [
+    { type = "user_can_access", user = "{{user}}", path = "/srv/{{proj}}/{{year}}/{{secret}}.txt", access = "r" },
+    { type = "mode_has", path = "/srv/{{proj}}", bits = "0001" },
+]
+persistent = true
+hints = ["The missing permission is search (x) for 'other' on /srv/{{proj}}.", "sudo chmod o+x /srv/{{proj}} adds only the search bit for others — not read or write.", "Run  sudo chmod o+x /srv/{{proj}}  then  cat /srv/{{proj}}/{{year}}/{{secret}}.txt"]
+explanation = "chmod o+x adds exactly the search bit others were missing — not read, not write. Granting the least needed is the habit: o+rx or 0755 would also work but hand out more than required."
+
+[[task]]
+id = "recall"
+title = "r versus x on a directory"
+kind = "explanation"
+instructions = "Fix the idea in your own words."
+skills = { "d.directory-permissions" = 0.5 }
+question = { prompt = "On a directory, what does the read (r) bit let you do that the execute (x) bit does not?", type = "exact", accept = ["list", "list the names", "list its contents", "list files", "ls", "see the names", "read the names"] }
+hints = ["Think about what ls needs versus what cd / opening a file inside needs.", "One bit lets you enumerate entries; the other lets you resolve a name and pass through.", "r lets you list the directory's entries (ls); x lets you traverse it. The answer is: list the names."]
+explanation = "r = list the entries (ls works); x = traverse / resolve a name through it (cd and opening files inside work). You often need x without r, and sometimes r without x."
+
+[debrief]
+summary = """
+A file's own permissions are only the last word. To reach it the kernel searches every directory
+on the path, needing x on each. namei -l walks the path and marks the first component you cannot
+pass, turning a vague 'Permission denied' into a precise 'this directory, this mode'. The fix is
+the minimal one: add the search bit that was missing.
+"""
+alternatives = ["namei -m shows just the modes; namei -o adds owners; namei -x marks special bits", "ls -ld on each parent directory in turn shows the same information by hand", "sudo -u {{user}} test -r FILE checks another user's access without becoming them"]
+pitfalls = ["Fixing the file's mode when a parent directory is the real block", "Using chmod -R or 0777 to 'make it work', exposing far more than the one missing bit", "Confusing r (list names) with x (traverse) on a directory"]
+next = "Next: when access is denied for real — diagnosing and fixing it under pressure."
+
+[[solution]]
+name = "namei then o+x"
+steps = [
+    { input = ["letslinux"] },
+    "cat /srv/{{proj}}/{{year}}/{{secret}}.txt",
+    "namei -l /srv/{{proj}}/{{year}}/{{secret}}.txt",
+    ":answer {{proj}}",
+    ":answer c",
+    "sudo chmod o+x /srv/{{proj}}",
+    "cat /srv/{{proj}}/{{year}}/{{secret}}.txt",
+    ":answer list the names",
+]
+
+[[solution]]
+name = "numeric mode, full path answer"
+steps = [
+    { input = ["letslinux"] },
+    "cat /srv/{{proj}}/{{year}}/{{secret}}.txt",
+    "namei -lx /srv/{{proj}}/{{year}}/{{secret}}.txt",
+    ":answer /srv/{{proj}}",
+    ":answer 3",
+    "sudo chmod 0701 /srv/{{proj}}",
+    "head /srv/{{proj}}/{{year}}/{{secret}}.txt",
+    ":answer ls",
+]
+
+[[counterexample]]
+name = "opens the file, not the path"
+steps = [
+    { input = ["letslinux"] },
+    "cat /srv/{{proj}}/{{year}}/{{secret}}.txt",
+    "namei -l /srv/{{proj}}/{{year}}/{{secret}}.txt",
+    ":answer {{proj}}",
+    ":answer c",
+    "sudo chmod 666 /srv/{{proj}}/{{year}}/{{secret}}.txt",
+    ":answer list the names",
+]

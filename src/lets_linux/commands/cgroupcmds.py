@@ -82,7 +82,7 @@ def systemd_cgls(ctx: CommandContext) -> int:
 
 
 @_cmd("systemd-cgtop", "Show top control groups by their resource usage.",
-      usage="systemd-cgtop [-m|-c|-p|-t] [--depth=N] [-n N] [-b]", auto_parse=False, category="services",
+      usage="systemd-cgtop [-m|-c|-p|-t] [-P] [--depth=N] [-n N] [-b]", auto_parse=False, category="services",
       learn=("p.cgroups",))  # fmt: skip
 def systemd_cgtop(ctx: CommandContext) -> int:
     args = ctx.argv[1:]
@@ -97,9 +97,14 @@ def systemd_cgtop(ctx: CommandContext) -> int:
         if g != "/" and g.count("/") > depth:
             continue
         procs = cgroups.members(m, g)
-        tasks = (
-            sum(max(1, p.threads) for p in procs if not p.kernel_thread) if g != "/" else len(procs)
-        )
+        if "-P" in args:  # userspace processes only, threads not counted separately
+            tasks = sum(1 for p in procs if not p.kernel_thread)
+        else:  # the default: all tasks, each thread counted (and kernel threads in /)
+            tasks = (
+                sum(max(1, p.threads) for p in procs if not p.kernel_thread)
+                if g != "/"
+                else len(procs)
+            )
         cpu = sum(p.cpu for p in procs if p.state not in ("T", "Z"))
         mem = sum(p.rss_kb for p in procs) * 1024
         rows.append((g, tasks, cpu, mem))

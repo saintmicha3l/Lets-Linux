@@ -195,6 +195,8 @@ class FileOps:
     def _observe(self, op: str, path: str) -> None:
         if self.vfs.observer is not None:
             self.vfs.observer(op, path)
+        if self.vfs.audit_observer is not None:
+            self.vfs.audit_observer(op, path, self.creds.uid)
 
     # ------------------------------------------------------------ resolution
     def resolve(self, path: str, *, follow: bool = True) -> Resolution:
@@ -278,9 +280,36 @@ class FileOps:
         if self._readonly(node):
             raise FsError(Errno.EROFS, path)
 
+    def _check_content_attrs(self, node: Node, path: str, *, appending: bool = False) -> None:
+        """chattr write rules: an immutable file cannot be modified at all; an append-only
+        file can only be written in append mode. These hold even for root (as on Linux: the
+        attribute must be cleared first)."""
+        attrs = node.inode.attrs
+        if "i" in attrs:
+            raise FsError(Errno.EPERM, path)
+        if "a" in attrs and not appending:
+            raise FsError(Errno.EPERM, path)
+
+    def _check_link_attrs(self, node: Node, path: str) -> None:
+        """An immutable or append-only file cannot be renamed, deleted, or hard-linked."""
+        if {"i", "a"} & set(node.inode.attrs):
+            raise FsError(Errno.EPERM, path)
+
+    def _check_meta_attrs(self, node: Node, path: str) -> None:
+        """An immutable file's metadata (mode, owner) cannot be changed until 'i' is cleared."""
+        if "i" in node.inode.attrs:
+            raise FsError(Errno.EPERM, path)
+
     def _require(self, node: Node, want: int, path: str) -> None:
         if not may_access(node.inode, self.creds, want):
             raise FsError(Errno.EACCES, path)
+        if self.creds.mac_label and self.vfs.mac_check is not None:
+            access = "write" if want & W_OK else ("execute" if want & X_OK else "read")
+            try:  # a canonical path so a label set by chcon matches what is enforced
+                canonical = self.realpath(path)
+            except FsError:
+                canonical = path
+            self.vfs.mac_check(self.creds.mac_label, access, canonical)  # raises on enforced deny
 
     def _touch_dir(self, directory: Node) -> None:
         t = self.now()
@@ -387,6 +416,25 @@ class FileOps:
         node.inode.ctime = self.now()
         self._observe("setxattr", res.path)
 
+    def get_attrs(self, path: str) -> str:
+        """PATH's chattr(1) file attributes, as their letter flags (``""`` if none)."""
+        node, _res = self._existing(path)
+        return node.inode.attrs
+
+    def set_attrs(self, path: str, add: str = "", remove: str = "") -> None:
+        """Add and/or remove chattr(1) attribute flags on PATH. Changing the immutable (i) or
+        append-only (a) flags needs CAP_LINUX_IMMUTABLE; the filesystem must be writable."""
+        node, res = self._existing(path)
+        self._check_writable_fs(node, path)
+        if ({"i", "a"} & (set(add) | set(remove))) and not self.creds.has_cap("linux_immutable"):
+            raise FsError(Errno.EPERM, path)
+        flags = set(node.inode.attrs)
+        flags |= set(add)
+        flags -= set(remove)
+        node.inode.attrs = "".join(sorted(flags))
+        node.inode.ctime = self.now()
+        self._observe("setattr", res.path)
+
     # ------------------------------------------------------------ reading
     def read_bytes(self, path: str) -> bytes:
         node, res = self._existing(path)
@@ -460,8 +508,9 @@ class FileOps:
             self._require(node, W_OK, path)
             return WriteHandle(self, node, res.path)
         self._check_writable_fs(node, path)
+        self._check_content_attrs(node, path, appending=append)
         self._require(node, W_OK, path)
-        self._observe("open", res.path)
+        self._observe("write", res.path)
         if not append:
             self._set_content(node, b"", path)
         return WriteHandle(self, node, res.path)
@@ -545,6 +594,7 @@ class FileOps:
         if is_dir(node.inode.mode):
             raise FsError(Errno.EISDIR, path)
         self._check_writable_fs(node, path)
+        self._check_content_attrs(node, path)  # truncate shortens: append-only forbids it too
         self._require(node, W_OK, path)
         data = bytes(node.inode.data[:size])
         if size > len(data):
@@ -654,6 +704,7 @@ class FileOps:
             raise FsError(Errno.EISDIR, path)
         parent = res.parent
         self._check_writable_fs(parent, path)
+        self._check_link_attrs(node, path)  # immutable/append-only files cannot be removed
         self._require(parent, W_OK | X_OK, path)
         if self._sticky_denied(parent, node):
             raise FsError(Errno.EPERM, path)
@@ -682,6 +733,7 @@ class FileOps:
         src, _ = self._existing(existing, follow=follow)
         if is_dir(src.inode.mode):
             raise FsError(Errno.EPERM, existing)
+        self._check_link_attrs(src, existing)  # cannot create a new link to an immutable file
         res = self.resolve(newpath, follow=False)
         if res.node is not None:
             raise FsError(Errno.EEXIST, newpath)
@@ -729,12 +781,14 @@ class FileOps:
         for p, path in ((sparent, old), (dparent, new)):
             self._check_writable_fs(p, path)
             self._require(p, W_OK | X_OK, path)
+        self._check_link_attrs(src, old)  # immutable/append-only files cannot be renamed
         if self._sticky_denied(sparent, src):
             raise FsError(Errno.EPERM, old)
         dst = dres.node
         if dst is not None:
             if dst == src:
                 return
+            self._check_link_attrs(dst, new)  # nor can one be clobbered by a rename over it
             if self._sticky_denied(dparent, dst):
                 raise FsError(Errno.EPERM, new)
             if src_is_dir:
@@ -771,6 +825,7 @@ class FileOps:
         if not (self.creds.has_cap("fowner") or self.creds.uid == node.inode.uid):
             raise FsError(Errno.EPERM, path)
         self._check_writable_fs(node, path)
+        self._check_meta_attrs(node, path)  # cannot chmod an immutable file
         perms &= 0o7777
         if not self.creds.is_root and not self.creds.in_group(node.inode.gid):
             perms &= ~S_ISGID
@@ -793,6 +848,7 @@ class FileOps:
         ):
             raise FsError(Errno.EPERM, path)
         self._check_writable_fs(node, path)
+        self._check_meta_attrs(node, path)  # cannot chown an immutable file
         changed = (uid is not None and uid != inode.uid) or (gid is not None and gid != inode.gid)
         if uid is not None:
             inode.uid = uid

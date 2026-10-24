@@ -70,7 +70,7 @@ class TerminalScreen(Screen[None]):
         return isinstance(self.session, MissionSession)
 
     def compose(self) -> ComposeResult:
-        yield Label(f" {self.screen_title}", id="terminal-title")
+        yield Label(Text(f" {self.screen_title}"), id="terminal-title")
         with Horizontal(id="terminal-body"):
             with Vertical(id="terminal-main"):
                 yield RichLog(

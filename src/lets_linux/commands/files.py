@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from functools import partial
+from typing import Any
 
 from lets_linux.commands.args import Opt, UsageError, parse_args
 from lets_linux.commands.binary import is_elf, read_meta
@@ -34,6 +36,7 @@ from lets_linux.filesystem.model import (
     S_ISGID,
     S_ISUID,
     S_ISVTX,
+    is_lnk,
 )
 from lets_linux.filesystem.paths import basename, dirname, join, normalize
 from lets_linux.filesystem.permissions import (
@@ -41,6 +44,7 @@ from lets_linux.filesystem.permissions import (
     ModeError,
     format_mode,
     parse_mode,
+    type_char,
 )
 
 COMMANDS: list[CommandSpec] = []
@@ -87,6 +91,7 @@ LS_OPTIONS = (
     Opt("o", help="like -l, but do not list group information"),
     Opt("s", "size", help="print the allocated size of each file, in blocks"),
     Opt("L", "dereference", help="show information for the file symbolic links reference"),
+    Opt("Z", "context", help="print any security context of each file"),
     Opt("Q", "quote-name", help="enclose entry names in double quotes"),
     Opt(
         "color",
@@ -222,6 +227,17 @@ class _Ls:
         except ValueError:
             pass
         self.one_per_line = a.flag("one") or (not ctx.stdout.is_tty() and not a.flag("C"))
+        self.context = bool(a.flag("context"))
+
+    def context_text(self, e: _Entry) -> str:
+        """The SELinux security context for ``ls -Z`` (``?`` when SELinux is not active)."""
+        if self.ctx.machine.selinux_mode() == "Disabled":
+            return "?"
+        try:
+            path = self.ctx.fs.realpath(e.path)
+        except FsError:
+            path = e.path
+        return self.ctx.machine.mac.selinux.context(path)
 
     def entry(self, name: str, path: str) -> _Entry:
         fs = self.ctx.fs
@@ -285,6 +301,8 @@ class _Ls:
                 pre += (str(e.st.ino) if e.st else "?") + " "
             if self.a.get("size"):
                 pre += self.blocks_text(e.st) + " "
+            if self.context:
+                pre += self.context_text(e) + " "
             prefix.append(pre)
         if self.one_per_line:
             for pre, e in zip(prefix, entries, strict=True):
@@ -311,7 +329,7 @@ class _Ls:
             st = e.st
             if st is None:
                 row = ["?" if self.a.get("inode") else "", "?", "-?????????", "?", "?", "?", "?",
-                       "           ?", self.display_name(e)]  # fmt: skip
+                       "           ?", self.display_name(e), "?" if self.context else ""]  # fmt: skip
                 rows.append(row)
                 continue
             owner = str(st.uid) if numeric else db.user_name(st.uid)
@@ -336,8 +354,9 @@ class _Ls:
                 self.size_text(st),
                 when,
                 name,
+                self.context_text(e) if self.context else "",
             ])  # fmt: skip
-        widths = [max(len(r[i]) for r in rows) for i in range(8)]
+        widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
         for r in rows:
             parts = []
             if self.a.get("inode"):
@@ -350,6 +369,8 @@ class _Ls:
                 parts.append(r[4].ljust(widths[4]))
             if not self.a.get("o"):
                 parts.append(r[5].ljust(widths[5]))
+            if self.context:
+                parts.append(r[9].ljust(widths[9]))
             parts.append(r[6].rjust(widths[6]))
             parts.append(r[7])
             parts.append(r[8])
@@ -1836,13 +1857,27 @@ PSEUDO_FS = frozenset({"proc", "sysfs", "devpts", "cgroup2", "securityfs", "mque
                Opt("B", "block-size", arg=True, metavar="SIZE", help="scale sizes by SIZE before printing them"),
                Opt("t", "type", action="append", metavar="TYPE", help="limit listing to file systems of type TYPE"),
                Opt("x", "exclude-type", action="append", metavar="TYPE", help="limit listing to file systems not of type TYPE"),
-               Opt("", "total", help="elide all entries insignificant to available space, and produce a grand total")),
+               Opt("", "total", help="elide all entries insignificant to available space, and produce a grand total"),
+               Opt("", "output", optional_arg=True, metavar="FIELD_LIST",
+                   help="use the output format defined by FIELD_LIST, or print all fields if FIELD_LIST is omitted")),
       category="storage", learn=("b.disk-usage-basics", "j.capacity", "j.inodes"))  # fmt: skip
 def df(ctx: CommandContext) -> int:
     a = ctx.args
     vfs = ctx.machine.vfs
     mounts = list(vfs.mounts)
     status = 0
+    fields: list[str] | None = None
+    if "output" in a:
+        for flag, letter in (("inodes", "i"), ("print_type", "T"), ("portability", "P")):
+            if a.flag(flag):
+                return usage_error(ctx, f"options -{letter} and --output are mutually exclusive")
+        fields = str(a.get("output")).split(",") if a.get("output") else list(DF_FIELDS)
+        for i, f in enumerate(fields):
+            if f not in DF_FIELDS:
+                return usage_error(ctx, f"option --output: field ‘{f}’ unknown")
+            if f in fields[:i]:
+                return usage_error(ctx, f"option --output: field ‘{f}’ used more than once")
+    entries: list[tuple[Any, str]] = []  # (mount, the operand as given, "-" without one)
     if a.operands:
         selected = []
         for path in a.operands:
@@ -1853,21 +1888,33 @@ def df(ctx: CommandContext) -> int:
                 status = 1
                 continue
             m = vfs.mount_for_path(real)
+            entries.append((m, path))
             if m not in selected:
                 selected.append(m)
         mounts = selected
+    else:
+        entries = [(m, "-") for m in mounts]
     rows: list[list[str]] = []
     human = a.flag("human_readable") or a.flag("si")
-    unit, unit_label = 1024, "1K"
+    unit, unit_label, suffix = 1024, "1K", ""
     if a.flag("m"):
         unit, unit_label = 1024 * 1024, "1M"
     if a.get("block_size"):
         spec = str(a.get("block_size"))
+        if re.fullmatch(r"[KMGTP](i?B)?", spec, re.IGNORECASE):
+            # GNU: a unit without a number (-BM) means 1M and is printed after each size
+            unit_label, suffix = "1" + spec, spec
+            spec = unit_label
         parsed = parse_size(spec)
         if not parsed:
             ctx.error(f"invalid --block-size argument '{spec}'")
             return 1
         unit, unit_label = parsed, spec
+    if fields is not None:
+        _df_output(ctx, entries, fields, human=human, si=a.flag("si"), unit=unit,
+                   unit_label=unit_label, suffix=suffix, everything=bool(a.operands) or a.flag("all"),
+                   types=a.get("type"), excluded=a.get("exclude_type"))  # fmt: skip
+        return status
     for m in mounts:
         fs = vfs.filesystems[m.fs_id]
         if not a.operands and not a.flag("all") and (fs.fstype in PSEUDO_FS or fs.capacity == 0):
@@ -1893,7 +1940,7 @@ def df(ctx: CommandContext) -> int:
             if human:
                 nums = [human_size(x, si=a.flag("si")) for x in (total_b, used_b, avail_b)]
             else:
-                nums = [str(-(-x // unit)) for x in (total_b, used_b, avail_b)]
+                nums = [f"{-(-x // unit)}{suffix}" for x in (total_b, used_b, avail_b)]
         row = [fs.device if fs.fstype not in ("proc", "sysfs") else fs.fstype]
         if a.flag("print_type"):
             row.append(fs.fstype)
@@ -1917,8 +1964,11 @@ def df(ctx: CommandContext) -> int:
             + [size_label, "Used", "Avail" if human else "Available",
                "Capacity" if a.flag("portability") else "Use%", "Mounted on"]
         )  # fmt: skip
+    kinds = (["source"] + (["fstype"] if a.flag("print_type") else [])
+             + (["itotal", "iused", "iavail", "ipcent"] if a.flag("inodes") else ["size", "used", "avail", "pcent"])
+             + ["target"])  # fmt: skip
     table = [header, *rows]
-    widths = [max(len(r[i]) for r in table) for i in range(len(header))]
+    widths = [max(DF_MIN_WIDTH[kinds[i]], *(len(r[i]) for r in table)) for i in range(len(header))]
     ncols = len(header)
     for r in table:
         parts = []
@@ -1931,6 +1981,163 @@ def df(ctx: CommandContext) -> int:
                 parts.append(cell.rjust(widths[i]))
         ctx.outln(" ".join(parts).rstrip())
     return status
+
+
+@dataclass
+class _NameiRow:
+    level: int
+    name: str
+    mode: int = 0
+    uid: int = 0
+    gid: int = 0
+    link: str = ""
+    mountpoint: bool = False
+    error: str = ""  # a component that could not be looked up ends the listing
+
+
+class _NameiLimit(Exception):
+    """More nested symlinks than util-linux namei follows (it lists 21 levels)."""
+
+
+@_cmd("namei", "Follow a pathname until a terminal point is found.", usage="namei [OPTION]... PATHNAME...",
+      options=(Opt("l", "long", help="use a long listing format (-m -o -v)"),
+               Opt("m", "modes", help="show the mode bits of each file"),
+               Opt("o", "owners", help="show owner and group name of each file"),
+               Opt("v", "vertical", help="vertical align of modes and owners"),
+               Opt("n", "nosymlinks", help="don't follow symlinks"),
+               Opt("x", "mountpoints", help="show mount point directories with a 'D'")),
+      category="files", learn=("d.directory-permissions",))  # fmt: skip
+def namei(ctx: CommandContext) -> int:
+    """util-linux namei: each component of a path, its type (or mode and owner), symlinks
+    followed (indented), stopping at the first that cannot be looked up — for the user
+    running it, so a directory without search permission shows "Permission denied"."""
+    a = ctx.args
+    if not a.operands:
+        return usage_error(ctx, "pathname argument is missing")
+    modes, owners = a.flag("modes") or a.flag("long"), a.flag("owners") or a.flag("long")
+    vertical = a.flag("vertical") or a.flag("long")
+    targets = {m.target for m in ctx.machine.vfs.mounts}
+    status = 0
+    for arg in a.operands:
+        rows: list[_NameiRow] = []
+        limit = False
+        try:
+            ok = _namei_walk(ctx, arg, "", 0, rows, a.flag("nosymlinks"), targets)
+        except _NameiLimit:
+            ok, limit = False, True
+        status = status or (0 if ok else 1)
+        db = ctx.machine.users
+        users = [db.user_name(r.uid) for r in rows if not r.error]
+        groups = [db.group_name(r.gid) for r in rows if not r.error]
+        uw, gw = max(map(len, users), default=0), max(map(len, groups), default=0)
+        ctx.outln(f"f: {arg}")
+        for r, (user, group) in zip(rows, zip(users, groups, strict=False), strict=False):
+            if r.error:
+                break
+            kind = format_mode(r.mode) if modes else type_char(r.mode)
+            if r.mountpoint and a.flag("mountpoints"):
+                kind = "D" + kind[1:]
+            indent = "  " * r.level
+            line = ("" if vertical else " " + indent) + kind
+            if owners:
+                line += f" {user:<{uw}} {group:<{gw}}"
+            line += (indent if vertical else "") + " " + r.name
+            ctx.outln(line + (f" -> {r.link}" if r.link else ""))
+        if limit:
+            ctx.stderr.write(f"namei: {arg}: exceeded limit of symlinks\n")
+        elif rows and rows[-1].error:
+            r = rows[-1]
+            blanks = (3 if vertical else 4) + (9 if modes else 0) + (uw + gw + 2 if owners else 0)
+            ctx.outln(" " * (blanks + 2 * r.level) + f"{r.name} - {r.error}")
+    return status
+
+
+def _namei_walk(ctx: CommandContext, path: str, base: str, level: int, rows: list[_NameiRow],
+                nosymlinks: bool, mounts: set[str], depth: int = 0) -> bool:  # fmt: skip
+    """Append a row per component of PATH (relative to BASE); False when one fails."""
+    cur = "/" if path.startswith("/") else base
+    names = [p for p in path.split("/") if p]
+    if path.startswith("/"):
+        names.insert(0, "/")
+    for name in names:
+        here = "/" if name == "/" else (f"{cur.rstrip('/')}/{name}" if cur else name)
+        try:
+            st = ctx.fs.lstat(here)
+        except FsError as exc:
+            rows.append(_NameiRow(level, name, error=exc.message))
+            return False
+        real = ""
+        try:
+            real = ctx.fs.realpath(here)
+        except FsError:
+            pass
+        rows.append(_NameiRow(level, name, st.mode, st.uid, st.gid, mountpoint=real in mounts))
+        if is_lnk(st.mode):
+            target = ctx.fs.readlink(here)
+            rows[-1].link = target  # shown with -n too; only following it is skipped
+            if nosymlinks:
+                cur = here
+                continue
+            if depth >= 20:
+                raise _NameiLimit
+            if not _namei_walk(ctx, target, cur, level + 1, rows, nosymlinks, mounts, depth + 1):
+                return False
+            here = real or here
+        cur = here
+    return True
+
+
+#: GNU df --output fields, in their default order, with their headers
+DF_FIELDS = {"source": "Filesystem", "fstype": "Type", "itotal": "Inodes", "iused": "IUsed",
+             "iavail": "IFree", "ipcent": "IUse%", "size": "", "used": "Used", "avail": "Avail",
+             "pcent": "Use%", "file": "File", "target": "Mounted on"}  # fmt: skip
+_DF_TEXT_FIELDS = ("source", "fstype", "file", "target")  # left-aligned; numbers go right
+#: GNU df's minimum column widths (checked against df 9.7: "Filesystem" is padded to 14)
+DF_MIN_WIDTH = {"source": 14, "fstype": 4, "itotal": 5, "iused": 5, "iavail": 5, "ipcent": 5,
+                "size": 5, "used": 5, "avail": 5, "pcent": 4, "file": 4, "target": 0}  # fmt: skip
+
+
+def _df_output(ctx: CommandContext, entries: list[tuple[Any, str]], fields: list[str], *,
+               human: bool, si: bool, unit: int, unit_label: str, suffix: str, everything: bool,
+               types: list[str] | None, excluded: list[str] | None) -> None:  # fmt: skip
+    """df --output=FIELD,...: GNU coreutils 9 layout (checked against df 9.7)."""
+    vfs = ctx.machine.vfs
+    header = [DF_FIELDS[f] or ("Size" if human else f"{unit_label}-blocks") for f in fields]
+    rows: list[list[str]] = []
+    for m, operand in entries:
+        fs = vfs.filesystems[m.fs_id]
+        if not everything and (fs.fstype in PSEUDO_FS or fs.capacity == 0):
+            continue
+        if (types and fs.fstype not in types) or (excluded and fs.fstype in excluded):
+            continue
+        itotal, iused = fs.max_inodes, fs.inodes_used()
+        size_b = fs.total_blocks * 4096
+        used_b = (fs.used_blocks + fs.overhead_blocks) * 4096
+        avail_b = fs.available_blocks(False) * 4096
+        denom = used_b + avail_b
+
+        def blocks(n: int) -> str:
+            return human_size(n, si=si) if human else f"{-(-n // unit)}{suffix}"
+
+        def count(n: int) -> str:
+            return human_size(n, si=si) if human and n >= 1000 else str(n)
+
+        values = {
+            "source": fs.device if fs.fstype not in ("proc", "sysfs") else fs.fstype,
+            "fstype": fs.fstype,
+            "itotal": count(itotal), "iused": count(iused), "iavail": count(itotal - iused),
+            "ipcent": "-" if itotal == 0 else f"{math.ceil(iused * 100 / itotal)}%",
+            "size": blocks(size_b), "used": blocks(used_b), "avail": blocks(avail_b),
+            "pcent": "-" if size_b == 0 else f"{math.ceil(used_b * 100 / denom) if denom else 0}%",
+            "file": operand, "target": m.target,
+        }  # fmt: skip
+        rows.append([values[f] for f in fields])
+    table = [header, *rows]
+    widths = [max(DF_MIN_WIDTH[f], *(len(r[i]) for r in table)) for i, f in enumerate(fields)]
+    for r in table:
+        cells = [cell.ljust(widths[i]) if fields[i] in _DF_TEXT_FIELDS else cell.rjust(widths[i])
+                 for i, cell in enumerate(r)]  # fmt: skip
+        ctx.outln(" ".join(cells).rstrip())
 
 
 # ================================================================== misc

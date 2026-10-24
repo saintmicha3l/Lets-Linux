@@ -1,0 +1,184 @@
+schema = 1
+
+[mission]
+id = "l10-the-mislabeled-site"
+title = "The Page That Won't Load"
+chapter = "L"
+kind = "troubleshooting"
+order = 12
+difficulty = 5
+requires = ["l09-mac-and-threats", "c08-the-method", "l01-ssh-hardening"]
+skills = ["l.mac-concepts", "l.audit-logging"]
+review_for = ["l.mac-concepts", "l.audit-logging"]
+xp = 190
+estimated_minutes = 20
+
+[briefing]
+context = """
+This Fedora web server serves /var/www/html. Overnight a colleague replaced the quarterly
+report page — they copied report.html out of /root with cp instead of letting the deploy script
+write it. Now the site returns "403 Forbidden" for that one page; every other page is fine.
+SELinux is enforcing (as it should be). The web server runs in the httpd_t domain. Find out why
+httpd_t cannot read the new file and fix it the right way — without weakening SELinux and without
+touching the other pages. (sudo password: letslinux)
+"""
+concept = """
+SELinux decides access by the process's domain and the file's type, independently of ordinary
+permissions: a world-readable file (rw-r--r--) is still refused if its type is wrong for the
+domain reading it. The web server's httpd_t domain may read httpd_sys_content_t files; the
+targeted policy sets that type by default for everything under /var/www. cp gives a new file the
+default type of where it is written — but a file copied out of /root keeps nothing useful, and a
+file created elsewhere and moved in with mv keeps its old label. Either way the page can end up
+labelled admin_home_t or user_home_t, which httpd_t is not allowed to read, so the read is denied
+and logged as an AVC. The fix is to correct the label, not the policy:
+  runcon -t httpd_t cat FILE   reproduces exactly what the web server's domain is allowed to do
+  ls -Z FILE                   shows the current context (…:TYPE:s0)
+  sudo ausearch -m avc         shows the kernel's AVC denial records
+  sudo restorecon -v FILE      resets the label to the policy's default for that path
+  sudo chcon -t TYPE FILE      sets a label by hand (restorecon is preferred under /var/www)
+"""
+objectives = [
+    "Confirm SELinux is enforcing",
+    "Reproduce the web server's denial and read the file's current type",
+    "Relabel the file so httpd_t may read it, leaving SELinux enforcing",
+]
+
+[environment]
+profile = "fedora"
+
+[[environment.setup]]
+action = "dir"
+path = "/var/www/html"
+owner = "root"
+group = "root"
+mode = "0755"
+
+[[environment.setup]]
+action = "file"
+path = "/var/www/html/index.html"
+owner = "root"
+group = "root"
+mode = "0644"
+content = "<h1>Acme Corp</h1>\n"
+
+[[environment.setup]]
+action = "file"
+path = "/var/www/html/report.html"
+owner = "root"
+group = "root"
+mode = "0644"
+content = "<h1>Quarterly report</h1>\n"
+
+# The colleague copied the page out of /root, so it carries a home-directory label that
+# httpd_t is not allowed to read.
+[[environment.setup]]
+action = "run"
+command = "chcon -t admin_home_t /var/www/html/report.html"
+
+# What the web server already logged when it tried to serve the page.
+[[environment.setup]]
+action = "run"
+command = "runcon -t httpd_t cat /var/www/html/report.html >/dev/null 2>&1 || true"
+
+[[task]]
+id = "mode"
+title = "Is SELinux even on?"
+kind = "guided"
+instructions = "Before blaming SELinux, confirm it is actually enforcing. Check the current mode."
+skills = { "l.mac-concepts" = 1.0 }
+question = { prompt = "Current SELinux mode?", type = "exact", accept = ["Enforcing", "enforcing"] }
+hints = [
+    "One command prints just the mode; another prints a full status report.",
+    "getenforce — or sestatus for the Current mode line.",
+    "Enforcing: SELinux denies and logs. So a denial here is real, not just a warning.",
+]
+explanation = "Enforcing — so if httpd_t is denied, the page really will not load. The fix must keep it enforcing."
+
+[[task]]
+id = "type"
+title = "Reproduce the denial"
+kind = "troubleshooting"
+instructions = """
+Only report.html fails, so compare it with a page that works. Reproduce exactly what the web
+server's domain is allowed to do, and read the file's SELinux type.
+"""
+skills = { "l.mac-concepts" = 1.0, "l.audit-logging" = 0.5 }
+question = { prompt = "Which SELinux type does report.html currently carry (the type field of its context)?", type = "exact", accept = ["admin_home_t"] }
+hints = [
+    "runcon -t httpd_t cat FILE runs the read in the web server's domain; try it on index.html (works) and report.html (denied).",
+    "ls -Z /var/www/html shows each file's context as user:role:TYPE:s0. Compare the two pages. sudo ausearch -m avc shows the matching kernel denial.",
+    "index.html is httpd_sys_content_t; report.html is admin_home_t — the home-directory label it kept from /root.",
+]
+explanation = "report.html is labelled admin_home_t. httpd_t has no rule to read that type, so the read is denied and logged as an AVC — the permissions (rw-r--r--) are irrelevant to SELinux."
+
+[[task]]
+id = "fix"
+title = "Relabel it"
+kind = "independent"
+instructions = """
+Give report.html the right SELinux label so the web server (httpd_t) can read it again. Do not
+change the mode of SELinux, and do not disturb the other pages. When you are done, the web
+server's domain must be able to read the file.
+"""
+skills = { "l.mac-concepts" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "getenforce", stdout_equals = "Enforcing\n" },
+    { type = "selinux_context", path = "/var/www/html/report.html", context_type = "httpd_sys_content_t" },
+    { type = "command_result", user = "root", command = "runcon -t httpd_t cat /var/www/html/report.html", status = 0 },
+]
+hints = [
+    "The policy already knows the correct type for /var/www — you just need to apply it.",
+    "sudo restorecon -v /var/www/html/report.html resets it to the policy default; sudo chcon -t httpd_sys_content_t FILE sets it by hand.",
+    "sudo restorecon -v /var/www/html/report.html",
+]
+explanation = "restorecon put report.html back to httpd_sys_content_t, the default under /var/www, and SELinux stayed enforcing. The web server's domain can read it now, so the page loads."
+
+[debrief]
+summary = """
+getenforce (confirm Enforcing) → reproduce with runcon -t httpd_t and compare good vs bad page
+with ls -Z (or sudo ausearch -m avc) → fix the label with restorecon (or chcon), never by
+disabling SELinux → verify the domain can read the file.
+"""
+alternatives = [
+    "sudo ausearch -m avc | audit2why explains a denial and whether a boolean would allow it.",
+    "For a directory outside the default rules: sudo semanage fcontext -a -t httpd_sys_content_t '/srv/web(/.*)?' then sudo restorecon -Rv /srv/web.",
+    "A boolean, not a label, is the fix for capability denials: e.g. sudo setsebool -P httpd_can_network_connect on.",
+]
+pitfalls = [
+    "cp/mv carrying a home-directory label (admin_home_t, user_home_t) into a web root.",
+    "Reading world-readable permissions and concluding SELinux cannot be the cause.",
+    "Running setenforce 0 to make the 403 go away — that turns off protection for the whole system.",
+]
+next = "Chapter M: systematic troubleshooting."
+
+[[solution]]
+name = "restorecon"
+steps = [
+    "getenforce",
+    ":answer Enforcing",
+    "runcon -t httpd_t cat /var/www/html/report.html",
+    "ls -Z /var/www/html",
+    ":answer admin_home_t",
+    { input = ["letslinux"] },
+    "sudo restorecon -v /var/www/html/report.html",
+]
+
+[[solution]]
+name = "chcon by hand"
+steps = [
+    "sestatus",
+    ":answer enforcing",
+    "ls -Z /var/www/html/report.html",
+    ":answer admin_home_t",
+    { input = ["letslinux"] },
+    "sudo chcon -t httpd_sys_content_t /var/www/html/report.html",
+]
+
+[[counterexample]]
+name = "chmod does nothing for SELinux"
+steps = [
+    ":answer Enforcing",
+    ":answer admin_home_t",
+    { input = ["letslinux"] },
+    "sudo chmod 644 /var/www/html/report.html",
+]

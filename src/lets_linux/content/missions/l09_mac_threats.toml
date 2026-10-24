@@ -30,8 +30,9 @@ mode: Enforcing (denies and logs), Permissive (only logs), Disabled. Denials are
 file's label, cp gives it the label of the new place: files moved from a home directory keep
 user_home_t. restorecon -Rv DIR resets labels to the policy's defaults. AppArmor (Ubuntu,
 Debian) does the same with per-program path profiles; aa-status lists them.
-Simulation note: Let's Linux reports modes and shows denial messages as a real system logs
-them, but it does not evaluate SELinux or AppArmor policy — nothing is ever blocked by them.
+Simulation note: Let's Linux models a bounded subset of the targeted policy — it does enforce
+httpd_t's access to web content and logs real AVC denials — but it is not the full policy
+language. The follow-up mission has you fix a real denial hands-on.
 """
 objectives = ["Read the SELinux mode", "Interpret an AVC denial", "Choose the right fix instead of disabling SELinux", "Re-enable enforcement persistently", "Name assets, threats and mitigations"]
 

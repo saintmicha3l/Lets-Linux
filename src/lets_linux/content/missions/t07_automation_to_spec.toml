@@ -1,0 +1,344 @@
+schema = 1
+
+[mission]
+id = "t07-automation-to-spec"
+title = "Capstone: Automation to a Specification"
+chapter = "T"
+kind = "capstone"
+order = 7
+difficulty = 6
+requires = ["k05-safe-at-night", "k04-log-rotation", "k03-timers", "h03-your-own-service"]
+skills = ["t.automation-spec", "k.safe-automation", "k.systemd-timers", "k.log-rotation", "h.timers"]
+review_for = ["k.safe-automation", "k.systemd-timers", "k.log-rotation"]
+xp = 460
+estimated_minutes = 60
+sequential = false
+
+[briefing]
+context = """
+The {{app}} team has no backup of its working data in /srv/{{app}}/data, and the last person who
+tried wrote a one-line cron job that, on the night the directory was briefly empty, happily
+replaced the good backup with an empty one. You are to deliver the job properly, to a written
+specification, and schedule it with a systemd timer. It will run unattended at night, so it will
+be judged the way unattended automation should be: not by reading it, but by running it against
+good input, missing input and a directory already full of old backups. (sudo password: letslinux)
+
+Specification for /usr/local/bin/{{app}}-backup:
+  1. Dump everything under /srv/{{app}}/data into a single dated file
+     /var/backups/{{app}}-YYYY-MM-DD.sql (today's date; any archive format is fine).
+  2. Fail safe: if /srv/{{app}}/data is missing or empty, write NO backup and exit non-zero —
+     never overwrite or create a backup from nothing.
+  3. The backup may contain secrets: it must not be readable by group or others (mode 600).
+  4. Retention: keep only the newest 7 backups in /var/backups; delete older ones.
+  5. Log every run to the journal under the tag {{app}}-backup — what it backed up, or why it
+     refused.
+Then a systemd timer runs it: a oneshot service {{app}}-backup.service and a timer
+{{app}}-backup.timer that fires daily and catches up a missed run, enabled and started.
+"""
+concept = """
+Automation is judged by its behaviour, not its text. Write the script so each clause of the spec
+is a thing you can observe by running it: a dated output file (date +%F), a guard that exits
+non-zero before writing anything when the input is bad (set -euo pipefail; [ -d "$SRC" ] && [ -n
+"$(ls -A "$SRC")" ] || exit 1), a umask 077 / chmod 600 so the file is private, a retention line
+that keeps the newest few (ls -1 "$DEST"/NAME-*.sql | sort | head -n -7 | xargs -r rm -f), and a
+logger -t TAG line on every path. The schedule is a oneshot service plus a timer (OnCalendar=,
+Persistent=true, WantedBy=timers.target) — enable the timer, not the service. The grader runs
+your script on copies of the machine: with good data, with the source removed, and with a
+directory already holding nine old backups — exactly the cases that bite unattended jobs.
+"""
+objectives = ["Implement a backup job to a written spec", "Make it fail safe on bad input", "Give its output private permissions", "Bound retention to the newest few", "Log every run and schedule it with a timer"]
+
+[environment]
+profile = "debian"
+
+[environment.vars]
+app = { choices = ["orders", "ledger", "catalog"] }
+
+[[environment.setup]]
+action = "dir"
+path = "/var/backups"
+
+[[environment.setup]]
+action = "files"
+dir = "/srv/{{app}}/data"
+count = 6
+prefix = "table-"
+size = 512
+
+[[task]]
+id = "script"
+title = "Write the backup job"
+kind = "independent"
+instructions = """
+Write /usr/local/bin/{{app}}-backup to the specification: dump /srv/{{app}}/data into
+/var/backups/{{app}}-<today>.sql, refuse (non-zero, writing nothing) when the source is missing
+or empty, make the backup unreadable to group and others, and keep only the newest 7 backups.
+"""
+skills = { "t.automation-spec" = 1.0, "k.safe-automation" = 1.0, "k.log-rotation" = 0.5 }
+checks = [
+    { type = "command_result", user = "root", command = "/usr/local/bin/{{app}}-backup", status = 0, checks = [{ type = "tree_count", path = "/var/backups", glob = "{{app}}-*.sql", min = 1 }] },
+    { type = "command_result", user = "root", command = "/usr/local/bin/{{app}}-backup && find /var/backups -name '{{app}}-*.sql' -perm -0077 | wc -l", stdout_equals = "0" },
+    { type = "command_result", user = "root", setup = ["rm -rf /srv/{{app}}/data", "rm -f /var/backups/{{app}}-*.sql"], command = "/usr/local/bin/{{app}}-backup", status_not = 0, checks = [{ type = "tree_count", path = "/var/backups", glob = "{{app}}-*.sql", max = 0 }] },
+    { type = "command_result", user = "root", setup = ["for d in 21 22 23 24 25 26 27 28 29; do touch /var/backups/{{app}}-2026-02-$d.sql; done"], command = "/usr/local/bin/{{app}}-backup", status = 0, checks = [{ type = "tree_count", path = "/var/backups", glob = "{{app}}-*.sql", min = 7, max = 7 }] },
+]
+persistent = true
+hints = [
+    "Start from the fail-safe frame: #!/bin/bash, set -euo pipefail, then a guard that exits non-zero when [ ! -d \"$SRC\" ] || [ -z \"$(ls -A \"$SRC\" 2>/dev/null)\" ] — before anything is written.",
+    "Private output: umask 077 before you write, or chmod 600 the file after; the dated name is \"$DEST/{{app}}-$(date +%F).sql\".",
+    "Retention keeps the newest few by sorted (dated) name: ls -1 \"$DEST\"/{{app}}-*.sql | sort | head -n -7 | xargs -r rm -f",
+]
+explanation = """
+The grader ran your script four ways on four copies of the machine: good data (a private dated
+backup appeared), the source removed (it refused and wrote nothing), and a directory of nine old
+backups (it pruned to the newest seven). That is how you trust a job you will never watch run.
+"""
+
+[[task]]
+id = "log"
+title = "Leave a trace every night"
+kind = "independent"
+instructions = "Make {{app}}-backup record each run in the journal under the tag {{app}}-backup — both a successful backup and a refusal to run."
+skills = { "t.automation-spec" = 1.0, "h.journalctl" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "/usr/local/bin/{{app}}-backup >/dev/null 2>&1; journalctl -t {{app}}-backup --no-pager", stdout_regex = "{{app}}-backup(\\[\\d+\\])?: \\S" },
+    { type = "command_result", user = "root", setup = ["rm -rf /srv/{{app}}/data"], command = "/usr/local/bin/{{app}}-backup >/dev/null 2>&1; journalctl -t {{app}}-backup --no-pager", stdout_regex = "(?i)refus|missing|empty" },
+]
+persistent = true
+hints = [
+    "logger writes to the journal (and syslog): logger -t {{app}}-backup \"message\".",
+    "Log on both paths: one line when the backup succeeds, one line in the guard before it exits non-zero.",
+    "After a run: journalctl -t {{app}}-backup --no-pager shows the trace.",
+]
+explanation = "Cron and timers do not watch themselves. One journal line per run turns 'did last night's backup work?' into journalctl -t {{app}}-backup --since yesterday."
+
+[[task]]
+id = "schedule"
+title = "Schedule it with a timer"
+kind = "independent"
+instructions = """
+Create a oneshot service /etc/systemd/system/{{app}}-backup.service that runs
+/usr/local/bin/{{app}}-backup, and a timer /etc/systemd/system/{{app}}-backup.timer that fires
+once a day and catches up a run missed during downtime. Enable and start the timer.
+"""
+skills = { "t.automation-spec" = 1.0, "k.systemd-timers" = 1.0, "h.timers" = 1.0 }
+checks = [
+    { type = "unit_setting", unit = "{{app}}-backup.service", on_disk = true, section = "Service", key = "Type", value = "oneshot" },
+    { type = "unit_setting", unit = "{{app}}-backup.service", on_disk = true, section = "Service", key = "ExecStart", regex = "^/usr/local/bin/{{app}}-backup$" },
+    { type = "unit_setting", unit = "{{app}}-backup.timer", section = "Timer", key = "Persistent", regex = "^(true|yes|1|on)$" },
+    { type = "unit_enabled", unit = "{{app}}-backup.timer" },
+    { type = "unit_state", unit = "{{app}}-backup.timer", active = "active", sub = "waiting" },
+    { type = "after_reboot", checks = [
+        { type = "unit_enabled", unit = "{{app}}-backup.timer" },
+        { type = "unit_state", unit = "{{app}}-backup.timer", active = "active", sub = "waiting" },
+    ] },
+]
+persistent = true
+hints = [
+    "The service is [Service] Type=oneshot / ExecStart=/usr/local/bin/{{app}}-backup.",
+    "The timer is [Timer] OnCalendar=*-*-* 02:00:00 and Persistent=true, with [Install] WantedBy=timers.target.",
+    "Enable the timer, not the service: sudo systemctl enable --now {{app}}-backup.timer.",
+]
+explanation = "systemctl list-timers now shows the next {{app}} backup and the service it will activate; Persistent=true runs it after downtime. Enabling the timer (not the service) is what schedules the job."
+
+[[task]]
+id = "runnow"
+title = "Prove it end to end"
+kind = "independent"
+instructions = "Don't wait for tonight: run the backup once through its service and confirm a backup lands in /var/backups."
+skills = { "t.automation-spec" = 1.0, "k.systemd-timers" = 1.0 }
+checks = [
+    { type = "command_result", user = "root", command = "systemctl start {{app}}-backup.service", status = 0, checks = [{ type = "tree_count", path = "/var/backups", glob = "{{app}}-*.sql", min = 1 }] },
+]
+persistent = true
+hints = [
+    "Start the service, not the timer, to run the job now.",
+    "sudo systemctl start {{app}}-backup.service",
+    "Then ls -l /var/backups and journalctl -u {{app}}-backup.service.",
+]
+explanation = "Starting the oneshot service by hand is how you test the whole chain — script, permissions, journal — without waiting for the schedule."
+
+[[task]]
+id = "why"
+title = "Why run it, not read it?"
+kind = "explanation"
+instructions = "A reviewer says the script 'looks fine' and wants to approve it by reading. Why insist on running it against the failure cases?"
+skills = { "t.automation-spec" = 1.0 }
+question = { prompt = "What is the strongest reason?", type = "choice", choices = ["Running is faster than reading", "The bugs that matter in unattended automation live in the cases you don't see at the happy path — empty input, bad permissions, unbounded growth — and only running the script against those cases proves it behaves; reading tends to confirm what you expect", "Reading a script is never useful", "Timers only accept scripts that have been run once"], answer = 1 }
+hints = ["What kind of bug deleted the previous backup?", "The empty-directory case was invisible on a normal day.", "Answer (b)."]
+explanation = "The previous job read fine and worked every normal night — until the directory was empty. Behaviour under the bad cases is the specification; a test that runs those cases is the only honest check."
+
+[debrief]
+summary = """
+Build unattended automation so every clause of the spec is observable by running it: a dated
+private backup (date +%F, umask 077/chmod 600), a fail-safe guard that writes nothing and exits
+non-zero on bad input, bounded retention (sort | head -n -7 | xargs -r rm), a logger -t line per
+run, and a oneshot service behind an enabled timer. Then test the failure cases, not only the
+happy path.
+"""
+alternatives = [
+    "flock -n in the script (or in the timer's service) so two runs never overlap.",
+    "A retention tool such as find /var/backups -name 'NAME-*.sql' -mtime +7 -delete, or a dedicated tool (restic/borg) with its own prune.",
+    "OnCalendar=daily plus RandomizedDelaySec= to spread load; systemd-analyze calendar to check the expression.",
+]
+pitfalls = [
+    "Writing the backup first and checking the input afterwards — the overwrite has already happened.",
+    "A world-readable backup of data that holds secrets.",
+    "Unbounded retention that fills the disk months later.",
+    "Enabling the service instead of the timer, so nothing is scheduled.",
+]
+next = "You have reached the end of the built curriculum."
+
+[[solution]]
+name = "tar with umask, service and timer"
+steps = [
+    { input = ["letslinux"] },
+    { edit = '''#!/bin/bash
+# {{app}}-backup: dump /srv/{{app}}/data to a dated, private file; keep the newest 7
+set -euo pipefail
+SRC=/srv/{{app}}/data
+DEST=/var/backups
+KEEP=7
+if [ ! -d "$SRC" ] || [ -z "$(ls -A "$SRC" 2>/dev/null)" ]; then
+    logger -t {{app}}-backup "refusing: source $SRC missing or empty"
+    echo "{{app}}-backup: source $SRC missing or empty" >&2
+    exit 1
+fi
+out="$DEST/{{app}}-$(date +%F).sql"
+umask 077
+tar czf "$out" -C "$SRC" .
+chmod 600 "$out"
+ls -1 "$DEST"/{{app}}-*.sql | sort | head -n -"$KEEP" | xargs -r rm -f
+logger -t {{app}}-backup "backed up $SRC to $out (kept newest $KEEP)"
+''' },
+    "sudo nano /usr/local/bin/{{app}}-backup",
+    "sudo chmod 755 /usr/local/bin/{{app}}-backup",
+    { edit = '''[Unit]
+Description=Nightly {{app}} backup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/{{app}}-backup
+''' },
+    "sudo nano /etc/systemd/system/{{app}}-backup.service",
+    { edit = '''[Unit]
+Description=Run the {{app}} backup daily
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+''' },
+    "sudo nano /etc/systemd/system/{{app}}-backup.timer",
+    "sudo systemctl daemon-reload",
+    "sudo systemctl enable --now {{app}}-backup.timer",
+    "sudo systemctl start {{app}}-backup.service",
+    ":answer 2",
+]
+
+[[solution]]
+name = "cp archive, find-based retention, enable timer"
+steps = [
+    { input = ["letslinux"] },
+    { edit = '''#!/bin/bash
+set -eu -o pipefail
+src=/srv/{{app}}/data
+dest=/var/backups
+[ -d "$src" ] && [ -n "$(ls -A "$src" 2>/dev/null)" ] || {
+    logger -t {{app}}-backup "source $src missing or empty — not backing up"
+    exit 2
+}
+f="$dest/{{app}}-$(date +%F).sql"
+tar -czf "$f" -C "$src" .
+chmod 0600 "$f"
+# keep the newest 7, drop the rest
+n=0
+for b in $(ls -1 "$dest"/{{app}}-*.sql | sort -r); do
+    n=$((n + 1))
+    [ "$n" -le 7 ] || rm -f "$b"
+done
+logger -t {{app}}-backup "wrote $f and pruned to 7"
+''' },
+    "sudo nano /usr/local/bin/{{app}}-backup",
+    "sudo chmod 0755 /usr/local/bin/{{app}}-backup",
+    { edit = '''[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/{{app}}-backup
+''' },
+    "sudo nano /etc/systemd/system/{{app}}-backup.service",
+    { edit = '''[Timer]
+OnCalendar=daily
+Persistent=yes
+
+[Install]
+WantedBy=timers.target
+''' },
+    "sudo nano /etc/systemd/system/{{app}}-backup.timer",
+    "sudo systemctl enable {{app}}-backup.timer",
+    "sudo systemctl start {{app}}-backup.timer",
+    "sudo systemctl start {{app}}-backup.service",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "world-readable backups (no private permissions)"
+steps = [
+    { input = ["letslinux"] },
+    { edit = '''#!/bin/bash
+set -euo pipefail
+SRC=/srv/{{app}}/data
+DEST=/var/backups
+[ -d "$SRC" ] && [ -n "$(ls -A "$SRC" 2>/dev/null)" ] || { echo empty >&2; exit 1; }
+out="$DEST/{{app}}-$(date +%F).sql"
+tar czf "$out" -C "$SRC" .
+ls -1 "$DEST"/{{app}}-*.sql | sort | head -n -7 | xargs -r rm -f
+logger -t {{app}}-backup "backed up to $out"
+''' },
+    "sudo nano /usr/local/bin/{{app}}-backup",
+    "sudo chmod 755 /usr/local/bin/{{app}}-backup",
+    { edit = '''[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/{{app}}-backup
+''' },
+    "sudo nano /etc/systemd/system/{{app}}-backup.service",
+    { edit = '''[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+''' },
+    "sudo nano /etc/systemd/system/{{app}}-backup.timer",
+    "sudo systemctl enable --now {{app}}-backup.timer",
+    ":answer 2",
+]
+
+[[counterexample]]
+name = "no retention and the service enabled instead of the timer"
+steps = [
+    { input = ["letslinux"] },
+    { edit = '''#!/bin/bash
+set -euo pipefail
+SRC=/srv/{{app}}/data
+DEST=/var/backups
+[ -d "$SRC" ] && [ -n "$(ls -A "$SRC" 2>/dev/null)" ] || { echo empty >&2; exit 1; }
+out="$DEST/{{app}}-$(date +%F).sql"
+umask 077
+tar czf "$out" -C "$SRC" .
+chmod 600 "$out"
+logger -t {{app}}-backup "backed up to $out"
+''' },
+    "sudo nano /usr/local/bin/{{app}}-backup",
+    "sudo chmod 755 /usr/local/bin/{{app}}-backup",
+    { edit = '''[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/{{app}}-backup
+
+[Install]
+WantedBy=multi-user.target
+''' },
+    "sudo nano /etc/systemd/system/{{app}}-backup.service",
+    "sudo systemctl enable --now {{app}}-backup.service",
+    ":answer 2",
+]

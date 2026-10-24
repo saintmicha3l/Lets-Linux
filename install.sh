@@ -43,6 +43,11 @@ main() {
         die "run the installer as your normal user, not as root (the game never needs root;
        the installer asks for sudo itself if it has to install Python)."
     fi
+    local tool
+    for tool in awk sed grep mktemp; do
+        command -v "$tool" >/dev/null 2>&1 || die "this installer needs the standard tool '$tool', which is missing.
+       Install it with your package manager (for awk the package is usually 'gawk'), then run ./install.sh again."
+    done
     [ -f "$here/src/lets_linux/__init__.py" ] || die "the src/ folder is missing next to install.sh — use the complete release folder."
     [ -f "$here/pyproject.toml" ] || die "pyproject.toml is missing next to install.sh — use the complete release folder."
 
@@ -67,11 +72,18 @@ main() {
 
     # the package manager, and what it knows about packages
     local manager=""
-    if command -v apt-get >/dev/null 2>&1; then manager=apt
-    elif command -v dnf >/dev/null 2>&1; then manager=dnf
-    elif command -v zypper >/dev/null 2>&1; then manager=zypper
-    elif command -v pacman >/dev/null 2>&1; then manager=pacman
-    elif command -v apk >/dev/null 2>&1; then manager=apk
+    find_manager() {
+        if command -v apt-get >/dev/null 2>&1; then manager=apt
+        elif command -v dnf >/dev/null 2>&1; then manager=dnf
+        elif command -v zypper >/dev/null 2>&1; then manager=zypper
+        elif command -v pacman >/dev/null 2>&1; then manager=pacman
+        elif command -v apk >/dev/null 2>&1; then manager=apk
+        fi
+    }
+    find_manager
+    if [ -z "$manager" ]; then   # an ordinary user's PATH may lack sbin (Alpine: /sbin/apk)
+        PATH="$PATH:/usr/sbin:/sbin"
+        find_manager
     fi
     pkg_installed() {  # $1: package — installed right now?
         case $manager in
@@ -116,14 +128,17 @@ main() {
             sudo apt-get update -qq || die "apt-get update failed (see its messages above)."
         fi
         # choose the first package set whose Python is new enough: the distribution's default
-        # python3, else a newer versioned Python it offers (Ubuntu 22.04, RHEL 9, Leap 15...)
+        # python3, else a newer versioned Python it offers (Ubuntu 22.04, RHEL 9, Leap 15...).
+        # No pip packages: "python -m venv" brings its own pip (ensurepip), and the pip
+        # packages pull in much more (on Debian/Ubuntu a C compiler, through Recommends)
+        # that would also keep the uninstaller from removing Python again.
         local sets="" set="" chosen="" key=""
         case $manager in
-            apt) sets="python3,python3-venv,python3-pip python3.13,python3.13-venv python3.12,python3.12-venv python3.11,python3.11-venv" ;;
-            dnf) sets="python3,python3-pip python3.13,python3.13-pip python3.12,python3.12-pip python3.11,python3.11-pip" ;;
-            zypper) sets="python3,python3-pip python313,python313-pip python312,python312-pip python311,python311-pip" ;;
-            pacman) sets="python,python-pip" ;;
-            apk) sets="python3,py3-pip" ;;
+            apt) sets="python3,python3-venv python3.13,python3.13-venv python3.12,python3.12-venv python3.11,python3.11-venv" ;;
+            dnf) sets="python3 python3.13 python3.12 python3.11" ;;
+            zypper) sets="python3 python313 python312 python311" ;;
+            pacman) sets="python" ;;
+            apk) sets="python3" ;;
         esac
         for set in $sets; do
             key=${set%%,*}
@@ -138,7 +153,8 @@ main() {
         note "Installing: $chosen"
         case $manager in
             apt) sudo apt-get install -y $chosen ;;
-            dnf) sudo dnf install -y $chosen ;;
+            dnf) sudo dnf install -y --setopt=install_weak_deps=False $chosen ;;   # (weak deps
+                 # such as python-unversioned-command would keep the uninstaller from removing it)
             zypper) sudo zypper --non-interactive install $chosen ;;
             pacman) sudo pacman -S --needed --noconfirm $chosen ;;
             apk) sudo apk add $chosen ;;

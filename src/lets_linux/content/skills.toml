@@ -513,6 +513,13 @@ summary = "Recognise and apply setuid, setgid and the sticky bit and explain the
 requires = ["d.directory-permissions"]
 
 [[skill]]
+id = "d.file-attributes"
+chapter = "D"
+title = "File attributes (chattr/lsattr)"
+summary = "Read and set ext file attributes with lsattr and chattr; explain immutable (i) and append-only (a) and why they override even root's permissions."
+requires = ["d.special-bits"]
+
+[[skill]]
 id = "d.sudo-least-privilege"
 chapter = "D"
 title = "sudo and least privilege"
@@ -1716,4 +1723,44 @@ chapter = "T"
 title = "Capstone: the new server"
 summary = "Provision a server to a specification: users, services, storage, firewall and backups."
 requires = ["h.unit-files", "i.firewalls", "d.group-management", "j.fstab-persistence", "k.backup-automation"]
+applied = true
+
+[[skill]]
+id = "t.hardened-migration"
+chapter = "T"
+title = "Capstone: the hardened migration"
+summary = "Move a web service to a Fedora host and bring it up with SELinux enforcing: packages, service, file contexts and firewall across distributions."
+requires = ["l.mac-concepts", "i.firewalls", "h.unit-files", "d.group-management", "f.package-concepts"]
+applied = true
+
+[[skill]]
+id = "t.performance-incident"
+chapter = "T"
+title = "Capstone: the performance incident"
+summary = "Diagnose a server brought down by a memory leak and the OOM killer, and contain it with a per-service cgroup limit while restoring the affected service."
+requires = ["p.cgroups", "g.resource-monitoring", "h.journalctl", "h.enable-disable"]
+applied = true
+
+[[skill]]
+id = "t.disaster-recovery"
+chapter = "T"
+title = "Capstone: the disaster recovery"
+summary = "Recover a service whose storage stack (RAID under LVM) lost a disk and whose data was deleted: replace the failed member and rebuild, restore the lost files from an encrypted off-site backup, prove the restore complete against a checksum manifest, and bring the service back."
+requires = ["j.raid-concepts", "j.lvm-concepts", "j.encryption-concepts", "j.backup-restore", "h.enable-disable"]
+applied = true
+
+[[skill]]
+id = "t.automation-spec"
+chapter = "T"
+title = "Capstone: automation to a specification"
+summary = "Implement an unattended backup job to a written spec — fail-safe on bad input, correct file permissions, bounded retention, a journal trace — and schedule it with a systemd timer, proven by running it against seeded inputs and failure cases rather than by reading the script."
+requires = ["k.safe-automation", "k.systemd-timers", "k.log-rotation", "h.timers", "h.unit-files"]
+applied = true
+
+[[skill]]
+id = "t.network-move"
+chapter = "T"
+title = "Capstone: the network move"
+summary = "Move a running web service to a new host and address: copy its content over SSH with rsync, stand the service up and serve it, open the firewall for it, cut the name over to the new address, and verify the path end to end before the old host is retired."
+requires = ["i.file-transfer", "i.firewalls", "i.dns-resolution", "h.enable-disable"]
 applied = true
