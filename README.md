@@ -26,7 +26,7 @@ exact command you typed, so any valid approach counts.
 
 ## Security & File Integrity
 
-The official release of Let's Linux includes a VirusTotal scan report and SHA-256 checksum for transparency and download verification.
+The official release of Let's Linux V1.1 includes a VirusTotal scan report and SHA-256 checksum for transparency and download verification.
 
 - **VirusTotal Scan:** [View Scan Results](https://www.virustotal.com/gui/file/a14519df37525856cc6a36e62f19e5f870f3d34a47005474be3eeb9bec181430)
 - **SHA-256:** `a14519df37525856cc6a36e62f19e5f870f3d34a47005474be3eeb9bec181430`
@@ -72,10 +72,14 @@ Compare the resulting SHA-256 hash against the published checksum above to verif
 
 First stable release: 157 missions in 20 chapters covering all 218 skills, 19 skill checks, mastery tracking with spaced review, 63 achievements, a simulated Linux system with 330 commands on four distribution flavours, a full-screen, plain and screen-reader interface, and a per-user installer and uninstaller.
 
+See: [Release V1.0](https://github.com/saintmicha3l/Lets-Linux/releases/tag/V1.0)
+
 
 **Version 1.1.0**, released 2026-10-23.
 
 Second release: The curriculum grows to 171 missions and 224 skills: chapter T is now complete with five more capstone scenarios — a hardened migration, a performance incident, a disaster recovery, an automation-to-specification build and a network move — joined by three mid-campaign cumulative scenarios that combine skills across chapters. The simulator gains SELinux and AppArmor mandatory-access-control enforcement, quick review drills from the Review screen, and many new commands: jq, iptables/ip6tables (with save/restore), fail2ban, auditd (auditctl/ausearch/aureport), loginctl, timedatectl/localectl, traceroute/mtr, chattr/lsattr, syslog-ng and namei. `ulimit -u` is now a real, enforced per-process limit that stops a fork bomb exactly as on real Linux. Each mission's briefing now names the distribution it runs on.
+
+See: [Release V1.1](https://github.com/saintmicha3l/Lets-Linux/releases/tag/v1.1)
 
 
 
