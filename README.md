@@ -23,6 +23,7 @@ exact command you typed, so any valid approach counts.
 
 > Nothing you type in the game ever runs on your real computer.
 
+Download The Latest Release Here: [Release V1.1](https://github.com/saintmicha3l/Lets-Linux/releases/tag/v1.1)
 
 ## Security & File Integrity
 
